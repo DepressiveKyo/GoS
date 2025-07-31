@@ -66,7 +66,7 @@ local function GetDistanceSqr(pos1, pos2)
 end
 
 local function GetDistance(p1, p2)
-    if not p1 or not p2 then return math.huge end
+    if not p1 or not p2 or not p1.x or not p2.x then return math.huge end
     return math.sqrt(GetDistanceSqr(p1, p2))
 end
 
@@ -337,37 +337,64 @@ function TwistedFate:Draw()
         Draw.Circle(myPos, self.Q.range, Draw.Color(80, 255, 165, 0))
     end
     
-    -- Draw R Range
+    -- Draw R Range Circle on Map (always visible when learned)
     if self.Menu.drawing.R:Value() and IsSpellLearned(_R) then
         local rRange = self:GetRRange()
         if rRange > 0 then
-            -- Draw actual range (but limit visual to reasonable size)
-            local visualRange = math.min(rRange, 2000) -- Limit visual range to 2000 units for screen
-            Draw.Circle(myPos, visualRange, Draw.Color(80, 255, 20, 147))
+            -- Always draw the R range circle when R is learned
+            local rangeColor = Ready(_R) and Draw.Color(120, 255, 215, 0) or Draw.Color(60, 150, 150, 150)
+            local innerColor = Ready(_R) and Draw.Color(80, 255, 215, 0) or Draw.Color(40, 150, 150, 150)
+            
+            -- Draw the full R range circle around the hero (ALWAYS VISIBLE)
+            Draw.Circle(myPos, rRange, rangeColor) -- Gold circle showing max range on main map
+            
+            -- Draw inner circle at 75% range for reference
+            local innerRange = rRange * 0.75
+            Draw.Circle(myPos, innerRange, innerColor) -- Lighter gold inner circle on main map
+            
+            -- Draw R range circle on MINIMAP (this is what you want!)
+            Draw.CircleMinimap(myPos, rRange, rangeColor) -- R range on minimap
+            Draw.CircleMinimap(myPos, innerRange, innerColor) -- Inner range on minimap
             
             -- Draw range text above player
-            local rangeText = "R Range: " .. math.floor(rRange)
-            Draw.Text(rangeText, 14, myPos:To2D().x - 40, myPos:To2D().y - 140, Draw.Color(255, 255, 20, 147))
+            local readyText = Ready(_R) and "READY" or ("CD: " .. math.ceil(myHero:GetSpellData(_R).currentCd) .. "s")
+            local rangeText = "R Range: " .. math.floor(rRange) .. " units - " .. readyText
+            local levelText = "Level " .. myHero:GetSpellData(_R).level .. " Ultimate"
+            local textColor = Ready(_R) and Draw.Color(255, 255, 215, 0) or Draw.Color(255, 150, 150, 150)
+            
+            Draw.Text(rangeText, 16, myPos:To2D().x - 80, myPos:To2D().y - 140, textColor)
+            Draw.Text(levelText, 14, myPos:To2D().x - 50, myPos:To2D().y - 120, Draw.Color(255, 200, 200, 200))
         end
-    end
-    
-    -- Draw R Range on Minimap
-    if self.Menu.drawing.R:Value() and IsSpellLearned(_R) then
-        local rRange = self:GetRRange()
-        if rRange > 0 then
-            local minimapPos = myPos:ToMM()
-            if minimapPos and minimapPos.onScreen then
-                -- Convert range to minimap scale
-                local mapSize = Game.mapID == 11 and 14820 or 15000 -- Summoner's Rift vs other maps
-                local minimapSize = 240 -- Approximate minimap size in pixels
-                local rangeOnMinimap = (rRange / mapSize) * minimapSize
+        
+        -- Draw R targeting circle at cursor when R is pressed/active (SEPARATE SYSTEM)
+        if Ready(_R) and (self.rPressed or myHero.activeSpell.name == "Gate") then
+            local cursorPos = Game.mousePos()  -- Fixed: added parentheses to call the function
+            if cursorPos then
+                -- Only show cursor targeting if within range
+                local distanceToCursor = GetDistance(myHero.pos, cursorPos)
+                local rRange = self:GetRRange()
                 
-                -- Draw circle on minimap
-                Draw.Circle(minimapPos, rangeOnMinimap, Draw.Color(120, 255, 20, 147))
-                
-                -- Draw range text on minimap
-                local rangeText = "R: " .. math.floor(rRange)
-                Draw.Text(rangeText, 12, minimapPos.x - 20, minimapPos.y - 30, Draw.Color(255, 255, 255, 255))
+                if distanceToCursor <= rRange then
+                    -- Draw circle at cursor position showing R landing area
+                    Draw.Circle(cursorPos, 200, Draw.Color(200, 255, 100, 100)) -- Red circle for landing
+                    Draw.Circle(cursorPos, 400, Draw.Color(150, 255, 50, 50)) -- Outer effect area
+                    
+                    -- Draw text at cursor
+                    local cursorScreen = cursorPos:To2D()
+                    if cursorScreen.onScreen then
+                        Draw.Text("R LANDING", 16, cursorScreen.x - 35, cursorScreen.y - 40, Draw.Color(255, 255, 255, 255))
+                        local distanceText = math.floor(distanceToCursor) .. "/" .. math.floor(rRange)
+                        Draw.Text(distanceText, 12, cursorScreen.x - 20, cursorScreen.y - 20, Draw.Color(255, 200, 200, 200))
+                    end
+                else
+                    -- Show out of range indicator
+                    local cursorScreen = cursorPos:To2D()
+                    if cursorScreen.onScreen then
+                        Draw.Text("OUT OF RANGE", 16, cursorScreen.x - 45, cursorScreen.y - 40, Draw.Color(255, 255, 0, 0))
+                        local distanceText = math.floor(distanceToCursor) .. "/" .. math.floor(rRange)
+                        Draw.Text(distanceText, 12, cursorScreen.x - 20, cursorScreen.y - 20, Draw.Color(255, 255, 0, 0))
+                    end
+                end
             end
         end
     end
@@ -430,8 +457,11 @@ function TwistedFate:Draw()
         end
     end
     
-    -- Check if auto harass is active (only hold key)
-    local isAutoHarassActive = currentKey
+    -- Check if auto harass is active (key is being held down)
+    local isAutoHarassActive = false
+    if currentKey then
+        isAutoHarassActive = Control.IsKeyDown(currentKey)
+    end
     
     if isAutoHarassActive then
         local boxX = 50
@@ -457,8 +487,8 @@ function TwistedFate:Draw()
         
         -- Mana info
         local manaPercent = math.floor(myHero.mana / myHero.maxMana * 100)
-        local manaText = "MANA: " .. manaPercent .. "% (Min: " .. self.Menu.harass.autoHarassMana:Value() .. "%)"
-        local manaColor = manaPercent >= self.Menu.harass.autoHarassMana:Value() and Draw.Color(255, 0, 255, 0) or Draw.Color(255, 255, 100, 100)
+        local manaText = "MANA: " .. manaPercent .. "% (Min: " .. self.Menu.harass.manaThreshold:Value() .. "%)"
+        local manaColor = manaPercent >= self.Menu.harass.manaThreshold:Value() and Draw.Color(255, 0, 255, 0) or Draw.Color(255, 255, 100, 100)
         Draw.Text(manaText, 12, boxX + 10, boxY + 62, manaColor)
     else
         local boxX = 50
@@ -1268,45 +1298,37 @@ function TwistedFate:GetHeroTarget(range)
 end
 
 function TwistedFate:AutoHarass()
-    -- Check if auto harass is active (only hold key)
-    local holdKeyActive = self.Menu.harass.autoHarass:Key()
-    local isActive = holdKeyActive
-    
-    if not isActive then
+    -- Check if auto harass key is being held down
+    local currentKey = self.Menu.harass.autoHarass:Key()
+    if not currentKey or not Control.IsKeyDown(currentKey) then
         return
     end
     
-    -- Check if Q is learned and ready
-    if not IsSpellLearned(_Q) or not Ready(_Q) then
-        return
-    end
+    -- Same logic as Harass() function but activated by key
+    local target = self:GetHeroTarget(self.Q.range)
+    if not target then return end
     
-    -- Check mana threshold
+    -- Check mana threshold (use harass mana threshold)
     local manaPercent = myHero.mana / myHero.maxMana * 100
-    if manaPercent < self.Menu.harass.autoHarassMana:Value() then
-        return
-    end
+    if manaPercent < self.Menu.harass.manaThreshold:Value() then return end
     
     -- Cooldown between auto harass casts (prevent spam)
-    if GameTimer() - self.lastAutoHarass < 1.5 then
+    if GameTimer() - self.lastAutoHarass < 0.5 then
         return
     end
     
-    -- Don't auto harass during active orbwalker modes (except None)
-    local Mode = self:GetMode()
-    if Mode ~= "None" then
-        return
+    -- Use Q (same as harass)
+    if self.Menu.harass.useQ:Value() and IsSpellLearned(_Q) and Ready(_Q) then
+        if self:CastQ(target) then
+            self.lastAutoHarass = GameTimer()
+        end
     end
     
-    -- Find target in auto harass range
-    local target = self:GetHeroTarget(self.Menu.harass.autoHarassRange:Value())
-    if not target then
-        return
-    end
-    
-    -- Cast Q with prediction
-    if self:CastQ(target) then
-        self.lastAutoHarass = GameTimer()
+    -- Use selected card (same as harass)
+    if self.Menu.harass.useW:Value() and IsSpellLearned(_W) and self.currentCard ~= CARD_TYPES.NONE then
+        if self:UseSelectedCard(target) then
+            self.lastAutoHarass = GameTimer()
+        end
     end
 end
 
@@ -1638,6 +1660,16 @@ function TwistedFate:GetSafeFleePosition()
     local fleePos = myPos + direction * 1200
     
     return fleePos
+end
+
+function TwistedFate:GetRRange()
+    if not IsSpellLearned(_R) then return 0 end
+    
+    local level = myHero:GetSpellData(_R).level
+    if level == 0 then return 0 end
+    
+    -- R Range by level: 5500 at all levels (global)
+    return 5500
 end
 
 -- Initialize
