@@ -5,47 +5,55 @@ local GameMinionCount = Game.MinionCount
 local GameMinion = Game.Minion
 local myHero = myHero
 
--- Jungle monsters that can be smited
+-- Jungle monsters that can be smited (all keys in lowercase)
 local SmiteableMonsters = {
-    -- Dragons
-    ["SRU_Dragon_Air"] = {name = "Air Dragon", priority = 8},
-    ["SRU_Dragon_Earth"] = {name = "Earth Dragon", priority = 8},
-    ["SRU_Dragon_Fire"] = {name = "Fire Dragon", priority = 8},
-    ["SRU_Dragon_Water"] = {name = "Water Dragon", priority = 8},
-    ["SRU_Dragon_Elder"] = {name = "Elder Dragon", priority = 10},
-    ["SRU_Dragon_Ruined"] = {name = "Ruined Dragon", priority = 8},
-    ["SRU_Dragon_Chemtech"] = {name = "Chemtech Dragon", priority = 8},
-    ["SRU_Dragon_Hextech"] = {name = "Hextech Dragon", priority = 8},
+    -- Dragons (multiple possible names)
+    ["sru_dragon_air"] = {name = "Air Dragon", priority = 8},
+    ["sru_dragon_earth"] = {name = "Earth Dragon", priority = 8},
+    ["sru_dragon_fire"] = {name = "Fire Dragon", priority = 8},
+    ["sru_dragon_water"] = {name = "Water Dragon", priority = 8},
+    ["sru_dragon_elder"] = {name = "Elder Dragon", priority = 10},
+    ["sru_dragon_ruined"] = {name = "Ruined Dragon", priority = 8},
+    ["sru_dragon_chemtech"] = {name = "Chemtech Dragon", priority = 8},
+    ["sru_dragon_hextech"] = {name = "Hextech Dragon", priority = 8},
+    
+    -- Alternative dragon names (in case of name changes)
+    ["sru_dragon_cloud"] = {name = "Cloud Dragon", priority = 8},
+    ["sru_dragon_mountain"] = {name = "Mountain Dragon", priority = 8},
+    ["sru_dragon_ocean"] = {name = "Ocean Dragon", priority = 8},
+    ["sru_dragon_infernal"] = {name = "Infernal Dragon", priority = 8},
+    ["sru_dragon_wind"] = {name = "Wind Dragon", priority = 8},
+    ["sru_dragon_lightning"] = {name = "Lightning Dragon", priority = 8},
     
     -- Baron and Horde
-    ["SRU_Baron"] = {name = "Baron Nashor", priority = 10},
-    ["SRU_Horde"] = {name = "Voidgrub Horde", priority = 9},
-    ["SRU_Atakhan"] = {name = "Atakhan", priority = 10},
+    ["sru_baron"] = {name = "Baron Nashor", priority = 10},
+    ["sru_horde"] = {name = "Voidgrub Horde", priority = 9},
+    ["sru_atakhan"] = {name = "Atakhan", priority = 10},
     
     -- Rift Herald
-    ["SRU_RiftHerald"] = {name = "Rift Herald", priority = 9},
+    ["sru_riftherald"] = {name = "Rift Herald", priority = 9},
     
     -- Blue/Red Buff
-    ["SRU_Blue"] = {name = "Blue Sentinel", priority = 7},
-    ["SRU_Red"] = {name = "Red Brambleback", priority = 7},
+    ["sru_blue"] = {name = "Blue Sentinel", priority = 7},
+    ["sru_red"] = {name = "Red Brambleback", priority = 7},
     
     -- Krugs
-    ["SRU_Krug"] = {name = "Ancient Krug", priority = 5},
-    ["SRU_KrugMini"] = {name = "Krug", priority = 3},
+    ["sru_krug"] = {name = "Ancient Krug", priority = 5},
+    ["sru_krugmini"] = {name = "Krug", priority = 3},
     
     -- Gromp
-    ["SRU_Gromp"] = {name = "Gromp", priority = 5},
+    ["sru_gromp"] = {name = "Gromp", priority = 5},
     
     -- Wolves
-    ["SRU_Murkwolf"] = {name = "Greater Murk Wolf", priority = 5},
-    ["SRU_MurkwolfMini"] = {name = "Murk Wolf", priority = 3},
+    ["sru_murkwolf"] = {name = "Greater Murk Wolf", priority = 5},
+    ["sru_murkwolfmini"] = {name = "Murk Wolf", priority = 3},
     
     -- Raptors
-    ["SRU_Razorbeak"] = {name = "Crimson Raptor", priority = 5},
-    ["SRU_RazorbeakMini"] = {name = "Raptor", priority = 3},
+    ["sru_razorbeak"] = {name = "Crimson Raptor", priority = 5},
+    ["sru_razorbeakmini"] = {name = "Raptor", priority = 3},
     
     -- River Scuttler
-    ["Sru_Crab"] = {name = "Rift Scuttler", priority = 4}
+    ["sru_crab"] = {name = "Rift Scuttler", priority = 4}
 }
 
 -- Utility functions
@@ -154,8 +162,6 @@ function AutoSmite:LoadMenu()
     
     -- Main Settings
     self.Menu:MenuElement({id = "enabled", name = "Enable AutoSmite", value = true})
-    self.Menu:MenuElement({id = "keyToggle", name = "Toggle Key", key = string.byte("F"), toggle = true, value = false})
-    self.Menu:MenuElement({id = "onlyKey", name = "Only when key pressed", value = false})
     
     -- Monster Priority
     self.Menu:MenuElement({type = MENU, id = "monsters", name = "Monster Settings"})
@@ -179,6 +185,11 @@ function AutoSmite:LoadMenu()
     self.Menu.drawing:MenuElement({id = "smiteRange", name = "Draw Smite Range", value = true})
     self.Menu.drawing:MenuElement({id = "smiteDamage", name = "Show Smite Damage on Monsters", value = true})
     self.Menu.drawing:MenuElement({id = "smiteInfo", name = "Show Smite Info", value = true})
+    
+    -- Debug
+    self.Menu:MenuElement({type = MENU, id = "debug", name = "Debug"})
+    self.Menu.debug:MenuElement({id = "printMonsters", name = "Print Monster Names (Console)", value = false})
+    self.Menu.debug:MenuElement({id = "showUnknown", name = "Show Unknown Monsters", value = false})
 end
 
 function AutoSmite:Draw()
@@ -195,11 +206,16 @@ function AutoSmite:Draw()
     end
     
     if self.Menu.drawing.smiteDamage:Value() then
+        local heroPos = myHero.pos
+        local smiteRange = self.smiteRange
+        
         for i = 1, GameMinionCount() do
             local minion = GameMinion(i)
-            if IsValid(minion) and SmiteableMonsters[minion.charName] then
-                local distance = GetDistance(myHero.pos, minion.pos)
-                if distance <= 1500 then
+            local lowerCharName = minion.charName and string.lower(minion.charName) or ""
+            if IsValid(minion) and SmiteableMonsters[lowerCharName] then
+                local distance = GetDistance(heroPos, minion.pos)
+                -- Only draw for monsters in smite range to improve performance
+                if distance <= smiteRange then
                     local smiteDamage = self:GetSmiteDamage(minion)
                     local color = Draw.Color(255, 0, 255, 0)
                     if minion.health <= smiteDamage then
@@ -209,7 +225,7 @@ function AutoSmite:Draw()
                     local text = string.format("HP: %d | Smite: %d", math.floor(minion.health), smiteDamage)
                     Draw.Text(text, 16, minion.pos2D.x - 50, minion.pos2D.y - 30, color)
                     
-                    if minion.health <= smiteDamage and distance <= self.smiteRange then
+                    if minion.health <= smiteDamage then
                         Draw.Circle(minion.pos, 100, color)
                     end
                 end
@@ -224,10 +240,6 @@ function AutoSmite:Tick()
     end
     
     if not self.Menu.enabled:Value() then return end
-    
-    if self.Menu.onlyKey:Value() and not self.Menu.keyToggle:Value() then
-        return
-    end
     
     if self.lastSmiteTick + self.Menu.safety.delayMs:Value() > GetTickCount() then
         return
@@ -250,33 +262,58 @@ end
 function AutoSmite:GetBestSmiteTarget()
     local bestTarget = nil
     local bestPriority = 0
+    local smiteRange = self.smiteRange
+    local heroPos = myHero.pos
     
     for i = 1, GameMinionCount() do
         local minion = GameMinion(i)
         
-        if IsValid(minion) and SmiteableMonsters[minion.charName] then
-            local distance = GetDistance(myHero.pos, minion.pos)
-            local smiteDamage = self:GetSmiteDamage(minion)
+        if IsValid(minion) then
+            local lowerCharName = minion.charName and string.lower(minion.charName) or ""
             
-            -- Check if in smite range and can be killed by smite
-            if distance <= self.smiteRange and minion.health <= smiteDamage then
-                local monsterData = SmiteableMonsters[minion.charName]
+            -- Debug: Print all monster names if enabled
+            if self.Menu.debug.printMonsters:Value() and minion.charName and minion.charName ~= "" then
+                local distance = GetDistance(heroPos, minion.pos)
+                if distance <= smiteRange * 2 then  -- Extended range for debug
+                    print("DEBUG - Monster found: " .. minion.charName .. " (lower: " .. lowerCharName .. ") | Distance: " .. math.floor(distance))
+                end
+            end
+            
+            -- Debug: Show unknown monsters
+            if self.Menu.debug.showUnknown:Value() and not SmiteableMonsters[lowerCharName] and minion.charName and minion.charName ~= "" then
+                local distance = GetDistance(heroPos, minion.pos)
+                if distance <= smiteRange * 2 and string.find(lowerCharName, "sru") then
+                    print("UNKNOWN MONSTER: " .. minion.charName .. " (lower: " .. lowerCharName .. ") | Distance: " .. math.floor(distance))
+                end
+            end
+            
+            if SmiteableMonsters[lowerCharName] then
+                -- Pre-calculate distance once
+                local distance = GetDistance(heroPos, minion.pos)
                 
-                -- Check if this monster type is enabled
-                if self:IsMonsterTypeEnabled(minion.charName) then
-                    -- Priority based on monster importance and health percentage
-                    local priority = monsterData.priority
+                -- Only process if in smite range (optimize by checking distance first)
+                if distance <= smiteRange then
+                    local smiteDamage = self:GetSmiteDamage(minion)
                     
-                    -- Prioritize monsters that are closer to death
-                    local healthPercentage = minion.health / minion.maxHealth
-                    priority = priority + (1 - healthPercentage) * 2
-                    
-                    -- Prioritize closer monsters slightly
-                    priority = priority + (1 - distance / self.smiteRange) * 0.5
-                    
-                    if priority > bestPriority then
-                        bestPriority = priority
-                        bestTarget = minion
+                    -- Check if can be killed by smite
+                    if minion.health <= smiteDamage then
+                        local monsterData = SmiteableMonsters[lowerCharName]
+                        
+                        -- Check if this monster type is enabled
+                        if self:IsMonsterTypeEnabled(lowerCharName) then
+                            -- Simplified priority calculation (less CPU intensive)
+                            local priority = monsterData.priority
+                            
+                            -- Small bonus for closer monsters
+                            if distance < smiteRange * 0.5 then
+                                priority = priority + 1
+                            end
+                            
+                            if priority > bestPriority then
+                                bestPriority = priority
+                                bestTarget = minion
+                            end
+                        end
                     end
                 end
             end
@@ -287,41 +324,69 @@ function AutoSmite:GetBestSmiteTarget()
 end
 
 function AutoSmite:IsMonsterTypeEnabled(charName)
-    local monsterData = SmiteableMonsters[charName]
+    -- Convert to lowercase for consistent comparison
+    local lowerCharName = string.lower(charName)
+    local monsterData = SmiteableMonsters[lowerCharName]
+    
+    -- Auto-detect dragons and add them if missing
+    if string.find(lowerCharName, "sru_dragon") and not monsterData then
+        local priority = 8  -- Default dragon priority
+        if string.find(lowerCharName, "elder") then
+            priority = 10
+        end
+        SmiteableMonsters[lowerCharName] = {name = charName, priority = priority}
+        print("AUTO-DETECTED NEW DRAGON: " .. charName .. " (lower: " .. lowerCharName .. ") | Priority: " .. priority)
+        monsterData = SmiteableMonsters[lowerCharName]
+    end
+    
     if not monsterData then return false end
     
-    -- Dragons
-    if charName:find("Dragon") then
+    -- Dragons (expanded detection for all possible dragon names)
+    if lowerCharName == "sru_dragon_air" or 
+       lowerCharName == "sru_dragon_earth" or 
+       lowerCharName == "sru_dragon_fire" or 
+       lowerCharName == "sru_dragon_water" or 
+       lowerCharName == "sru_dragon_elder" or 
+       lowerCharName == "sru_dragon_ruined" or 
+       lowerCharName == "sru_dragon_chemtech" or 
+       lowerCharName == "sru_dragon_hextech" or
+       lowerCharName == "sru_dragon_cloud" or
+       lowerCharName == "sru_dragon_mountain" or
+       lowerCharName == "sru_dragon_ocean" or
+       lowerCharName == "sru_dragon_infernal" or
+       lowerCharName == "sru_dragon_wind" or
+       lowerCharName == "sru_dragon_lightning" or
+       string.find(lowerCharName, "sru_dragon") then  -- Catch-all for any dragon
         return self.Menu.monsters.dragon:Value()
     end
     
     -- Baron
-    if charName == "SRU_Baron" then
+    if lowerCharName == "sru_baron" then
         return self.Menu.monsters.baron:Value()
     end
     
     -- Atakhan
-    if charName == "SRU_Atakhan" then
+    if lowerCharName == "sru_atakhan" then
         return self.Menu.monsters.atakhan:Value()
     end
     
     -- Voidgrub Horde
-    if charName == "SRU_Horde" then
+    if lowerCharName == "sru_horde" then
         return self.Menu.monsters.horde:Value()
     end
     
     -- Rift Herald
-    if charName == "SRU_RiftHerald" then
+    if lowerCharName == "sru_riftherald" then
         return self.Menu.monsters.herald:Value()
     end
     
     -- Blue/Red Buffs
-    if charName == "SRU_Blue" or charName == "SRU_Red" then
+    if lowerCharName == "sru_blue" or lowerCharName == "sru_red" then
         return self.Menu.monsters.buffs:Value()
     end
     
     -- Scuttle Crab
-    if charName == "Sru_Crab" then
+    if lowerCharName == "sru_crab" then
         return self.Menu.monsters.scuttle:Value()
     end
     
