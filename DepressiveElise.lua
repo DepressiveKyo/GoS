@@ -1,7 +1,20 @@
 local Heroes = {"Elise"}
 
+require("DepressivePrediction")
+
 -- Hero validation
 if not table.contains(Heroes, myHero.charName) then return end
+
+-- Load DepressivePrediction library
+local PredictionLib = nil
+DelayAction(function()
+    if _G.DepressivePrediction then
+        PredictionLib = _G.DepressivePrediction
+        print("DepressiveElise: DepressivePrediction library loaded successfully!")
+    else
+        print("DepressiveElise: Warning - DepressivePrediction library not found!")
+    end
+end, 0.1)
 
 -- Constants and globals
 local GameHeroCount = Game.HeroCount
@@ -442,6 +455,13 @@ function Elise:LoadMenu()
     self.Menu.advanced:MenuElement({id = "spiderQRange", name = "Spider Q Max Range", value = 475, min = 300, max = 750, step = 25})
     self.Menu.advanced:MenuElement({id = "attackReset", name = "Use Attack Reset", value = true})
     
+    -- Prediction Settings
+    self.Menu:MenuElement({type = MENU, id = "prediction", name = "Prediction Settings"})
+    self.Menu.prediction:MenuElement({id = "status", name = "DepressivePrediction Status", type = _G.SPACE})
+    self.Menu.prediction:MenuElement({id = "useAdvanced", name = "Use Advanced Prediction", value = true})
+    self.Menu.prediction:MenuElement({id = "hitChanceE", name = "E Min Hit Chance", value = 3, min = 1, max = 6, step = 1})
+    self.Menu.prediction:MenuElement({id = "hitChanceW", name = "W Min Hit Chance", value = 2, min = 1, max = 6, step = 1})
+    
     -- Drawing
     self.Menu:MenuElement({type = MENU, id = "drawing", name = "Drawing"})
     self.Menu.drawing:MenuElement({id = "Q", name = "Draw Q Range", value = true})
@@ -451,6 +471,7 @@ function Elise:LoadMenu()
     self.Menu.drawing:MenuElement({id = "rappel", name = "Draw Rappel Status", value = true})
     self.Menu.drawing:MenuElement({id = "killable", name = "Draw Killable Enemies", value = true})
     self.Menu.drawing:MenuElement({id = "cooldowns", name = "Draw Cooldown InfoBox", value = true})
+    self.Menu.drawing:MenuElement({id = "predictionInfo", name = "Show Prediction Status", value = true})
 end
 
 function Elise:Draw()
@@ -510,6 +531,19 @@ function Elise:Draw()
                 Draw.Circle(enemy.pos, 100, Draw.Color(255, 255, 0, 0))
                 Draw.Text("KILLABLE", 16, enemy.pos:To2D().x - 30, enemy.pos:To2D().y - 50, Draw.Color(255, 255, 0, 0))
             end
+        end
+    end
+    
+    -- Draw Prediction Status
+    if self.Menu.drawing.predictionInfo:Value() then
+        local predStatus = PredictionLib and "DepressivePrediction: ACTIVE" or "DepressivePrediction: NOT FOUND"
+        local predColor = PredictionLib and Draw.Color(255, 0, 255, 0) or Draw.Color(255, 255, 0, 0)
+        Draw.Text(predStatus, 14, myPos:To2D().x - 80, myPos:To2D().y + 50, predColor)
+        
+        if PredictionLib then
+            local advancedStatus = self.Menu.prediction.useAdvanced:Value() and "Advanced: ON" or "Advanced: OFF"
+            local advancedColor = self.Menu.prediction.useAdvanced:Value() and Draw.Color(255, 0, 255, 0) or Draw.Color(255, 255, 255, 255)
+            Draw.Text(advancedStatus, 12, myPos:To2D().x - 50, myPos:To2D().y + 65, advancedColor)
         end
     end
     
@@ -780,6 +814,19 @@ function Elise:Tick()
     -- Update enemy heroes list periodically
     if math.floor(GameTimer())%5==0 then
         Enemys = GetEnemyHeroes()
+    end
+    
+    -- Update prediction library unit tracking if available
+    if PredictionLib then
+        for i = 1, #Enemys do
+            local enemy = Enemys[i]
+            if enemy and enemy.valid then
+                -- This updates the prediction library's internal tracking
+                pcall(function()
+                    PredictionLib.GetPredictedPosition(enemy, 0.1) -- Update tracking
+                end)
+            end
+        end
     end
     
     local Mode = self:GetMode()
@@ -1110,7 +1157,11 @@ function Elise:OnTakeDamage(source, target, damage)
 end
 
 function Elise:Combo()
-    local target = self:GetHeroTarget(self.Menu.combo.comboRange:Value())
+    local target = self:GetBestTarget("combo", self.Menu.combo.comboRange:Value())
+    if not target then
+        -- Fallback to regular target selection
+        target = self:GetHeroTarget(self.Menu.combo.comboRange:Value())
+    end
     if not target then return end
     
     local distance = GetDistance(myHero.pos, target.pos)
@@ -1119,24 +1170,27 @@ function Elise:Combo()
     if self.currentForm == FORM_TYPES.HUMAN then
         local usedSpell = false
         
-        -- Cast E (Cocoon) first for CC
-        if self.Menu.combo.useE:Value() and Ready(_E) and distance <= self.E.range then
+        -- Cast E (Cocoon) first for CC - use enhanced target validation
+        if self.Menu.combo.useE:Value() and Ready(_E) and 
+           self:IsValidPredictionTarget(target, "E") then
             if self:CastE(target) then
                 usedSpell = true
                 self.combatState.usedHumanSpells = true
             end
         end
         
-        -- Cast Q
-        if self.Menu.combo.useQ:Value() and Ready(_Q) and distance <= self.Q.range then
+        -- Cast Q - use enhanced target validation
+        if self.Menu.combo.useQ:Value() and Ready(_Q) and 
+           self:IsValidPredictionTarget(target, "Q") then
             if self:CastQ(target) then
                 usedSpell = true
                 self.combatState.usedHumanSpells = true
             end
         end
         
-        -- Cast W
-        if self.Menu.combo.useW:Value() and Ready(_W) and distance <= self.W.range then
+        -- Cast W - use enhanced target validation
+        if self.Menu.combo.useW:Value() and Ready(_W) and 
+           self:IsValidPredictionTarget(target, "W") then
             if self:CastW(target) then
                 usedSpell = true
                 self.combatState.usedHumanSpells = true
@@ -1186,7 +1240,11 @@ function Elise:Harass()
         return
     end
     
-    local target = self:GetHeroTarget(self.E.range)
+    local target = self:GetBestTarget("E", self.E.range)
+    if not target then
+        -- Fallback to regular target selection
+        target = self:GetHeroTarget(self.E.range)
+    end
     if not target then return end
     
     -- Check mana threshold
@@ -1195,18 +1253,21 @@ function Elise:Harass()
     
     local distance = GetDistance(myHero.pos, target.pos)
     
-    -- Cast E for CC
-    if self.Menu.harass.useE:Value() and Ready(_E) and distance <= self.E.range then
+    -- Cast E for CC - use enhanced validation
+    if self.Menu.harass.useE:Value() and Ready(_E) and 
+       self:IsValidPredictionTarget(target, "E") then
         self:CastE(target)
     end
     
-    -- Cast Q
-    if self.Menu.harass.useQ:Value() and Ready(_Q) and distance <= self.Q.range then
+    -- Cast Q - use enhanced validation
+    if self.Menu.harass.useQ:Value() and Ready(_Q) and 
+       self:IsValidPredictionTarget(target, "Q") then
         self:CastQ(target)
     end
     
-    -- Cast W
-    if self.Menu.harass.useW:Value() and Ready(_W) and distance <= self.W.range then
+    -- Cast W - use enhanced validation
+    if self.Menu.harass.useW:Value() and Ready(_W) and 
+       self:IsValidPredictionTarget(target, "W") then
         self:CastW(target)
     end
 end
@@ -1405,6 +1466,29 @@ end
 function Elise:GetEPrediction(target)
     if not target then return nil end
     
+    -- Use DepressivePrediction library if available and enabled
+    if PredictionLib and self.Menu.prediction.useAdvanced:Value() then
+        local spell = PredictionLib.SpellPrediction({
+            Type = 0, -- SPELLTYPE_LINE
+            Speed = self.E.speed,
+            Range = self.E.range,
+            Delay = self.E.delay,
+            Radius = self.E.width,
+            Collision = self.E.collision,
+            CollisionTypes = {0} -- COLLISION_MINION
+        })
+        
+        local prediction = spell:GetPrediction(target, myHero.pos)
+        local minHitChance = self.Menu.prediction.hitChanceE:Value()
+        
+        if prediction and prediction.HitChance >= minHitChance then
+            return prediction.CastPosition
+        end
+        
+        return nil
+    end
+    
+    -- Fallback to basic prediction if DepressivePrediction is not available
     local distance = GetDistance(myHero.pos, target.pos)
     if distance > self.E.range then return nil end
     
@@ -1446,6 +1530,29 @@ end
 function Elise:GetWPrediction(target)
     if not target then return nil end
     
+    -- Use DepressivePrediction library if available and enabled
+    if PredictionLib and self.Menu.prediction.useAdvanced:Value() then
+        local spell = PredictionLib.SpellPrediction({
+            Type = 1, -- SPELLTYPE_CIRCLE
+            Speed = self.W.speed,
+            Range = self.W.range,
+            Delay = self.W.delay,
+            Radius = self.W.width,
+            Collision = self.W.collision,
+            CollisionTypes = {}
+        })
+        
+        local prediction = spell:GetPrediction(target, myHero.pos)
+        local minHitChance = self.Menu.prediction.hitChanceW:Value()
+        
+        if prediction and prediction.HitChance >= minHitChance then
+            return prediction.CastPosition
+        end
+        
+        return nil
+    end
+    
+    -- Fallback to basic prediction if DepressivePrediction is not available
     local distance = GetDistance(myHero.pos, target.pos)
     if distance > self.W.range then return nil end
     
@@ -1480,6 +1587,47 @@ function Elise:GetHeroTarget(range)
     return bestTarget
 end
 
+-- Enhanced target selection for specific spells
+function Elise:GetBestTarget(spellType, range)
+    local bestTarget = nil
+    local bestScore = 0
+    
+    for i = 1, #Enemys do
+        local enemy = Enemys[i]
+        if self:IsValidPredictionTarget(enemy, spellType) then
+            local distance = GetDistance(myHero.pos, enemy.pos)
+            if distance <= range then
+                local priority = self:GetTargetPriority(enemy)
+                
+                -- Add spell-specific scoring
+                if spellType == "E" and self.currentForm == FORM_TYPES.HUMAN then
+                    -- Prefer targets we can follow up on
+                    if distance <= self.SpiderQ.range + 200 then
+                        priority = priority + 3
+                    end
+                    
+                    -- Avoid very close targets for cocoon
+                    if distance < 250 then
+                        priority = priority - 2
+                    end
+                elseif spellType == "Q" and self.currentForm == FORM_TYPES.SPIDER then
+                    -- Spider Q for gap closing - prefer targets in follow-up range
+                    if distance <= self.SpiderQ.range and distance > 150 then
+                        priority = priority + 2
+                    end
+                end
+                
+                if priority > bestScore then
+                    bestTarget = enemy
+                    bestScore = priority
+                end
+            end
+        end
+    end
+    
+    return bestTarget
+end
+
 function Elise:GetTargetPriority(enemy)
     local priority = 0
     
@@ -1501,7 +1649,80 @@ function Elise:GetTargetPriority(enemy)
         priority = priority + 5
     end
     
+    -- Prediction-based priority adjustment
+    if PredictionLib then
+        local trackingInfo = PredictionLib.GetTrackingInfo(enemy)
+        if trackingInfo and trackingInfo.movementPattern then
+            -- Prioritize targets with more predictable movement
+            local movementData = trackingInfo.movementPattern
+            if movementData.avgVelocity then
+                local avgSpeed = math.sqrt(movementData.avgVelocity.x^2 + movementData.avgVelocity.z^2)
+                if avgSpeed < 100 then -- Slow or stationary targets
+                    priority = priority + 2
+                elseif avgSpeed > 400 then -- Fast moving targets
+                    priority = priority - 1
+                end
+            end
+        end
+    end
+    
     return priority
+end
+
+-- Enhanced target validation using prediction library
+function Elise:IsValidPredictionTarget(target, spellType)
+    if not target or not IsValid(target) then return false end
+    
+    -- Basic validation
+    local distance = GetDistance(myHero.pos, target.pos)
+    local maxRange = 0
+    
+    if spellType == "Q" then
+        maxRange = self.currentForm == FORM_TYPES.HUMAN and self.Q.range or self.SpiderQ.range
+    elseif spellType == "W" then
+        maxRange = self.currentForm == FORM_TYPES.HUMAN and self.W.range or self.SpiderW.range
+    elseif spellType == "E" then
+        maxRange = self.currentForm == FORM_TYPES.HUMAN and self.E.range or self.SpiderE.range
+    end
+    
+    if distance > maxRange then return false end
+    
+    -- Use prediction library for better validation if available
+    if PredictionLib then
+        local spell = nil
+        
+        if spellType == "E" and self.currentForm == FORM_TYPES.HUMAN then
+            spell = PredictionLib.SpellPrediction({
+                Type = 0, -- SPELLTYPE_LINE
+                Speed = self.E.speed,
+                Range = self.E.range,
+                Delay = self.E.delay,
+                Radius = self.E.width,
+                Collision = self.E.collision,
+                CollisionTypes = {0} -- COLLISION_MINION
+            })
+        elseif spellType == "W" and self.currentForm == FORM_TYPES.HUMAN then
+            spell = PredictionLib.SpellPrediction({
+                Type = 1, -- SPELLTYPE_CIRCLE
+                Speed = self.W.speed,
+                Range = self.W.range,
+                Delay = self.W.delay,
+                Radius = self.W.width,
+                Collision = false,
+                CollisionTypes = {}
+            })
+        elseif spellType == "Q" then
+            -- Q is targeted, just check range and line of sight
+            return distance <= maxRange
+        end
+        
+        if spell then
+            local prediction = spell:GetPrediction(target, myHero.pos)
+            return prediction and prediction.HitChance >= 2 -- HITCHANCE_LOW or higher
+        end
+    end
+    
+    return true -- Fallback to basic validation
 end
 
 function Elise:IsKillable(target)
@@ -1812,5 +2033,14 @@ end
 
 -- Initialize
 DelayAction(function()
+    -- Check for DepressivePrediction one more time before initializing Elise
+    if _G.DepressivePrediction then
+        PredictionLib = _G.DepressivePrediction
+        print("DepressiveElise: DepressivePrediction integrated successfully!")
+    else
+        print("DepressiveElise: Running without DepressivePrediction (basic prediction will be used)")
+    end
+    
     _G.Elise = Elise()
-end, math.max(0.07, 5 - Game.Timer()))
+    print("DepressiveElise: Loaded successfully!")
+end, math.max(0.2, 5 - Game.Timer()))
