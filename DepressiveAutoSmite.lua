@@ -115,6 +115,11 @@ local function SmiteReady()
 end
 
 local function CastSmite(target)
+    -- Verify target is still valid before attempting to cast
+    if not target or not IsValid(target) then
+        return false
+    end
+    
     local summ1 = myHero:GetSpellData(SUMMONER_1)
     local summ2 = myHero:GetSpellData(SUMMONER_2)
     
@@ -199,13 +204,21 @@ function AutoSmite:Draw()
         Draw.Circle(myHero.pos, self.smiteRange, Draw.Color(100, 0xFF, 0xFF, 0x00))
     end
     
-    if self.Menu.drawing.smiteInfo:Value() then
+    if self.Menu.drawing.smiteInfo:Value() and SmiteReady() then
         local smiteDamage = self:GetSmiteDamage()
         local text = string.format("Smite Damage: %d", smiteDamage)
-        Draw.Text(text, 20, myHero.pos2D.x - 100, myHero.pos2D.y - 50, Draw.Color(255, 255, 255, 255))
+        local color = Draw.Color(255, 255, 255, 255)
+        if smiteDamage == 0 then
+            text = "Smite: Not Ready"
+            color = Draw.Color(255, 255, 0, 0)
+        end
+        Draw.Text(text, 20, myHero.pos2D.x - 100, myHero.pos2D.y - 50, color)
+    elseif self.Menu.drawing.smiteInfo:Value() and not SmiteReady() then
+        local text = "Smite: On Cooldown"
+        Draw.Text(text, 20, myHero.pos2D.x - 100, myHero.pos2D.y - 50, Draw.Color(255, 255, 0, 0))
     end
     
-    if self.Menu.drawing.smiteDamage:Value() then
+    if self.Menu.drawing.smiteDamage:Value() and SmiteReady() then
         local heroPos = myHero.pos
         local smiteRange = self.smiteRange
         
@@ -218,14 +231,18 @@ function AutoSmite:Draw()
                 if distance <= smiteRange then
                     local smiteDamage = self:GetSmiteDamage(minion)
                     local color = Draw.Color(255, 0, 255, 0)
-                    if minion.health <= smiteDamage then
+                    if minion.health <= smiteDamage and smiteDamage > 0 then
                         color = Draw.Color(255, 255, 0, 0)
                     end
                     
                     local text = string.format("HP: %d | Smite: %d", math.floor(minion.health), smiteDamage)
+                    if smiteDamage == 0 then
+                        text = string.format("HP: %d | Smite: CD", math.floor(minion.health))
+                        color = Draw.Color(255, 128, 128, 128)
+                    end
                     Draw.Text(text, 16, minion.pos2D.x - 50, minion.pos2D.y - 30, color)
                     
-                    if minion.health <= smiteDamage then
+                    if minion.health <= smiteDamage and smiteDamage > 0 then
                         Draw.Circle(minion.pos, 100, color)
                     end
                 end
@@ -233,25 +250,35 @@ function AutoSmite:Draw()
         end
     end
 end
+    end
+end
 
 function AutoSmite:Tick()
+    -- Primary checks: hero status, chat status, and smite availability
     if myHero.dead or Game.IsChatOpen() or not SmiteReady() then
         return
     end
     
     if not self.Menu.enabled:Value() then return end
     
+    -- Respect reaction delay setting
     if self.lastSmiteTick + self.Menu.safety.delayMs:Value() > GetTickCount() then
         return
     end
     
     local target = self:GetBestSmiteTarget()
     if target then
+        -- Double check smite is still ready before calculating damage (optimization)
+        if not SmiteReady() then
+            return
+        end
+        
         local smiteDamage = self:GetSmiteDamage(target)
         
         if target.health <= smiteDamage then
             if self:IsSafeToSmite(target) then
-                if CastSmite(target) then
+                -- Final check before casting (safety measure)
+                if SmiteReady() and CastSmite(target) then
                     self.lastSmiteTick = GetTickCount()
                 end
             end
@@ -445,6 +472,11 @@ function AutoSmite:GetSmiteSlot()
 end
 
 function AutoSmite:GetSmiteDamage(unit)
+    -- Return 0 damage if smite is not ready
+    if not SmiteReady() then
+        return 0
+    end
+    
     local SmiteDamage = 600
     local SmiteUnleashedDamage = 900
     local SmitePrimalDamage = 1200
