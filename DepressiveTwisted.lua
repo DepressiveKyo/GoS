@@ -3,6 +3,25 @@ local Heroes = {"TwistedFate"}
 -- Hero validation
 if not table.contains(Heroes, myHero.charName) then return end
 
+-- Load DepressivePrediction library
+local function LoadPrediction()
+    if not _G.DepressivePrediction then
+        local success, err = pcall(function()
+            require "DepressivePrediction"
+        end)
+        if not success then
+            print("Failed to load DepressivePrediction: " .. tostring(err))
+            return false
+        end
+    end
+    return _G.DepressivePrediction ~= nil
+end
+
+-- Try to load prediction
+LoadPrediction()
+
+local Prediction = _G.DepressivePrediction
+
 -- Constants and globals
 local GameHeroCount = Game.HeroCount
 local GameHero = Game.Hero
@@ -1162,7 +1181,7 @@ function TwistedFate:CastQ(target)
     if not Ready(_Q) then
         return false
     end
-    
+
     if not target or not IsValid(target) then 
         return false 
     end
@@ -1173,11 +1192,10 @@ function TwistedFate:CastQ(target)
         return false
     end
     
-    -- Use prediction for better accuracy
+    -- Use DepressivePrediction for better accuracy
     local prediction = self:GetQPrediction(target)
     if not prediction then 
-        -- If prediction fails, try direct cast on current position
-        prediction = target.pos
+        return false
     end
     
     -- Cast spell
@@ -1193,23 +1211,45 @@ function TwistedFate:GetQPrediction(target)
     local distance = GetDistance(myHero.pos, target.pos)
     if distance > self.Q.range then return nil end
     
-    -- Use GoS prediction
-    local prediction = target:GetPrediction(self.Q.speed, self.Q.delay + Game.Latency())
-    if not prediction then return nil end
-    
-    local predictedDistance = GetDistance(myHero.pos, prediction)
-    if predictedDistance > self.Q.range then return nil end
-    
-    -- Check collision with minions
-    if self.Q.collision then
-        local collision = target:GetCollision(self.Q.width, self.Q.speed, self.Q.delay)
-        if collision > 0 then
-            -- Try to find position that avoids collision
-            return self:FindQPositionAvoidingCollision(target, prediction)
+    -- Try to use DepressivePrediction if available
+    if Prediction then
+        -- Create spell data for DepressivePrediction
+        local qSpell = Prediction.SpellPrediction({
+            Type = 0, -- SPELLTYPE_LINE
+            Speed = self.Q.speed,
+            Range = self.Q.range,
+            Delay = self.Q.delay,
+            Radius = self.Q.width,
+            Collision = self.Q.collision,
+            CollisionTypes = {0}, -- COLLISION_MINION
+            UseBoundingRadius = true
+        })
+        
+        -- Get prediction
+        local predictionResult = qSpell:GetPrediction(target, myHero.pos)
+        
+        -- Check hit chance
+        if predictionResult.HitChance >= 3 then -- HITCHANCE_NORMAL or better
+            -- Return the predicted cast position
+            if predictionResult.CastPosition then
+                return Vector(predictionResult.CastPosition.x, myHero.pos.y, predictionResult.CastPosition.z)
+            end
         end
     end
     
-    return prediction
+    -- Fallback to basic prediction if DepressivePrediction fails or is not available
+    if target.GetPrediction then
+        local prediction = target:GetPrediction(self.Q.speed, self.Q.delay + Game.Latency())
+        if prediction then
+            local predictedDistance = GetDistance(myHero.pos, prediction)
+            if predictedDistance <= self.Q.range then
+                return prediction
+            end
+        end
+    end
+    
+    -- Final fallback: current position
+    return target.pos
 end
 
 function TwistedFate:FindQPositionAvoidingCollision(target, originalPrediction)
@@ -1674,5 +1714,20 @@ end
 
 -- Initialize
 DelayAction(function()
-    _G.TwistedFate = TwistedFate()
+    -- Wait for DepressivePrediction to be fully loaded
+    if not _G.DepressivePrediction then
+        print("Waiting for DepressivePrediction to load...")
+        DelayAction(function()
+            if _G.DepressivePrediction then
+                _G.TwistedFate = TwistedFate()
+                print("Twisted Fate loaded successfully with DepressivePrediction!")
+            else
+                print("ERROR: DepressivePrediction failed to load, loading Twisted Fate anyway...")
+                _G.TwistedFate = TwistedFate()
+            end
+        end, 1.0)
+    else
+        _G.TwistedFate = TwistedFate()
+        print("Twisted Fate loaded successfully with DepressivePrediction!")
+    end
 end, math.max(0.07, 5 - Game.Timer()))
