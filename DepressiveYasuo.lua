@@ -1,132 +1,79 @@
-local Heroes = {"Yasuo"}
+local Version = 3.0
+local Name = "DepressiveYasuo2"
 
 -- Hero validation
+local Heroes = {"Yasuo"}
 if not table.contains(Heroes, myHero.charName) then return end
 
--- Load GG Prediction
-require "GGPrediction"
-local Prediction = _G.GGPrediction
+-- Load prediction system
+require("DepressivePrediction")
+local PredictionLoaded = false
+DelayAction(function()
+    if _G.DepressivePrediction then
+        PredictionLoaded = true
+    end
+end, 1.0)
 
-local blockSpells = {
-    "ahriqmissile", -- Ahri
-    "ahriqreturnmissile",
-    -- "ahriwdamagemissile", -- Ahri
-    "ahriemissile", -- Ahri
+-- Function to check if DepressivePrediction is working
+local function CheckPredictionSystem()
+    if not PredictionLoaded or not _G.DepressivePrediction then
+        return false
+    end
+    
+    -- Verify that the main function exists
+    if not _G.DepressivePrediction.GetPrediction then
+        return false
+    end
+    
+    return true
+end
+
+-- Hotkey constants (fallback if not defined)
+local HK_Q = HK_Q or _Q
+local HK_W = HK_W or _W
+local HK_E = HK_E or _E
+local HK_R = HK_R or _R
+
+-- Windows message constants
+local KEY_DOWN = KEY_DOWN or 0x0100
+local KEY_UP = KEY_UP or 0x0101
+
+-- Constants
+local SPELL_RANGE = {
+    Q = 475,
+    Q3 = 900,
+    E = 475,
+    R = 1200
 }
 
--- Yasuo spell data for prediction
-local YasuoSpells = {
-    Q = {
-        speed = 1500,
-        delay = 0.4,
-        radius = 50,
-        range = 475,
-        collision = false
-    },
-    Q3 = {
-        speed = 1200,
-        delay = 0.4,
-        radius = 90,
-        range = 1000,
-        collision = false
-    },
-    E = {
-        speed = math.huge, -- Instant dash
-        delay = 0.1,
-        radius = 50,
-        range = 475,
-        collision = false
-    }
+local SPELL_SPEED = {
+    Q = math.huge,
+    Q3 = 1200,
+    E = math.huge
 }
 
--- Prediction helper functions
-local function GetQPrediction(target)
-    if not target or not target.valid then return nil, 0 end
-    
-    -- Check if GGPrediction is loaded
-    if not _G.GGPrediction then 
-        return target.pos, 2 -- Return target position with LOW hit chance as fallback
-    end
-    
-    local spellData = YasuoSpells.Q
-    local prediction, castPosition, hitChance = _G.GGPrediction:GetPrediction(
-        target,
-        myHero.pos,
-        spellData.speed,
-        spellData.delay,
-        spellData.radius
-    )
-    
-    -- Ensure we return valid values - never return nil for hitChance
-    if not prediction then
-        return target.pos, 1 -- Return IMPOSSIBLE if no prediction
-    end
-    
-    -- GGPrediction uses different hit chance values (0-4), map them to our system (1-6)
-    local mappedHitChance = 1 -- Default to IMPOSSIBLE
-    if hitChance == _G.GGPrediction.HITCHANCE_IMPOSSIBLE then
-        mappedHitChance = 1
-    elseif hitChance == _G.GGPrediction.HITCHANCE_COLLISION then
-        mappedHitChance = 2
-    elseif hitChance == _G.GGPrediction.HITCHANCE_NORMAL then
-        mappedHitChance = 3
-    elseif hitChance == _G.GGPrediction.HITCHANCE_HIGH then
-        mappedHitChance = 4
-    elseif hitChance == _G.GGPrediction.HITCHANCE_IMMOBILE then
-        mappedHitChance = 5
-    end
-    
-    return Vector(prediction.x, myHero.pos.y, prediction.z), math.max(1, mappedHitChance)
-end
+local SPELL_DELAY = {
+    Q = 0.4,
+    Q3 = 0.4,
+    E = 0.1,
+    R = 0.5
+}
 
-local function GetQ3Prediction(target)
-    if not target or not target.valid then return nil, 0 end
-    
-    -- Check if GGPrediction is loaded
-    if not _G.GGPrediction then 
-        return target.pos, 2 -- Return target position with LOW hit chance as fallback
-    end
-    
-    local spellData = YasuoSpells.Q3
-    local prediction, castPosition, hitChance = _G.GGPrediction:GetPrediction(
-        target,
-        myHero.pos,
-        spellData.speed,
-        spellData.delay,
-        spellData.radius
-    )
-    
-    -- Ensure we return valid values - never return nil for hitChance
-    if not prediction then
-        return target.pos, 1 -- Return IMPOSSIBLE if no prediction
-    end
-    
-    -- GGPrediction uses different hit chance values (0-4), map them to our system (1-6)
-    local mappedHitChance = 1 -- Default to IMPOSSIBLE
-    if hitChance == _G.GGPrediction.HITCHANCE_IMPOSSIBLE then
-        mappedHitChance = 1
-    elseif hitChance == _G.GGPrediction.HITCHANCE_COLLISION then
-        mappedHitChance = 2
-    elseif hitChance == _G.GGPrediction.HITCHANCE_NORMAL then
-        mappedHitChance = 3
-    elseif hitChance == _G.GGPrediction.HITCHANCE_HIGH then
-        mappedHitChance = 4
-    elseif hitChance == _G.GGPrediction.HITCHANCE_IMMOBILE then
-        mappedHitChance = 5
-    end
-    
-    return Vector(prediction.x, myHero.pos.y, prediction.z), math.max(1, mappedHitChance)
-end
+local SPELL_RADIUS = {
+    Q = 20,
+    Q3 = 90,
+    E = 100
+}
 
--- Check if Q3 (tornado) is ready - ESSENTIAL for E-Q3-Flash combo!
--- Q3 is the only Q variant that provides knockup, which is required for Flash follow-up
-local function HasQ3()
-    local spellData = myHero:GetSpellData(_Q)
-    return spellData and spellData.name == "YasuoQ3Wrapper"
-end
-
--- Utility functions
+-- Utility Functions - 2D Only
 local function GetDistance(p1, p2)
+    if not p1 or not p2 then return math.huge end
+    local dx = p1.x - p2.x
+    local dz = p1.z - p2.z
+    return math.sqrt(dx * dx + dz * dz)
+end
+
+local function GetDistance2D(p1, p2)
     if not p1 or not p2 then return math.huge end
     local dx = p1.x - p2.x
     local dz = p1.z - p2.z
@@ -140,18 +87,71 @@ local function Ready(spell)
     return spellData.currentCd == 0 and Game.CanUseSpell(spell) == 0
 end
 
-local function GetQCooldown()
+local function IsValidTarget(target, range)
+    if not target then return false end
+    if target.dead or not target.visible or not target.isTargetable then return false end
+    if target.team == myHero.team then return false end
+    if range and GetDistance(myHero.pos, target.pos) > range then return false end
+    return true
+end
+
+local function HasQ3()
     local spellData = myHero:GetSpellData(_Q)
-    return spellData and spellData.currentCd or 0
+    return spellData and spellData.name == "YasuoQ3Wrapper"
 end
 
-local function WillQBeReadyAfterE()
-    local qCd = GetQCooldown()
-    return qCd > 0 and qCd <= 0.5 -- E reduces Q CD by 1 second
+local function HasEBuff(target)
+    if not target or not target.valid then return true end -- Prevent dash if target invalid
+    
+    -- Use YasuoThePackGod system for buff checking
+    for i = 0, target.buffCount do
+        local buff = target:GetBuff(i)
+        if buff and buff.count > 0 and buff.name == "YasuoE" then
+            return true
+        end
+    end
+    return false
 end
 
-local function CanKillMinion(minion, damage)
-    return minion.health <= damage and minion.health > 0
+-- Additional function from YasuoThePackGod for general buff checking
+local function HasBuff(unit, name)
+    for i = 0, unit.buffCount do
+        local buff = unit:GetBuff(i)
+        if buff and buff.count > 0 and buff.name == name then
+            return true, buff.count
+        end
+    end
+    return false
+end
+
+local function IsUnderEnemyTurret(position, safetyRange)
+    safetyRange = safetyRange or 900
+    for i = 1, Game.TurretCount() do
+        local turret = Game.Turret(i)
+        if turret and turret.isEnemy and not turret.dead then
+            local turretPos2D = {x = turret.pos.x, z = turret.pos.z}
+            local targetPos2D = {x = position.x, z = position.z}
+            if GetDistance2D(targetPos2D, turretPos2D) < safetyRange then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Calculate position after E dash for turret safety check
+local function CalculateEPosition(target)
+    if not target or not target.pos then return nil end
+    
+    local heroPos = myHero.pos
+    local targetPos = target.pos
+    
+    -- E dash distance is approximately 475 units, but we land slightly before the target
+    local dashDistance = 475 - 50 -- Land 50 units before target
+    local direction = (targetPos - heroPos):Normalized()
+    local finalPosition = heroPos + (direction * dashDistance)
+    
+    return {x = finalPosition.x, z = finalPosition.z}
 end
 
 local function GetQDamage()
@@ -160,8 +160,7 @@ local function GetQDamage()
     local baseDamage = {20, 40, 60, 80, 100}
     local adRatio = 1.05
     local totalAD = myHero.totalDamage
-    local damage = baseDamage[level] + (totalAD * adRatio)
-    return damage
+    return baseDamage[level] + (totalAD * adRatio)
 end
 
 local function GetEDamage()
@@ -170,1470 +169,1639 @@ local function GetEDamage()
     local baseDamage = {60, 70, 80, 90, 100}
     local apRatio = 0.6
     local totalAP = myHero.ap
-    local damage = baseDamage[level] + (totalAP * apRatio)
-    return damage
+    return baseDamage[level] + (totalAP * apRatio)
 end
 
--- Check if target has Yasuo's E buff (cannot dash to same target again)
-local function HasEBuff(target)
-    if not target or not target.valid then return true end -- Prevent dash if target invalid
+-- Prediction Functions - Using DepressivePrediction directly
+local function GetPrediction(target, spell)
+    if not target or not target.valid then return nil, 0 end
     
-    -- Safe check for buff count
-    local buffCount = target.buffCount or 0
-    if buffCount == 0 then return false end
-    
-    for i = 0, buffCount - 1 do
-        local buff = target:GetBuff(i)
-        if buff and buff.name then
-            local buffName = buff.name
-            -- Check for Yasuo's E buff (exact match)
-            if buffName == "YasuoE" then
-                return true
+    -- Check if DepressivePrediction is properly loaded
+    if CheckPredictionSystem() then
+        local spellData = {}
+        
+        -- Dynamic spell data based on Q state
+        if spell == "Q" or spell == "Q3" then
+            if HasQ3() then
+                -- Q3 (tornado) has longer range and different properties
+                spellData = {
+                    range = SPELL_RANGE.Q3,
+                    speed = SPELL_SPEED.Q3,
+                    delay = SPELL_DELAY.Q3,
+                    radius = SPELL_RADIUS.Q3
+                }
+            else
+                -- Q1/Q2 normal range
+                spellData = {
+                    range = SPELL_RANGE.Q,
+                    speed = SPELL_SPEED.Q,
+                    delay = SPELL_DELAY.Q,
+                    radius = SPELL_RADIUS.Q
+                }
             end
+        else
+            -- Other spells use direct lookup
+            spellData = {
+                range = SPELL_RANGE[spell],
+                speed = SPELL_SPEED[spell],
+                delay = SPELL_DELAY[spell],
+                radius = SPELL_RADIUS[spell]
+            }
         end
-    end
-    return false
-end
-
--- Check if target is valid for abilities
-local function IsValidTarget(target, range)
-    if not target then return false end
-    if target.dead or not target.visible or not target.isTargetable then return false end
-    if range and GetDistance(myHero.pos, target.pos) > range then return false end
-    return true
-end
-
--- Check if position is under enemy turret
-local function IsUnderEnemyTurret(position, safetyRange)
-    safetyRange = safetyRange or 900 -- Default safety range
-    for i = 1, Game.TurretCount() do
-        local turret = Game.Turret(i)
-        if turret and turret.isEnemy and turret.alive and turret.visible then
-            local distance = GetDistance(position, turret.pos)
-            -- Use configurable safety range
-            if distance <= safetyRange then
-                return true
-            end
-        end
-    end
-    return false
-end
-
--- Check if it's safe to E to target (turret check)
-local function IsSafeToE(target, yasuoInstance)
-    if not target then return false end
-    
-    -- If turret safety is disabled, always allow E
-    if yasuoInstance and not yasuoInstance.Menu.turret.enabled:Value() then
-        return true
-    end
-    
-    local safetyRange = yasuoInstance and yasuoInstance.Menu.turret.safetyRange:Value() or 900
-    local lowHealthThreshold = yasuoInstance and yasuoInstance.Menu.turret.lowHealthThreshold:Value() or 15
-    local veryLowThreshold = yasuoInstance and yasuoInstance.Menu.turret.veryLowThreshold:Value() or 10
-    
-    -- Always allow E if target is very low
-    local targetHealthPercent = target.maxHealth > 0 and (target.health / target.maxHealth * 100) or 100
-    if targetHealthPercent <= lowHealthThreshold then
-        return true
-    end
-    
-    -- Check if we would be under enemy turret after E
-    if IsUnderEnemyTurret(target.pos, safetyRange) then
-        return false
-    end
-    
-    -- Also check if we're currently under turret (extra safety)
-    if IsUnderEnemyTurret(myHero.pos, safetyRange) then
-        -- If we're already under turret, don't E unless target is very low
-        if targetHealthPercent > veryLowThreshold then
-            return false
+        
+        -- Use DepressivePrediction direct API - 2D only
+        local sourcePos2D = {x = myHero.pos.x, z = myHero.pos.z}
+        
+        local unitPos, castPos, timeToHit = _G.DepressivePrediction.GetPrediction(
+            target,
+            sourcePos2D,
+            spellData.speed,
+            spellData.delay,
+            spellData.radius
+        )
+        
+        if castPos and castPos.x and castPos.z then
+            local hitChance = 4 -- Default to HIGH hit chance with DepressivePrediction
+            -- Return 2D position only
+            return {x = castPos.x, z = castPos.z}, hitChance
         end
     end
     
-    return true
+    -- Fallback prediction - 2D only
+    return {x = target.pos.x, z = target.pos.z}, 2
 end
 
--- Get valid enemy champions in range (for future combo implementation)
-local function GetEnemyChampionsInRange(range)
-    local enemies = {}
-    for i = 1, Game.HeroCount() do
-        local hero = Game.Hero(i)
-        if hero and hero.isEnemy and IsValidTarget(hero, range) and not HasEBuff(hero) then
-            table.insert(enemies, hero)
-        end
-    end
-    return enemies
-end
+-- Main Yasuo Class
+class "DepressiveYasuo2"
 
--- Yasuo Class
-class "Yasuo"
-
-function Yasuo:__init()
-    -- Walljump system
-    self.walljumpSpots = {
-        {pos = Vector(7236, 0, 5118), name = "Bot Wall Jump", id = 1},  -- First walljump
-        {pos = Vector(7634, 0, 9850), name = "Top Wall Jump", id = 2}   -- Second walljump
-    }
+function DepressiveYasuo2:__init()
+    -- Walljump System
+    self.walljumpSpots = {}
     self.selectedWalljumpSpot = nil
-    self.walljumpSelectionActive = false
-    
-    -- Walljump sequences for each spot
-    self.walljumpSequences = {
-        [1] = { -- First walljump (Bot)
-            selectPos = Vector(7180.00, 48.53, 5120.00),   -- Position to select
-            firstEPos = Vector(6962.84, 51.15, 5375.40),   -- First E position  
-            secondEPos = Vector(6810.99, 55.35, 5533.42)   -- Second E position after Q
-        },
-        [2] = { -- Second walljump (Top)
-            selectPos = Vector(7626.35, 51.87, 9814.79),   -- Position to select
-            firstEPos = Vector(7831.61, 52.22, 9625.00),   -- First E position
-            secondEPos = Vector(7999.78, 52.35, 9472.98)   -- Second E position after Q
-        }
-    }
-    
-    -- Walljump execution control
     self.walljumpExecuting = false
     self.walljumpStep = 0
     self.currentSequence = nil
-    self.autoMovingToSpot = false
-    self.arrivalTime = 0
+    self.tempWalljumpPos = nil
+    self.walljumpInitialPos = nil -- Track initial position for distance checking
+    self.walljumpMovingToInitial = false -- Track if we're moving to initial position
+    self.walljumpDelayStartTime = nil -- Track delay timer at initial position
+    self.walljumpStartTime = nil -- Track when walljump started
+    self.walljumpLastPosition = nil -- Track last known position
+    self.walljumpStuckTime = nil -- Track if stuck in same position
+    self.walljumpSpellWaitTime = nil -- Track if waiting for spells
     
-    -- Harass control
-    self.harassState = "idle" -- idle, waiting_for_q
-    self.harassTimer = 0
+    -- Cache variables for FPS optimization
+    self.lastDrawUpdate = 0
+    self.cachedSpellInfo = nil
     
-    -- Auto Windwall tracking
-    self.lastWindwallTime = 0
-    self.trackedMissiles = {}
+    -- Combo System
+    self.comboState = "idle"
+    self.comboTarget = nil
+    self.comboTimer = 0
+    self.lastActionTime = 0
     
-    -- Combo Logic System
-    self.comboLogicState = "idle" -- idle, executing_eq3flash
-    self.comboLogicTimer = 0
-    self.comboLogicTarget = nil
-    self.eq3FlashStep = 0
+    -- Gapcloser System
+    self.gapcloseTarget = nil
+    self.gapcloseMinion = nil
+    
+    -- Safety System
+    self.turretSafetyEnabled = true
+    self.safetyRange = 900
+    
+    -- Key state tracking for automatic hotkeys
+    self.keysPressed = {
+        space = false,   -- 32 - Combo
+        v = false,       -- 86 - Lane Clear  
+        x = false,       -- 88 - Last Hit
+        a = false,       -- 65 - Flee
+        c = false        -- 67 - Harass
+    }
+    
+    -- Beyblade (E-Q3-Flash) System
+    self.beybladeState = "idle" -- idle, executing_beyblade
+    self.beybladeTarget = nil
+    self.beybladeStep = 0
+    self.beybladeTimer = 0
     
     self:LoadMenu()
-    
-    -- Wait for GGPrediction to load
-    DelayAction(function()
-        if _G.GGPrediction then
-            print("Yasuo: GGPrediction loaded successfully!")
-        else
-            print("Yasuo: Warning - GGPrediction not found! Using fallback prediction.")
-        end
-    end, 2.0)
+    self:LoadWalljumpSpots()
     
     -- Callbacks
     Callback.Add("Tick", function() self:Tick() end)
     Callback.Add("Draw", function() self:Draw() end)
+    Callback.Add("WndMsg", function(msg, wParam) self:OnWndMsg(msg, wParam) end)
 end
 
-function Yasuo:LoadMenu()
-    self.Menu = MenuElement({type = MENU, id = "Yasuo", name = "Yasuo - Depressive"})
+function DepressiveYasuo2:LoadMenu()
+    self.Menu = MenuElement({type = MENU, id = "DepressiveYasuo2", name = "Depressive - Yasuo"})
+    
+    -- Combo System
+    self.Menu:MenuElement({type = MENU, id = "combo", name = "Combo System"})
+    self.Menu.combo:MenuElement({id = "useQ", name = "Use Q", value = true})
+    self.Menu.combo:MenuElement({id = "useE", name = "Use E", value = true})
+    self.Menu.combo:MenuElement({id = "useR", name = "Use R", value = true})
+    self.Menu.combo:MenuElement({id = "minHitChance", name = "Min Hit Chance", value = 3, min = 1, max = 6, step = 1})
+    self.Menu.combo:MenuElement({id = "eqCombo", name = "E-Q Combo", value = true})
+    
+    -- Ultimate Settings (inspired by YasuoThePackGod)
+    self.Menu:MenuElement({type = MENU, id = "ultimate", name = "Ultimate Settings"})
+    self.Menu.ultimate:MenuElement({id = "minEnemiesR", name = "Min Enemies for R", value = 1, min = 1, max = 5, step = 1})
+    self.Menu.ultimate:MenuElement({id = "maxHpForR", name = "Max HP% to R Single Target", value = 60, min = 20, max = 100, step = 5})
+    self.Menu.ultimate:MenuElement({id = "allow1v1R", name = "Allow R in 1v1 if Killable", value = true})
+    self.Menu.ultimate:MenuElement({id = "killableThreshold", name = "Killable HP Threshold %", value = 35, min = 15, max = 60, step = 5})
+    self.Menu.ultimate:MenuElement({id = "prioritizeADC", name = "Prioritize ADC/Mid for R", value = true})
+    self.Menu.ultimate:MenuElement({id = "teamfightR", name = "Use R in Teamfights (2+ enemies)", value = true})
+    
+    -- Gapcloser System
+    self.Menu:MenuElement({type = MENU, id = "gapcloser", name = "Gapcloser System"})
+    self.Menu.gapcloser:MenuElement({id = "enabled", name = "Enable Gapcloser", value = true})
+    self.Menu.gapcloser:MenuElement({id = "maxRange", name = "Max Gapcloser Range", value = 1200, min = 600, max = 1500, step = 50})
+    self.Menu.gapcloser:MenuElement({id = "useMinions", name = "Use Minions for Gapclosing", value = true})
+    self.Menu.gapcloser:MenuElement({id = "checkTurret", name = "Check Turret Safety", value = true})
     
     -- Walljump System
     self.Menu:MenuElement({type = MENU, id = "walljump", name = "Walljump System"})
     self.Menu.walljump:MenuElement({id = "enabled", name = "Enable Walljump", value = true})
-    self.Menu.walljump:MenuElement({id = "key", name = "Walljump Key", key = string.byte("Z"), toggle = false, value = false})
-    self.Menu.walljump:MenuElement({id = "stopKey", name = "Stop Walljump Key", key = string.byte("I"), toggle = false, value = false})
+    self.Menu.walljump:MenuElement({id = "executeKey", name = "Execute Walljump", key = string.byte("Z"), toggle = false})
+    self.Menu.walljump:MenuElement({id = "cancelKey", name = "Cancel Walljump", key = string.byte("B"), toggle = false})
     self.Menu.walljump:MenuElement({id = "selectionRange", name = "Selection Range", value = 300, min = 100, max = 500, step = 50})
     
-    -- Clear System
-    self.Menu:MenuElement({type = MENU, id = "clear", name = "Lane Clear"})
-    self.Menu.clear:MenuElement({id = "useQ", name = "Use Q", value = true})
-    self.Menu.clear:MenuElement({id = "useE", name = "Use E", value = true})
-    self.Menu.clear:MenuElement({id = "minMinions", name = "Min minions for E-Q combo", value = 2, min = 1, max = 5, step = 1})
+    -- Turret Safety
+    self.Menu:MenuElement({type = MENU, id = "safety", name = "Turret Safety"})
+    self.Menu.safety:MenuElement({id = "enabled", name = "Enable Turret Safety", value = true})
+    self.Menu.safety:MenuElement({id = "range", name = "Safety Range", value = 900, min = 700, max = 1100, step = 50})
+    self.Menu.safety:MenuElement({id = "allowLowHP", name = "Allow under turret if enemy HP < %", value = 20, min = 10, max = 40, step = 5})
     
-    -- Harass System
+    -- Harass
     self.Menu:MenuElement({type = MENU, id = "harass", name = "Harass"})
     self.Menu.harass:MenuElement({id = "useE", name = "Use E on minions", value = true})
     self.Menu.harass:MenuElement({id = "useQ", name = "Use Q after E", value = true})
-    self.Menu.harass:MenuElement({id = "enemyRange", name = "Enemy range for Q", value = 475, min = 300, max = 600, step = 25})
-    self.Menu.harass:MenuElement({id = "key", name = "Harass Key", key = string.byte("C"), toggle = false, value = false})
     
-    -- Combo System
-    self.Menu:MenuElement({type = MENU, id = "combo", name = "Combo"})
-    self.Menu.combo:MenuElement({id = "useQ", name = "Use Q", value = true})
-    self.Menu.combo:MenuElement({id = "useE", name = "Use E", value = true})
-    self.Menu.combo:MenuElement({id = "useR", name = "Use R (Ultimate)", value = true})
-    self.Menu.combo:MenuElement({id = "gapClose", name = "Use E for gap closing", value = true})
-    self.Menu.combo:MenuElement({id = "executeThreshold", name = "Execute combo at enemy HP %", value = 50, min = 20, max = 80, step = 5})
-    self.Menu.combo:MenuElement({id = "executeCombo", name = "Use E-Q → R execute combo", value = true})
-    self.Menu.combo:MenuElement({id = "advancedCombo", name = "Use advanced E-Q when target airborne", value = true})
-    self.Menu.combo:MenuElement({id = "minAttackSpeed", name = "Min Attack Speed for advanced combo", value = 1.33, min = 1.0, max = 2.5, step = 0.1})
-    
-    -- 1v1 System
-    self.Menu:MenuElement({type = MENU, id = "onevsone", name = "1v1 Mode"})
-    self.Menu.onevsone:MenuElement({id = "enabled", name = "Enable 1v1 Mode", value = true})
-    self.Menu.onevsone:MenuElement({id = "ultThreshold", name = "Use R when enemy HP % ≤", value = 30, min = 10, max = 50, step = 5})
-    self.Menu.onevsone:MenuElement({id = "forceUlt", name = "Force R when very low HP (≤15%)", value = true})
-    self.Menu.onevsone:MenuElement({id = "aggressive", name = "Aggressive 1v1 Mode (more combos when low HP)", value = true})
-    
-    -- Prediction Settings
-    self.Menu:MenuElement({type = MENU, id = "prediction", name = "Prediction"})
-    self.Menu.prediction:MenuElement({id = "hitChance", name = "Min Hit Chance", value = 3, min = 1, max = 6, step = 1})
-    self.Menu.prediction:MenuElement({id = "useQ3Pred", name = "Use Prediction for Q3 (Tornado)", value = true})
-    self.Menu.prediction:MenuElement({id = "useQPred", name = "Use Prediction for Q", value = true})
-    
-    -- LastHit System  
-    self.Menu:MenuElement({type = MENU, id = "lasthit", name = "Last Hit"})
-    self.Menu.lasthit:MenuElement({id = "useQ", name = "Use Q for LastHit", value = true})
-    self.Menu.lasthit:MenuElement({id = "useE", name = "Use E for LastHit", value = false})
-    self.Menu.lasthit:MenuElement({id = "key", name = "LastHit Key", key = string.byte("X"), toggle = false, value = false})
+    -- Clear
+    self.Menu:MenuElement({type = MENU, id = "clear", name = "Lane Clear"})
+    self.Menu.clear:MenuElement({id = "useQ", name = "Use Q", value = true})
+    self.Menu.clear:MenuElement({id = "useE", name = "Use E", value = true})
+    self.Menu.clear:MenuElement({id = "stackQ", name = "Stack Q on minions", value = true})
+    self.Menu.clear:MenuElement({id = "allowEUnderTurret", name = "Allow E under Enemy Turret", value = false})
     
     -- Drawing
     self.Menu:MenuElement({type = MENU, id = "drawing", name = "Drawing"})
-    self.Menu.drawing:MenuElement({id = "spots", name = "Draw Walljump Spots", value = true})
-    self.Menu.drawing:MenuElement({id = "range", name = "Draw Selection Range", value = true})
+    self.Menu.drawing:MenuElement({id = "walljumpSpots", name = "Draw Walljump Spots", value = true})
+    self.Menu.drawing:MenuElement({id = "ranges", name = "Draw Ranges", value = true})
+    self.Menu.drawing:MenuElement({id = "prediction", name = "Draw Predictions", value = true})
+    self.Menu.drawing:MenuElement({id = "status", name = "Draw Status", value = true})
     
-    -- Turret Safety System
-    self.Menu:MenuElement({type = MENU, id = "turret", name = "Turret Safety"})
-    self.Menu.turret:MenuElement({id = "enabled", name = "Enable Turret Safety", value = true})
-    self.Menu.turret:MenuElement({id = "safetyRange", name = "Turret Safety Range", value = 900, min = 800, max = 1000, step = 25})
-    self.Menu.turret:MenuElement({id = "lowHealthThreshold", name = "Allow E under turret when enemy HP % ≤", value = 15, min = 5, max = 30, step = 5})
-    self.Menu.turret:MenuElement({id = "veryLowThreshold", name = "Allow E when we're under turret if enemy HP % ≤", value = 10, min = 5, max = 20, step = 5})
-    
-    -- Auto Windwall System
-    self.Menu:MenuElement({type = MENU, id = "windwall", name = "Auto Windwall"})
-    self.Menu.windwall:MenuElement({id = "enabled", name = "Enable Auto Windwall", value = true})
-    self.Menu.windwall:MenuElement({id = "range", name = "Detection Range", value = 1000, min = 500, max = 1500, step = 100})
-    self.Menu.windwall:MenuElement({id = "reactionTime", name = "Reaction Time (ms)", value = 200, min = 50, max = 500, step = 50})
-    
-    -- Combo Logic System
-    self.Menu:MenuElement({type = MENU, id = "comboLogic", name = "Combo Logic System"})
-    self.Menu.comboLogic:MenuElement({id = "enabled", name = "Enable Combo Logic", value = true})
-    self.Menu.comboLogic:MenuElement({id = "eq3flash", name = "E-Q3-Flash Combo", key = string.byte("N"), toggle = false, value = false})
-    self.Menu.comboLogic:MenuElement({id = "eq3flashRange", name = "E-Q3-Flash Max Range", value = 900, min = 600, max = 1200, step = 50})
-    self.Menu.comboLogic:MenuElement({id = "flashRange", name = "Flash Range", value = 450, min = 350, max = 450, step = 25})
-    self.Menu.comboLogic:MenuElement({id = "flashAfterQ3", name = "Auto Flash after Q3 hit", value = true})
-    self.Menu.comboLogic:MenuElement({id = "requireQ3Ready", name = "Only use when Q3 is ready", value = true})
+    -- Beyblade System (E-Q3-Flash Combo)
+    self.Menu:MenuElement({type = MENU, id = "beyblade", name = "Beyblade (E-Q3-Flash)"})
+    self.Menu.beyblade:MenuElement({id = "enabled", name = "Enable Beyblade Combo", value = true})
+    self.Menu.beyblade:MenuElement({id = "key", name = "Beyblade Key", key = string.byte("T"), toggle = false})
+    self.Menu.beyblade:MenuElement({id = "maxRange", name = "Max Target Range", value = 1100, min = 600, max = 1200, step = 50})
+    self.Menu.beyblade:MenuElement({id = "flashRange", name = "Flash Range", value = 450, min = 350, max = 450, step = 25})
+    self.Menu.beyblade:MenuElement({id = "autoFlash", name = "Auto Flash after Q3", value = true})
+    self.Menu.beyblade:MenuElement({id = "requireQ3", name = "Only use when Q3 ready", value = true})
+    self.Menu.beyblade:MenuElement({id = "minHitChance", name = "Min Q3 Hit Chance", value = 3, min = 1, max = 6, step = 1})
 end
 
-function Yasuo:Tick()
+function DepressiveYasuo2:LoadWalljumpSpots()
+    -- Default walljump spots for Summoner's Rift - 2D coordinates
+    self.walljumpSpots = {
+        -- Custom Raptors Walljump
+        {
+            name = "Raptor Tower",
+            position = {x = 7194, z = 5136},
+            sequence = {
+                {type = "cast", spell = _E, position = {x = 6973, z = 5372}, delay = 0.1}, -- E a posición exacta especificada
+                {type = "cast", spell = _Q, position = {x = 6973, z = 5372}, delay = 0.15}, -- Q en la misma posición (EQ combo)
+                {type = "cast", spell = _E, position = {x = 6811, z = 5528}, delay = 0.4} -- E final a posición exacta especificada
+            }
+        },
+        -- Custom Multi-Position Walljump
+        {
+            name = "Raptor Tower",
+            position = {x = 7638, z = 9828}, -- Posición inicial (Custom Spot 2)
+            sequence = {
+                {type = "cast", spell = _E, position = {x = 7856, z = 9630}, delay = 0.1}, -- E a posición 3
+                {type = "cast", spell = _Q, position = {x = 7856, z = 9630}, delay = 0.15}, -- Q en posición 3 (EQ combo)
+                {type = "cast", spell = _E, position = {x = 7997, z = 9486}, delay = 0.4} -- E final a posición 4
+            }
+        },
+        -- W Start Combo (Updated from new recording)
+        {
+            name = "Bait Enemy",
+            position = {x = 8230, z = 3140}, -- Posición inicial
+            sequence = {
+                {type = "cast", spell = _E, position = {x = 8272, z = 2694}, delay = 0.1}, -- E inicial
+                {type = "cast", spell = _Q, position = {x = 8272, z = 2694}, delay = 0.2}, -- Q en la misma posición (EQ combo)
+                {type = "click", position = {x = 8640, z = 2644}, delay = 0.4}, -- Click de posicionamiento
+                {type = "cast", spell = _E, position = {x = 8488, z = 2740}, delay = 0.6} -- E final después de 0.5s
+            }
+        },
+        {
+            name = "Bait Enemy",
+            position = {x = 6611, z = 11706}, -- Posición inicial
+            sequence = {
+                {type = "cast", spell = _E, position = {x = 6561, z = 12153}, delay = 0.1}, -- E inicial (EQ combo)
+                {type = "cast", spell = _Q, position = {x = 6561, z = 12153}, delay = 0.2}, -- Q en la misma posición (EQ combo)
+                {type = "click", position = {x = 6158, z = 12238}, delay = 0.4}, -- Click de posicionamiento
+                {type = "cast", spell = _E, position = {x = 6346, z = 12148}, delay = 0.7} -- E final
+            }
+        },
+        {
+            name = "River Escape",
+            position = {x = 7208, z = 5975}, -- Posición inicial
+            sequence = {
+                {type = "cast", spell = _E, position = {x = 6957, z = 5599}, delay = 0.1}, -- E inicial (EQ combo)
+                {type = "cast", spell = _Q, position = {x = 6957, z = 5599}, delay = 0.2}, -- Q en la misma posición (EQ combo)
+                {type = "click", position = {x = 6730, z = 5433}, delay = 0.2}, -- Click de posicionamiento (0.2s como especificaste)
+                {type = "cast", spell = _E, position = {x = 6780, z = 5543}, delay = 0.4} -- E final
+            }
+        },
+        {
+            name = "Gromp Jump",
+            position = {x = 2267, z = 8410}, -- Posición inicial
+            sequence = {
+                {type = "cast", spell = _E, position = {x = 2095, z = 8428}, delay = 0.1} -- E directo al gromp
+            }
+        },
+    }
+end
+
+function DepressiveYasuo2:Tick()
     if myHero.dead or Game.IsChatOpen() then return end
     
-    -- Auto Windwall check
-    if self.Menu.windwall.enabled:Value() then
-        self:CheckAutoWindwall()
+    -- Cancel walljump
+    if self.Menu.walljump.cancelKey:Value() then
+        self:CancelWalljump()
     end
     
-    -- Combo Logic System - Handle E-Q3-Flash combo
-    if self.Menu.comboLogic.enabled:Value() and self.Menu.comboLogic.eq3flash:Value() then
-        if self.comboLogicState == "idle" then
-            self:HandleEQ3FlashCombo()
-        end
+    -- Execute walljump directamente al más cercano al mouse (tecla Z)
+    if self.Menu.walljump.executeKey:Value() and not self.walljumpExecuting then
+        self:ExecuteClosestWalljumpToMouse()
     end
     
-    -- Execute ongoing combo logic
-    if self.comboLogicState ~= "idle" then
-        self:ExecuteComboLogic()
-    end
-    
-    -- Stop Walljump Key - PRIORITY CHECK (antes que todo)
-    if self.Menu.walljump.enabled:Value() and self.Menu.walljump.stopKey:Value() then
-        self:ForceStopWalljump()
-        return -- Exit immediately to prevent any other walljump actions
-    end
-    
-    -- Handle walljump system
-    if self.Menu.walljump.enabled:Value() and self.Menu.walljump.key:Value() then
-        self:HandleWalljump()
-    end
-    
-    -- Auto-execute walljump sequence if it's in progress
+    -- Execute ongoing walljump
     if self.walljumpExecuting then
+        self:CheckWalljumpStatus()
         self:ExecuteWalljumpSequence()
     end
     
-    -- Auto-execute walljump if character is close enough to selected spot
-    if self.selectedWalljumpSpot and not self.walljumpExecuting then
-        local distanceToSpot = GetDistance(myHero.pos, self.selectedWalljumpSpot.pos)
-        if distanceToSpot <= 45 then
-            -- Just arrived, start waiting period
-            if self.arrivalTime == 0 then
-                self.arrivalTime = GetTickCount()
-                self.autoMovingToSpot = false
-            -- Wait 500ms before executing
-            elseif GetTickCount() - self.arrivalTime >= 500 then
-                self.walljumpExecuting = true
-                self.walljumpStep = 1
-            end
-        elseif self.autoMovingToSpot and distanceToSpot > 150 then
-            -- Continue moving to spot if we're still far away (only if not stopped)
-            if self.selectedWalljumpSpot then -- Double check spot still exists
-                Control.Move(self.selectedWalljumpSpot.pos)
-                self.arrivalTime = 0 -- Reset arrival time while moving
-            end
-        end
+    -- Beyblade System (E-Q3-Flash Combo)
+    if self.Menu.beyblade.enabled:Value() and self.Menu.beyblade.key:Value() then
+        self:HandleBeyblade()
     end
     
-    -- Handle orbwalker modes
-    if _G.SDK and _G.SDK.Orbwalker then
-        if _G.SDK.Orbwalker.Modes[0] then -- Combo
-            self:Combo()
-        elseif _G.SDK.Orbwalker.Modes[1] then -- Harass
-            self:Harass()
-        elseif _G.SDK.Orbwalker.Modes[2] then -- Lane Clear
-            self:Clear()
-        elseif _G.SDK.Orbwalker.Modes[3] then -- Last Hit
-            self:LastHit()
-        end
+    -- Execute ongoing beyblade combo
+    if self.beybladeState ~= "idle" then
+        self:ExecuteBeybladeCombo()
     end
     
-    -- Manual LastHit with X key
-    if self.Menu.lasthit.key:Value() then
+    -- Automatic hotkeys detection
+    -- Space - Combo
+    if self.keysPressed.space then
+        self:Combo()
+    end
+    
+    -- V - Lane Clear
+    if self.keysPressed.v then
+        self:Clear()
+    end
+    
+    -- X - Last Hit
+    if self.keysPressed.x then
         self:LastHit()
     end
     
-    -- Manual Harass with C key
-    if self.Menu.harass.key:Value() then
+    -- A - Flee
+    if self.keysPressed.a then
+        self:Flee()
+    end
+    
+    -- C - Harass
+    if self.keysPressed.c then
         self:Harass()
     end
 end
 
-function Yasuo:Draw()
+function DepressiveYasuo2:Draw()
     if myHero.dead then return end
     
-    -- Draw walljump spots
-    if self.Menu.drawing.spots:Value() then
-        for i, spot in pairs(self.walljumpSpots) do
-            local screenPos = spot.pos:ToScreen()
-            if screenPos.onScreen then
-                local color = (self.selectedWalljumpSpot == spot) and Draw.Color(255, 0, 255, 0) or Draw.Color(120, 255, 255, 255)
-                Draw.Circle(spot.pos, 80, color)
-                Draw.Text(spot.name, 12, screenPos.x - 50, screenPos.y - 30, color)
-            end
-        end
-        
-        -- Draw selection range around mouse
-        if self.Menu.drawing.range:Value() then
-            local mousePos = Game.mousePos()
-            Draw.Circle(mousePos, self.Menu.walljump.selectionRange:Value(), Draw.Color(60, 255, 255, 0))
+    local currentTimer = Game.Timer()
+    
+    -- Draw walljump spots - 2D only
+    if self.Menu.drawing.walljumpSpots:Value() and #self.walljumpSpots > 0 then
+        for i, spot in ipairs(self.walljumpSpots) do
+            local color = Draw.Color(255, 255, 255, 0)
+            local spotPos2D = Vector(spot.position.x, myHero.pos.y, spot.position.z)
+            Draw.Circle(spotPos2D, 100, 3, color)
+            Draw.Text(spot.name, 12, spotPos2D:To2D(), color)
         end
     end
     
-    -- Draw walljump status
-    if self.walljumpExecuting then
-        Draw.Text("EXECUTING WALLJUMP - STEP: " .. self.walljumpStep, 16, 100, 100, Draw.Color(255, 255, 0, 0))
-        Draw.Text("Press I to STOP walljump", 12, 100, 120, Draw.Color(255, 255, 100, 100))
-    elseif self.selectedWalljumpSpot then
-        local distanceToSpot = GetDistance(myHero.pos, self.selectedWalljumpSpot.pos)
-        local statusText = "WALLJUMP SELECTED: " .. self.selectedWalljumpSpot.name .. " (Distance: " .. math.floor(distanceToSpot) .. "/40)"
-        local color = distanceToSpot <= 40 and Draw.Color(255, 0, 255, 0) or Draw.Color(255, 255, 255, 0)
-        Draw.Text(statusText, 14, 100, 120, color)
-        Draw.Text("Press I to CANCEL", 12, 100, 140, Draw.Color(255, 255, 100, 100))
+    -- Draw selection range for walljumps - 2D circle
+    if self.Menu.drawing.ranges:Value() then
+        Draw.Circle(myHero.pos, self.Menu.walljump.selectionRange:Value(), 2, Draw.Color(100, 255, 255, 255))
+    end
+    
+    -- Draw ranges - 2D circles
+    if self.Menu.drawing.ranges:Value() then
+        if Ready(_Q) then
+            local range = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
+            Draw.Circle(myHero.pos, range, 2, Draw.Color(100, 0, 255, 0))
+        end
         
-        if distanceToSpot <= 40 then
-            if self.arrivalTime > 0 then
-                local waitTime = math.max(0, 500 - (GetTickCount() - self.arrivalTime))
-                Draw.Text("WAITING: " .. math.ceil(waitTime / 100) / 10 .. "s", 16, 100, 160, Draw.Color(255, 255, 255, 0))
-            else
-                Draw.Text("READY TO EXECUTE!", 16, 100, 160, Draw.Color(255, 0, 255, 0))
-            end
-        elseif self.autoMovingToSpot then
-            Draw.Text("Moving to spot...", 14, 100, 160, Draw.Color(255, 255, 255, 0))
-        else
-            Draw.Text("Move closer to execute", 14, 100, 160, Draw.Color(255, 255, 255, 0))
+        if Ready(_E) then
+            Draw.Circle(myHero.pos, SPELL_RANGE.E, 2, Draw.Color(100, 255, 0, 255))
         end
     end
     
-    -- Draw combo logic status
-    if self.comboLogicState ~= "idle" then
-        local yOffset = self.walljumpExecuting or self.selectedWalljumpSpot and 200 or 100
+    -- Draw status
+    if self.Menu.drawing.status:Value() then
+        local statusText = "Ready"
         
-        if self.comboLogicState == "executing_eq3flash" then
-            local stepText = ""
-            if self.eq3FlashStep == 1 then
-                stepText = "E to unit"
-            elseif self.eq3FlashStep == 2 then
-                stepText = "Waiting for Q3"
-            elseif self.eq3FlashStep == 3 then
-                stepText = "Preparing Flash"
-            end
-            
-            Draw.Text("E-Q3-FLASH COMBO: " .. stepText, 16, 100, yOffset, Draw.Color(255, 255, 215, 0))
-            
-            if self.comboLogicTarget and self.comboLogicTarget.valid then
-                local targetName = self.comboLogicTarget.charName or "Unknown"
-                Draw.Text("Target: " .. targetName, 12, 100, yOffset + 20, Draw.Color(255, 255, 100, 100))
-                -- Draw line to target
-                Draw.Line(myHero.pos:ToScreen(), self.comboLogicTarget.pos:ToScreen(), 2, Draw.Color(255, 255, 0, 0))
-            end
-            
-            -- Draw timer
-            local elapsed = (GetTickCount() - self.comboLogicTimer) / 1000
-            Draw.Text(string.format("Time: %.1fs", elapsed), 12, 100, yOffset + 40, Draw.Color(255, 200, 200, 200))
+        if self.beybladeState ~= "idle" then
+            statusText = "Executing Beyblade: Step " .. self.beybladeStep
+        elseif self.walljumpExecuting then
+            statusText = "Executing Walljump: Step " .. self.walljumpStep
+        elseif self.comboState ~= "idle" then
+            statusText = "Combo State: " .. self.comboState
+        end
+        
+        Draw.Text(statusText, 16, 100, 100, Draw.Color(255, 255, 255, 255))
+        
+        -- Show prediction system status
+        local predStatus = CheckPredictionSystem() and "DepressivePrediction: LOADED" or "DepressivePrediction: NOT LOADED"
+        Draw.Text(predStatus, 14, 100, 120, CheckPredictionSystem() and Draw.Color(255, 0, 255, 0) or Draw.Color(255, 255, 0, 0))
+        
+        if not self.lastDrawUpdate or currentTimer - self.lastDrawUpdate > 0.1 then
+            self.lastDrawUpdate = currentTimer
+            self.cachedSpellInfo = {
+                q = HasQ3() and "Q3 Ready" or string.format("Q: %.1f", myHero:GetSpellData(_Q).currentCd),
+                e = string.format("E: %.1f", myHero:GetSpellData(_E).currentCd),
+                r = string.format("R: %.1f", myHero:GetSpellData(_R).currentCd)
+            }
+        end
+        
+        if self.cachedSpellInfo then
+            Draw.Text(self.cachedSpellInfo.q, 14, 100, 140, Draw.Color(255, 255, 255, 255))
+            Draw.Text(self.cachedSpellInfo.e, 14, 100, 155, Draw.Color(255, 255, 255, 255))
+            Draw.Text(self.cachedSpellInfo.r, 14, 100, 170, Draw.Color(255, 255, 255, 255))
         end
     end
     
-    -- Draw combo logic instructions
-    if self.Menu.comboLogic.enabled:Value() and self.comboLogicState == "idle" then
-        local yOffset = self.walljumpExecuting or self.selectedWalljumpSpot and 240 or 140
-        
-        -- Check if combo is ready
-        local hasQ3 = HasQ3()
-        local flashSpell = myHero:GetSpellData(SUMMONER_1).name == "SummonerFlash" and SUMMONER_1 or 
-                          (myHero:GetSpellData(SUMMONER_2).name == "SummonerFlash" and SUMMONER_2 or nil)
-        local hasFlash = flashSpell and Ready(flashSpell)
-        
-        if hasQ3 and hasFlash then
-            Draw.Text("E-Q3-Flash READY - Press N", 14, 100, yOffset, Draw.Color(255, 0, 255, 0))
-            
-            -- Show potential target and unit to E
-            local target = self:GetBestEQ3FlashTarget()
-            if target then
-                local bestUnit = self:GetBestUnitForEQ3Flash(target)
-                local targetName = target.charName or "Unknown"
-                Draw.Text("Target: " .. targetName, 12, 100, yOffset + 20, Draw.Color(255, 180, 180, 180))
-                
-                if bestUnit then
-                    local unitType = "Unknown"
-                    local unitName = "Unknown"
-                    
-                    if bestUnit.charName then
-                        unitType = "Champion"
-                        unitName = bestUnit.charName
-                    elseif bestUnit.team == 300 then
-                        unitType = "Monster"
-                        unitName = "Jungle Monster"
-                    else
-                        unitType = "Minion" 
-                        unitName = "Lane Minion"
-                    end
-                    
-                    Draw.Text("E unit: " .. unitName .. " (" .. unitType .. ")", 12, 100, yOffset + 40, Draw.Color(255, 180, 180, 180))
-                    
-                    -- Show distance info with Flash range check
-                    local distanceToUnit = GetDistance(myHero.pos, bestUnit.pos)
-                    local distanceUnitToTarget = GetDistance(bestUnit.pos, target.pos)
-                    local flashRange = self.Menu.comboLogic.flashRange:Value()
-                    local flashRangeOK = distanceUnitToTarget <= flashRange
-                    local flashRangeColor = flashRangeOK and Draw.Color(255, 0, 255, 0) or Draw.Color(255, 255, 100, 0)
-                    
-                    Draw.Text(string.format("Distances: Me->Unit=%.0f, Unit->Target=%.0f", distanceToUnit, distanceUnitToTarget), 
-                             10, 100, yOffset + 60, Draw.Color(255, 150, 150, 150))
-                    Draw.Text(string.format("Flash Range: %.0f/%.0f %s", distanceUnitToTarget, flashRange, flashRangeOK and "✓" or "✗"), 
-                             10, 100, yOffset + 80, flashRangeColor)
-                    
-                    -- Draw visual indicators
-                    Draw.Circle(target.pos, 80, Draw.Color(150, 255, 0, 0)) -- Target in red
-                    Draw.Circle(bestUnit.pos, 60, Draw.Color(150, 0, 255, 0)) -- E unit in green
-                    Draw.Line(myHero.pos:ToScreen(), bestUnit.pos:ToScreen(), 2, Draw.Color(150, 0, 255, 0))
-                    Draw.Line(bestUnit.pos:ToScreen(), target.pos:ToScreen(), 2, Draw.Color(150, 255, 255, 0))
-                else
-                    Draw.Text("No valid E unit found", 12, 100, yOffset + 40, Draw.Color(255, 255, 100, 0))
-                    
-                    -- Show debugging info for why no unit found
-                    local nearbyUnitsCount = 0
-                    local unitsInFlashRange = 0
-                    local flashRange = self.Menu.comboLogic.flashRange:Value()
-                    
-                    for i = 1, Game.HeroCount() do
-                        local hero = Game.Hero(i)
-                        if hero and hero.isEnemy and hero ~= target and not hero.dead and hero.visible then
-                            local distance = GetDistance(myHero.pos, hero.pos)
-                            if distance <= 475 then
-                                nearbyUnitsCount = nearbyUnitsCount + 1
-                                local distanceToTarget = GetDistance(hero.pos, target.pos)
-                                if distanceToTarget <= flashRange then
-                                    unitsInFlashRange = unitsInFlashRange + 1
-                                end
-                            end
-                        end
-                    end
-                    
-                    for i = 1, Game.MinionCount() do
-                        local unit = Game.Minion(i)
-                        if unit and ((unit.isEnemy and unit.alive) or unit.team == 300) and unit.visible then
-                            local distance = GetDistance(myHero.pos, unit.pos)
-                            if distance <= 475 then
-                                nearbyUnitsCount = nearbyUnitsCount + 1
-                                local distanceToTarget = GetDistance(unit.pos, target.pos)
-                                if distanceToTarget <= flashRange then
-                                    unitsInFlashRange = unitsInFlashRange + 1
-                                end
-                            end
-                        end
-                    end
-                    
-                    Draw.Text(string.format("Units in E range: %d", nearbyUnitsCount), 10, 100, yOffset + 60, Draw.Color(255, 200, 100, 100))
-                    Draw.Text(string.format("Units in Flash range: %d", unitsInFlashRange), 10, 100, yOffset + 80, Draw.Color(255, 200, 100, 100))
+    -- Predictions
+    if self.Menu.drawing.prediction:Value() then
+        for i = 1, Game.HeroCount() do
+            local hero = Game.Hero(i)
+            if IsValidTarget(hero, 800) then
+                local pred, hitChance = GetPrediction(hero, "Q")
+                if pred and hitChance >= self.Menu.combo.minHitChance:Value() then
+                    local predPos2D = Vector(pred.x, myHero.pos.y, pred.z)
+                    Draw.Circle(predPos2D, 50, 3, Draw.Color(255, 0, 255, 0))
                 end
-            else
-                Draw.Text("No valid target found", 12, 100, yOffset + 20, Draw.Color(255, 255, 100, 0))
             end
-        elseif not hasQ3 and self.Menu.comboLogic.requireQ3Ready:Value() then
-            Draw.Text("E-Q3-Flash: Need Q3 (Tornado)", 12, 100, yOffset, Draw.Color(255, 255, 100, 0))
-        elseif not hasFlash then
-            Draw.Text("E-Q3-Flash: Flash not ready", 12, 100, yOffset, Draw.Color(255, 255, 100, 0))
-        else
-            Draw.Text("E-Q3-Flash available - Press N", 12, 100, yOffset, Draw.Color(255, 255, 255, 0))
         end
     end
 end
 
-function Yasuo:HandleWalljump()
-    if not self.walljumpExecuting then
-        self:SelectWalljumpSpot()
+function DepressiveYasuo2:OnWndMsg(msg, wParam)
+    -- Handle automatic hotkeys
+    if msg == KEY_DOWN then
+        if wParam == 32 then -- Space key
+            self.keysPressed.space = true
+        elseif wParam == 86 then -- V key
+            self.keysPressed.v = true
+        elseif wParam == 88 then -- X key
+            self.keysPressed.x = true
+        elseif wParam == 65 then -- A key
+            self.keysPressed.a = true
+        elseif wParam == 67 then -- C key
+            self.keysPressed.c = true
+        end
+    elseif msg == KEY_UP then
+        if wParam == 32 then -- Space key
+            self.keysPressed.space = false
+        elseif wParam == 86 then -- V key
+            self.keysPressed.v = false
+        elseif wParam == 88 then -- X key
+            self.keysPressed.x = false
+        elseif wParam == 65 then -- A key
+            self.keysPressed.a = false
+        elseif wParam == 67 then -- C key
+            self.keysPressed.c = false
+        end
     end
 end
 
-function Yasuo:SelectWalljumpSpot()
+function DepressiveYasuo2:ExecuteClosestWalljumpToMouse()
+    if self.walljumpExecuting then return end
+    
     local mousePos = Game.mousePos()
+    local mousePos2D = {x = mousePos.x, z = mousePos.z}
     local closestSpot = nil
     local closestDistance = math.huge
+    local maxRange = self.Menu.walljump.selectionRange:Value()
     
-    for i, spot in pairs(self.walljumpSpots) do
-        local distance = GetDistance(mousePos, spot.pos)
-        if distance <= self.Menu.walljump.selectionRange:Value() and distance < closestDistance then
+    -- Buscar el walljump más cercano al mouse dentro del rango
+    for i, spot in ipairs(self.walljumpSpots) do
+        local spotPos2D = {x = spot.position.x, z = spot.position.z}
+        local distance = GetDistance2D(mousePos2D, spotPos2D)
+        
+        if distance < maxRange and distance < closestDistance then
             closestDistance = distance
-            closestSpot = spot
+            closestSpot = i
         end
     end
     
+    -- Si encontramos un walljump cercano al mouse, ejecutarlo directamente
     if closestSpot then
         self.selectedWalljumpSpot = closestSpot
-        self.currentSequence = self.walljumpSequences[closestSpot.id]
-        
-        -- Check if character is close enough to execute walljump immediately
-        local distanceToSpot = GetDistance(myHero.pos, closestSpot.pos)
-        if distanceToSpot <= 45 then
-            -- Start waiting period immediately if already close
-            self.arrivalTime = GetTickCount()
-            self.autoMovingToSpot = false
-        else
-            -- Auto-move to the selected spot
-            self.autoMovingToSpot = true
-            self.arrivalTime = 0
-            Control.Move(closestSpot.pos)
-        end
+        self:StartWalljump()
     end
 end
 
-function Yasuo:ExecuteWalljumpSequence()
-    if not self.currentSequence then return end
+function DepressiveYasuo2:AddWalljumpSpot(position)
+    local spotName = "Custom Spot " .. (#self.walljumpSpots + 1)
+    local newSpot = {
+        name = spotName,
+        position = {x = position.x, z = position.z},
+        sequence = {
+            {type = "move", position = {x = position.x - 150, z = position.z - 150}, delay = 0.1},
+            {type = "cast", spell = _E, target = "minion", delay = 0.2},
+            {type = "move", position = {x = position.x + 150, z = position.z + 150}, delay = 0.1}
+        }
+    }
     
-    -- Safety check - if walljump was stopped, don't continue
-    if not self.walljumpExecuting or self.walljumpStep == 0 then return end
-    
-    if self.walljumpStep == 1 then
-        -- Cast first E immediately
-        if Ready(_E) then
-            Control.CastSpell(HK_E, self.currentSequence.firstEPos)
-            self.walljumpStep = 2
-            
-            -- Cast Q immediately after E with a small delay to ensure dash starts
-            DelayAction(function()
-                -- Double check walljump is still active before executing
-                if self.walljumpExecuting and Ready(_Q) then
-                    Control.CastSpell(HK_Q, self.currentSequence.secondEPos)
-                    self.walljumpStep = 3
-                end
-            end, 0.1)
-        end
-        
-    elseif self.walljumpStep == 3 then
-        -- Wait for dash to complete, then cast second E
-        if not myHero.pathing.isDashing and Ready(_E) then
-            DelayAction(function()
-                -- Double check walljump is still active before executing
-                if self.walljumpExecuting and Ready(_E) then
-                    Control.CastSpell(HK_E, self.currentSequence.secondEPos)
-                    self:ResetWalljump()
-                end
-            end, 0.3)
-            self.walljumpStep = 4 -- Prevent multiple executions
-        end
-    end
+    table.insert(self.walljumpSpots, newSpot)
 end
 
-function Yasuo:ResetWalljump()
-    self.walljumpExecuting = false
-    self.walljumpStep = 0
-    self.selectedWalljumpSpot = nil
-    self.currentSequence = nil
-    self.autoMovingToSpot = false
-    self.arrivalTime = 0
+function DepressiveYasuo2:StartWalljump()
+    if not self.selectedWalljumpSpot or self.walljumpExecuting then return end
+    
+    local spot = self.walljumpSpots[self.selectedWalljumpSpot]
+    if not spot then return end
+    
+    -- ALWAYS move to the initial position first, regardless of current position
+    local initialPos = Vector(spot.position.x, myHero.pos.y, spot.position.z)
+    Control.Move(initialPos)
+    
+    -- Store initial position for distance checking
+    self.walljumpInitialPos = {x = spot.position.x, z = spot.position.z}
+    self.walljumpMovingToInitial = true
+    
+    self.walljumpExecuting = true
+    self.walljumpStep = 1
+    self.currentSequence = spot.sequence
+    self.lastActionTime = Game.Timer()
+    
+    -- Initialize verification variables
+    self.walljumpStartTime = Game.Timer()
+    self.walljumpLastPosition = {x = myHero.pos.x, z = myHero.pos.z}
+    self.walljumpStuckTime = nil
 end
 
-function Yasuo:ForceStopWalljump()
-    -- Reset all walljump states
-    self:ResetWalljump()
+function DepressiveYasuo2:IsSafeToEInClear(target)
+    if not target then return false end
     
-    -- Force stop any movement commands
-    Control.Move(myHero.pos) -- Stop current movement by moving to current position
+    -- Si la opción de permitir E bajo torre está activada, no verificar seguridad
+    if self.Menu.clear.allowEUnderTurret:Value() then
+        return true
+    end
     
-    -- Clear any pending DelayActions by setting a flag or resetting critical states
-    self.walljumpStep = 0
-    self.walljumpExecuting = false
+    -- Calcular la posición después del dash E
+    local ePosition = CalculateEPosition(target)
+    if not ePosition then return false end
     
-    -- Optional: Print confirmation (can be removed later)
-    -- print("Walljump STOPPED by user")
+    -- Verificar si la posición después del E está bajo torre enemiga
+    local safetyRange = self.Menu.safety.range:Value()
+    return not IsUnderEnemyTurret(ePosition, safetyRange)
 end
 
--- Orbwalker functions (basic implementations)
-function Yasuo:Combo()
-    -- Advanced combo with prediction
-    local target = self:GetBestComboTarget()
-    if not target then return end
+function DepressiveYasuo2:IsSafeToE(target)
+    if not target then return false end
     
-    local distanceToTarget = GetDistance(myHero.pos, target.pos)
-    local minHitChance = self.Menu.prediction.hitChance:Value()
-    
-    -- Calculate target health percentage
-    local targetHealthPercent = target.maxHealth > 0 and (target.health / target.maxHealth * 100) or 100
-    
-    -- AGGRESSIVE E-Q COMBO: Prioritize E-Q when both are available
-    if self.Menu.combo.useE:Value() and self.Menu.combo.useQ:Value() and Ready(_E) and Ready(_Q) then
-        -- Try to E directly on the target first
-        if distanceToTarget <= 475 and not HasEBuff(target) and IsSafeToE(target, self) then
-            Control.CastSpell(HK_E, target)
-            -- Schedule Q after E dash completes
-            DelayAction(function()
-                if Ready(_Q) then
-                    if HasQ3() then
-                        -- Use Q3 with prediction
-                        if self.Menu.prediction.useQ3Pred:Value() then
-                            local prediction, hitChance = GetQ3Prediction(target)
-                            if prediction and hitChance >= minHitChance then
-                                local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                                Control.CastSpell(HK_Q, predPos)
-                            else
-                                Control.CastSpell(HK_Q, target.pos)
-                            end
-                        else
-                            Control.CastSpell(HK_Q, target.pos)
-                        end
-                    else
-                        -- Use regular Q with prediction
-                        if self.Menu.prediction.useQPred:Value() then
-                            local prediction, hitChance = GetQPrediction(target)
-                            if prediction and hitChance >= minHitChance then
-                                local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                                Control.CastSpell(HK_Q, predPos)
-                            else
-                                Control.CastSpell(HK_Q, target.pos)
-                            end
-                        else
-                            Control.CastSpell(HK_Q, target.pos)
-                        end
-                    end
-                end
-            end, 0.3) -- Wait for E dash to complete
-            return
-        end
-        
-        -- If can't E directly on target, try E on a minion close to the target for aggressive positioning
-        if distanceToTarget > 475 then
-            local minion = self:GetMinionForGapClose(target)
-            if minion and GetDistance(minion.pos, target.pos) <= 400 and IsSafeToE(minion, self) then -- Minion very close to target
-                Control.CastSpell(HK_E, minion)
-                -- Schedule Q after E dash completes
-                DelayAction(function()
-                    if Ready(_Q) then
-                        local newDistanceToTarget = GetDistance(myHero.pos, target.pos)
-                        if newDistanceToTarget <= (HasQ3() and 1000 or 475) then
-                            if HasQ3() then
-                                -- Use Q3 with prediction
-                                if self.Menu.prediction.useQ3Pred:Value() then
-                                    local prediction, hitChance = GetQ3Prediction(target)
-                                    if prediction and hitChance >= minHitChance then
-                                        local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                                        Control.CastSpell(HK_Q, predPos)
-                                    else
-                                        Control.CastSpell(HK_Q, target.pos)
-                                    end
-                                else
-                                    Control.CastSpell(HK_Q, target.pos)
-                                end
-                            else
-                                -- Use regular Q with prediction
-                                if self.Menu.prediction.useQPred:Value() then
-                                    local prediction, hitChance = GetQPrediction(target)
-                                    if prediction and hitChance >= minHitChance then
-                                        local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                                        Control.CastSpell(HK_Q, predPos)
-                                    else
-                                        Control.CastSpell(HK_Q, target.pos)
-                                    end
-                                else
-                                    Control.CastSpell(HK_Q, target.pos)
-                                end
-                            end
-                        end
-                    end
-                end, 0.3) -- Wait for E dash to complete
-                return
-            end
-        end
+    -- Para combos normales, siempre usar el sistema de seguridad general
+    if not self.Menu.safety.enabled:Value() then
+        return true
     end
     
-    -- INDEPENDENT Q USAGE: Use Q with prediction regardless of E status
-    if self.Menu.combo.useQ:Value() and Ready(_Q) and distanceToTarget <= (HasQ3() and 1000 or 475) then
-        if HasQ3() then
-            -- Q3 (Tornado) with prediction
-            if self.Menu.prediction.useQ3Pred:Value() then
-                local prediction, hitChance = GetQ3Prediction(target)
-                if prediction and hitChance >= minHitChance then
-                    local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                    Control.CastSpell(HK_Q, predPos)
-                    return
-                else
-                    -- Use fallback if prediction is not good enough
-                    Control.CastSpell(HK_Q, target.pos)
-                    return
-                end
-            else
-                -- Fallback to direct cast for Q3
-                Control.CastSpell(HK_Q, target.pos)
-                return
-            end
-        else
-            -- Regular Q with prediction
-            if self.Menu.prediction.useQPred:Value() then
-                local prediction, hitChance = GetQPrediction(target)
-                if prediction and hitChance >= minHitChance then
-                    local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                    Control.CastSpell(HK_Q, predPos)
-                    return
-                else
-                    -- Use fallback if prediction is not good enough
-                    Control.CastSpell(HK_Q, target.pos)
-                    return
-                end
-            else
-                -- Fallback to direct cast for regular Q
-                Control.CastSpell(HK_Q, target.pos)
-                return
-            end
-        end
+    -- Calcular la posición después del dash E
+    local ePosition = CalculateEPosition(target)
+    if not ePosition then return false end
+    
+    -- Verificar si la posición después del E está bajo torre enemiga
+    local safetyRange = self.Menu.safety.range:Value()
+    local isUnderTurret = IsUnderEnemyTurret(ePosition, safetyRange)
+    
+    -- Si está bajo torre, verificar si el enemigo tiene poca vida para permitir la jugada
+    if isUnderTurret and target.health then
+        local allowLowHP = self.Menu.safety.allowLowHP:Value()
+        local hpPercent = (target.health / target.maxHealth) * 100
+        return hpPercent <= allowLowHP
     end
     
-    -- 1v1 MODE: Aggressive R usage when enemy is low HP (30% or less by default)
-    if self.Menu.onevsone.enabled:Value() and self:IsOneVsOneSituation(target) then
-        local oneVsOneThreshold = self.Menu.onevsone.ultThreshold:Value()
-        
-        -- PRIORITY 1: Use R immediately if enemy HP is at or below threshold and R is ready
-        if targetHealthPercent <= oneVsOneThreshold and Ready(_R) and distanceToTarget <= 1400 then
-            -- First try: If enemy is already airborne, use R immediately
-            if self:CanUseUltimate(target) then
-                Control.CastSpell(HK_R)
-                return
-            end
-            
-            -- Second try: If enemy is not airborne but we have Q3, create knockup then R
-            if HasQ3() and Ready(_Q) and distanceToTarget <= 1000 then
-                -- Use Q3 to knockup, then R
-                if self.Menu.prediction.useQ3Pred:Value() then
-                    local prediction, hitChance = GetQ3Prediction(target)
-                    if prediction and hitChance >= minHitChance then
-                        local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                        Control.CastSpell(HK_Q, predPos)
-                    else
-                        Control.CastSpell(HK_Q, target.pos)
-                    end
-                else
-                    Control.CastSpell(HK_Q, target.pos)
-                end
-                
-                -- Schedule R after Q3 knockup with proper airborne check
-                DelayAction(function()
-                    if Ready(_R) and distanceToTarget <= 1400 and self:CanUseUltimate(target) then
-                        Control.CastSpell(HK_R)
-                    end
-                end, 0.4) -- Wait for Q3 to hit and create knockup
-                return
-            end
-            
-            -- Third try: If no Q3 but have E, try to get Q3 ready
-            if Ready(_E) and not HasQ3() and distanceToTarget <= 475 and not HasEBuff(target) and IsSafeToE(target, self) then
-                Control.CastSpell(HK_E, target)
-                
-                -- After E, Q should be ready or closer to ready
-                DelayAction(function()
-                    if Ready(_Q) then
-                        if HasQ3() then
-                            -- Now we have Q3, use it and follow with R
-                            if self.Menu.prediction.useQ3Pred:Value() then
-                                local prediction, hitChance = GetQ3Prediction(target)
-                                if prediction and hitChance >= minHitChance then
-                                    local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                                    Control.CastSpell(HK_Q, predPos)
-                                else
-                                    Control.CastSpell(HK_Q, target.pos)
-                                end
-                            else
-                                Control.CastSpell(HK_Q, target.pos)
-                            end
-                            
-                            -- Schedule R after Q3 knockup with airborne check
-                            DelayAction(function()
-                                if Ready(_R) and self:CanUseUltimate(target) then
-                                    Control.CastSpell(HK_R)
-                                end
-                            end, 0.4)
-                        else
-                            -- Still regular Q, just use it to build up to Q3
-                            Control.CastSpell(HK_Q, target.pos)
-                        end
-                    end
-                end, 0.3) -- Wait for E dash to complete
-                return
-            end
-            
-            -- Fourth try: Force R if enemy is very low and option is enabled, BUT ONLY if airborne
-            if self.Menu.onevsone.forceUlt:Value() and targetHealthPercent <= 15 and distanceToTarget <= 1400 and self:CanUseUltimate(target) then
-                Control.CastSpell(HK_R)
-                return
-            end
-        end
-    end
+    return not isUnderTurret
+end
+
+function DepressiveYasuo2:CheckWalljumpStatus()
+    if not self.walljumpExecuting then return end
     
-    -- COMBO EXECUTION: E-Q → R when target is at threshold health or less
-    if self.Menu.combo.executeCombo:Value() and self.Menu.combo.useR:Value() and Ready(_R) and 
-       targetHealthPercent <= self.Menu.combo.executeThreshold:Value() and distanceToTarget <= 1400 then
-        
-        -- Check if we have Q3 (tornado) ready for knockup
-        if HasQ3() and self.Menu.combo.useQ:Value() and Ready(_Q) then
-            -- Try to E-Q combo first to create knockup
-            if self.Menu.combo.useE:Value() and Ready(_E) then
-                -- Prioritize E on target if possible
-                if distanceToTarget <= 475 and not HasEBuff(target) and IsSafeToE(target, self) then
-                    Control.CastSpell(HK_E, target)
-                    -- Schedule Q3 after E dash completes
-                    DelayAction(function()
-                        if Ready(_Q) and HasQ3() then
-                            if self.Menu.prediction.useQ3Pred:Value() then
-                                local prediction, hitChance = GetQ3Prediction(target)
-                                if prediction and hitChance >= minHitChance then
-                                    local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                                    Control.CastSpell(HK_Q, predPos)
-                                else
-                                    Control.CastSpell(HK_Q, target.pos)
-                                end
-                            else
-                                Control.CastSpell(HK_Q, target.pos)
-                            end
-                            -- Schedule R after Q3 knockup
-                            DelayAction(function()
-                                if Ready(_R) and self:CanUseUltimate(target) then
-                                    Control.CastSpell(HK_R)
-                                end
-                            end, 0.3) -- Wait for Q3 to hit and create knockup
-                        end
-                    end, 0.4) -- Wait for E dash to complete
-                    return
-                end
-                -- If can't E directly to target, try E on minion near target
-                local minion = self:GetMinionForGapClose(target)
-                if minion and GetDistance(minion.pos, target.pos) <= 600 and IsSafeToE(minion, self) then -- Minion close to target
-                    Control.CastSpell(HK_E, minion)
-                    -- Schedule Q3 after E dash completes
-                    DelayAction(function()
-                        if Ready(_Q) and HasQ3() then
-                            if self.Menu.prediction.useQ3Pred:Value() then
-                                local prediction, hitChance = GetQ3Prediction(target)
-                                if prediction and hitChance >= minHitChance then
-                                    local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                                    Control.CastSpell(HK_Q, predPos)
-                                else
-                                    Control.CastSpell(HK_Q, target.pos)
-                                end
-                            else
-                                Control.CastSpell(HK_Q, target.pos)
-                            end
-                            -- Schedule R after Q3 knockup
-                            DelayAction(function()
-                                if Ready(_R) and self:CanUseUltimate(target) then
-                                    Control.CastSpell(HK_R)
-                                end
-                            end, 0.3) -- Wait for Q3 to hit and create knockup
-                        end
-                    end, 0.4) -- Wait for E dash to complete
-                    return
-                end
-            end
-            -- If no E available but Q3 ready, use Q3 directly and follow with R
-            if distanceToTarget <= 1000 then
-                if self.Menu.prediction.useQ3Pred:Value() then
-                    local prediction, hitChance = GetQ3Prediction(target)
-                    if prediction and hitChance >= minHitChance then
-                        local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                        Control.CastSpell(HK_Q, predPos)
-                        -- Schedule R after Q3 knockup
-                        DelayAction(function()
-                            if Ready(_R) and self:CanUseUltimate(target) then
-                                Control.CastSpell(HK_R)
-                            end
-                        end, 0.5) -- Wait for Q3 to travel and hit
-                        return
-                    end
-                else
-                    Control.CastSpell(HK_Q, target.pos)
-                    -- Schedule R after Q3 knockup
-                    DelayAction(function()
-                        if Ready(_R) and self:CanUseUltimate(target) then
-                            Control.CastSpell(HK_R)
-                        end
-                    end, 0.5) -- Wait for Q3 to travel and hit
-                    return
-                end
-            end
-        end
-    end
-    -- ADVANCED COMBO: If target is already airborne and we have high attack speed (1.33+)
-    if self.Menu.combo.advancedCombo:Value() and self.Menu.combo.useR:Value() and Ready(_R) and distanceToTarget <= 1400 and 
-       self:CanUseUltimate(target) and myHero.attackSpeed >= self.Menu.combo.minAttackSpeed:Value() then
-        
-        -- Target is airborne, look for another target to E-Q before using R
-        if HasQ3() and self.Menu.combo.useQ:Value() and Ready(_Q) and self.Menu.combo.useE:Value() and Ready(_E) then
-            -- Look for another enemy champion to E-Q
-            local secondaryTarget = self:GetSecondaryTarget(target, 900) -- Look within 900 range
-            if secondaryTarget and not HasEBuff(secondaryTarget) and IsSafeToE(secondaryTarget, self) then
-                local distanceToSecondary = GetDistance(myHero.pos, secondaryTarget.pos)
-                if distanceToSecondary <= 475 then
-                    Control.CastSpell(HK_E, secondaryTarget)
-                    -- Schedule Q3 after E dash completes
-                    DelayAction(function()
-                        if Ready(_Q) and HasQ3() then
-                            if self.Menu.prediction.useQ3Pred:Value() then
-                                local prediction, hitChance = GetQ3Prediction(secondaryTarget)
-                                if prediction and hitChance >= minHitChance then
-                                    local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                                    Control.CastSpell(HK_Q, predPos)
-                                else
-                                    Control.CastSpell(HK_Q, secondaryTarget.pos)
-                                end
-                            else
-                                Control.CastSpell(HK_Q, secondaryTarget.pos)
-                            end
-                            -- Schedule R on original target if still airborne
-                            DelayAction(function()
-                                if Ready(_R) and self:CanUseUltimate(target) then
-                                    Control.CastSpell(HK_R)
-                                end
-                            end, 0.2) -- Shorter delay since target is already airborne
-                        end
-                    end, 0.3) -- Wait for E dash to complete
-                    return
-                end
-            end
-            -- If no secondary champion, look for minion near airborne target
-            local nearbyMinion = self:GetMinionNearTarget(target, 600)
-            if nearbyMinion and not HasEBuff(nearbyMinion) and IsSafeToE(nearbyMinion, self) then
-                local distanceToMinion = GetDistance(myHero.pos, nearbyMinion.pos)
-                if distanceToMinion <= 475 then
-                    Control.CastSpell(HK_E, nearbyMinion)
-                    -- Schedule Q3 after E dash completes
-                    DelayAction(function()
-                        if Ready(_Q) and HasQ3() then
-                            -- Q3 towards original airborne target area
-                            if self.Menu.prediction.useQ3Pred:Value() then
-                                local prediction, hitChance = GetQ3Prediction(target)
-                                if prediction and hitChance >= minHitChance then
-                                    local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                                    Control.CastSpell(HK_Q, predPos)
-                                else
-                                    Control.CastSpell(HK_Q, target.pos)
-                                end
-                            else
-                                Control.CastSpell(HK_Q, target.pos)
-                            end
-                            -- Schedule R on original target if still airborne
-                            DelayAction(function()
-                                if Ready(_R) and self:CanUseUltimate(target) then
-                                    Control.CastSpell(HK_R)
-                                end
-                            end, 0.2) -- Shorter delay since target is already airborne
-                        end
-                    end, 0.3) -- Wait for E dash to complete
-                    return
-                end
-            end
-        end
-    end
-    -- R (Ultimate) logic - if enemy is already knocked up
-    if self.Menu.combo.useR:Value() and Ready(_R) and distanceToTarget <= 1400 then
-        if self:CanUseUltimate(target) then
-            Control.CastSpell(HK_R)
-            return
-        end
-    end
+    local currentTime = Game.Timer()
+    local currentPos = {x = myHero.pos.x, z = myHero.pos.z}
     
-    -- Q3 (Tornado) with prediction for knockup
-    if self.Menu.combo.useQ:Value() and Ready(_Q) and HasQ3() and distanceToTarget <= 1000 then
-        if self.Menu.prediction.useQ3Pred:Value() then
-            local prediction, hitChance = GetQ3Prediction(target)
-            if prediction and hitChance >= minHitChance then
-                local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                Control.CastSpell(HK_Q, predPos)
-                return
-            end
-        else
-            -- Fallback to direct cast
-            Control.CastSpell(HK_Q, target.pos)
-            return
-        end
-    end
-    
-    -- E to gap close (prioritize target if no E buff)
-    if self.Menu.combo.useE:Value() and Ready(_E) and distanceToTarget <= 475 and distanceToTarget > 200 and not HasEBuff(target) and IsSafeToE(target, self) then
-        Control.CastSpell(HK_E, target)
+    -- Check if walljump has been running for too long (timeout)
+    if self.walljumpStartTime and currentTime - self.walljumpStartTime > 15 then
+        self:ResetWalljumpState("Timeout: Walljump took too long")
         return
     end
     
-    -- E on minion to get closer to target
-    if self.Menu.combo.gapClose:Value() and Ready(_E) and distanceToTarget > 475 then
-        local minion = self:GetMinionForGapClose(target)
-        if minion and IsSafeToE(minion, self) then
-            Control.CastSpell(HK_E, minion)
-            return
-        end
-    end
-    
-    -- Q with prediction for damage
-    if self.Menu.combo.useQ:Value() and Ready(_Q) and not HasQ3() and distanceToTarget <= 475 then
-        if self.Menu.prediction.useQPred:Value() then
-            local prediction, hitChance = GetQPrediction(target)
-            if prediction and hitChance >= minHitChance then
-                local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                Control.CastSpell(HK_Q, predPos)
+    -- Check if hero is stuck in the same position
+    if self.walljumpLastPosition then
+        local distanceMoved = GetDistance2D(currentPos, self.walljumpLastPosition)
+        
+        if distanceMoved < 5 then -- If moved less than 5 units
+            if not self.walljumpStuckTime then
+                self.walljumpStuckTime = currentTime
+            elseif currentTime - self.walljumpStuckTime > 3 then -- Stuck for 3 seconds
+                self:ResetWalljumpState("Hero stuck in position")
                 return
             end
         else
-            -- Fallback to direct cast
-            Control.CastSpell(HK_Q, target.pos)
-            return
+            -- Hero is moving, reset stuck timer
+            self.walljumpStuckTime = nil
+        end
+    end
+    
+    -- Update last position
+    self.walljumpLastPosition = {x = currentPos.x, z = currentPos.z}
+    
+    -- Check if user issued a move command that's far from walljump area
+    if self.walljumpInitialPos then
+        local distanceFromWalljump = GetDistance2D(currentPos, self.walljumpInitialPos)
+        
+        -- If hero is very far from walljump area and we're still in initial movement phase
+        if self.walljumpMovingToInitial and distanceFromWalljump > 800 then
+            -- Check if user is moving away from walljump (user cancelled)
+            local mousePos = Game.mousePos()
+            local mousePos2D = {x = mousePos.x, z = mousePos.z}
+            local distanceMouseToWalljump = GetDistance2D(mousePos2D, self.walljumpInitialPos)
+            
+            if distanceMouseToWalljump > distanceFromWalljump then
+                self:ResetWalljumpState("User cancelled movement")
+                return
+            end
+        end
+    end
+    
+    -- Check if spells are not available when they should be
+    if self.currentSequence and self.walljumpStep <= #self.currentSequence then
+        local action = self.currentSequence[self.walljumpStep]
+        if action and action.type == "cast" then
+            if action.spell == _E and not Ready(_E) then
+                -- E should be available for walljump, if not available for too long, reset
+                if not self.walljumpSpellWaitTime then
+                    self.walljumpSpellWaitTime = currentTime
+                elseif currentTime - self.walljumpSpellWaitTime > 5 then
+                    self:ResetWalljumpState("E spell not available")
+                    return
+                end
+            elseif action.spell == _Q and not Ready(_Q) then
+                -- Q should be available, if not available for too long, reset
+                if not self.walljumpSpellWaitTime then
+                    self.walljumpSpellWaitTime = currentTime
+                elseif currentTime - self.walljumpSpellWaitTime > 5 then
+                    self:ResetWalljumpState("Q spell not available")
+                    return
+                end
+            end
+        else
+            -- Reset spell wait time if not casting
+            self.walljumpSpellWaitTime = nil
         end
     end
 end
 
-function Yasuo:Harass()
-    -- Simple harass: E on minion near enemy, then Q enemy with prediction
-    if self.harassState == "idle" then
-        -- Look for enemy first
-        local enemy = self:GetNearestEnemy(self.Menu.harass.enemyRange:Value())
-        if enemy then
-            -- If E is ready and we want to use it
-            if self.Menu.harass.useE:Value() and Ready(_E) then
-                local minion = self:GetMinionForHarass(enemy)
-                if minion and IsSafeToE(minion, self) then
-                    -- Cast E on minion
-                    Control.CastSpell(HK_E, minion)
+function DepressiveYasuo2:ResetWalljumpState(reason)
+    if reason then
+        -- Optional: you can remove this print if you don't want debug info
+        -- print("Walljump reset: " .. reason)
+    end
+    
+    self.walljumpExecuting = false
+    self.walljumpStep = 0
+    self.currentSequence = nil
+    self.selectedWalljumpSpot = nil
+    self.walljumpInitialPos = nil
+    self.walljumpMovingToInitial = false
+    self.walljumpDelayStartTime = nil
+    self.walljumpStartTime = nil
+    self.walljumpLastPosition = nil
+    self.walljumpStuckTime = nil
+    self.walljumpSpellWaitTime = nil
+end
+
+function DepressiveYasuo2:ExecuteWalljumpSequence()
+    if not self.currentSequence or self.walljumpStep > #self.currentSequence then
+        self:CompleteWalljump()
+        return
+    end
+    
+    -- Check if we're still moving to initial position
+    if self.walljumpMovingToInitial and self.walljumpInitialPos then
+        local currentPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+        local distanceToInitial = GetDistance2D(currentPos2D, self.walljumpInitialPos)
+        
+        if distanceToInitial <= 15 then
+            -- First time reaching position - set delay timer
+            if not self.walljumpDelayStartTime then
+                self.walljumpDelayStartTime = Game.Timer()
+            end
+            
+            local currentTime = Game.Timer()
+            if currentTime - self.walljumpDelayStartTime >= 0 then -- Sin delay
+                self.walljumpMovingToInitial = false
+                self.walljumpDelayStartTime = nil
+                self.lastActionTime = Game.Timer() -- Reset timer to start sequence
+            else
+                -- Still waiting, don't execute sequence yet
+                return
+            end
+        else
+            -- Still moving to initial position, reset delay timer if it was set
+            self.walljumpDelayStartTime = nil
+            return
+        end
+    end
+    
+    local currentTime = Game.Timer()
+    local action = self.currentSequence[self.walljumpStep]
+    
+    -- Frame-perfect timing
+    if currentTime - self.lastActionTime >= action.delay then
+        if action.type == "move" then
+            local movePos2D = Vector(action.position.x, myHero.pos.y, action.position.z)
+            Control.Move(movePos2D)
+            
+        elseif action.type == "cast" then
+            if action.spell == _E then
+                if action.position then
+                    -- Cast E to specific position
+                    local ePos2D = Vector(action.position.x, myHero.pos.y, action.position.z)
+                    Control.CastSpell(HK_E, ePos2D)
+                else
+                    -- Cast E to target
+                    local target = self:FindWalljumpTarget(action.target)
+                    if target and Ready(_E) then
+                        Control.CastSpell(HK_E, target)
+                    end
+                end
+            elseif action.spell == _W then
+                if Ready(_W) then
+                    -- Check if there's a specific position for W cast
+                    if action.position then
+                        local wPos2D = Vector(action.position.x, myHero.pos.y, action.position.z)
+                        Control.CastSpell(HK_W, wPos2D)
+                    else
+                        Control.CastSpell(HK_W)
+                    end
+                end
+            elseif action.spell == _Q then
+                if Ready(_Q) then
+                    -- Check if there's a specific position for Q cast
+                    if action.position then
+                        local qPos2D = Vector(action.position.x, myHero.pos.y, action.position.z)
+                        Control.CastSpell(HK_Q, qPos2D)
+                    else
+                        Control.CastSpell(HK_Q)
+                    end
+                end
+            end
+        elseif action.type == "click" then
+            -- Move to click position instead of using mouse events
+            local clickPos2D = Vector(action.position.x, myHero.pos.y, action.position.z)
+            Control.Move(clickPos2D)
+        end
+        
+        self.walljumpStep = self.walljumpStep + 1
+        self.lastActionTime = currentTime
+    end
+end
+
+function DepressiveYasuo2:FindWalljumpTarget(targetType)
+    if targetType == "minion" then
+        for i = 1, Game.MinionCount() do
+            local minion = Game.Minion(i)
+            if minion and minion.team ~= myHero.team and not minion.dead then
+                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+                if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E and not HasEBuff(minion) then
+                    return minion
+                end
+            end
+        end
+    elseif targetType == "krug" or targetType == "raptor" then
+        for i = 1, Game.MinionCount() do
+            local minion = Game.Minion(i)
+            if minion and minion.team == 300 and not minion.dead then -- Jungle monsters
+                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+                if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E and not HasEBuff(minion) then
+                    if targetType == "krug" and minion.charName:find("Krug") then
+                        return minion
+                    elseif targetType == "raptor" and minion.charName:find("Raptor") then
+                        return minion
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function DepressiveYasuo2:CompleteWalljump()
+    -- Add 0.5 second delay at exact position to prevent return movement
+    DelayAction(function()
+        self:ResetWalljumpState("Walljump completed successfully")
+    end, 0.5)
+end
+
+function DepressiveYasuo2:CancelWalljump()
+    if self.walljumpExecuting then
+        self:ResetWalljumpState("Walljump cancelled by user")
+    end
+end
+
+-- Combo Functions
+function DepressiveYasuo2:Combo()
+    local target = self:GetBestTarget()
+    if not target then 
+        return 
+    end
+    
+    -- Auto stack Q when not in combat (priority system)
+    if not self:IsInCombat() then
+        self:StackQ()
+        return
+    end
+    
+    -- Check Q readiness and state
+    local qSpellData = myHero:GetSpellData(_Q)
+    local qReady = Ready(_Q)
+    local qWillBeReadyAfterE = qSpellData and qSpellData.currentCd <= 0.5 and qSpellData.currentCd > 0
+    local hasQ3 = HasQ3()
+    
+    -- Get positions and distances
+    local basicAttackRange = myHero.range + myHero.boundingRadius + target.boundingRadius
+    local targetPos2D = {x = target.pos.x, z = target.pos.z}
+    local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+    local distanceToTarget = GetDistance2D(heroPos2D, targetPos2D)
+    
+    -- PRIORITY 1: Ultimate combo (advanced airborne detection)
+    if self.Menu.combo.useR:Value() and Ready(_R) then
+        -- Check for knocked up enemies in range
+        local knockedUpCount = self:CountKnockedUpEnemies(SPELL_RANGE.R, myHero.pos)
+        local minEnemiesRequired = self.Menu.ultimate.minEnemiesR:Value()
+        
+        -- 1v1 Logic: Allow R on single target if they are killable
+        local canUseR1v1 = false
+        if knockedUpCount == 1 and self.Menu.ultimate.allow1v1R:Value() then
+            local singleTarget = self:GetKnockedUpTarget()
+            if singleTarget and self:IsTargetKillableWithR(singleTarget) then
+                canUseR1v1 = true
+            end
+        end
+        
+        if knockedUpCount >= minEnemiesRequired or canUseR1v1 then
+            -- Find the best target to R (prioritize low HP or multiple enemies)
+            local bestRTarget = nil
+            local bestScore = 0
+            
+            for i = 1, Game.HeroCount() do
+                local enemy = Game.Hero(i)
+                if IsValidTarget(enemy, SPELL_RANGE.R) and self:CanUseUltimate(enemy) then
+                    local score = 100 -- Base score
+                    local hpPercent = enemy.health / enemy.maxHealth
                     
-                    -- Change state to waiting for Q with timer
-                    self.harassState = "waiting_for_q"
-                    self.harassTimer = GetTickCount()
-                    return
+                    -- HIGHEST PRIORITY: Killable targets (1v1 logic)
+                    if self:IsTargetKillableWithR(enemy) then
+                        score = score + 1000 -- Massive priority for killable targets
+                    end
+                    
+                    -- For single target: check HP threshold (unless killable)
+                    if knockedUpCount == 1 and hpPercent > (self.Menu.ultimate.maxHpForR:Value() / 100) and not self:IsTargetKillableWithR(enemy) then
+                        score = 0 -- Don't use R on high HP single targets unless killable
+                    else
+                        -- Prioritize low HP enemies (higher chance to kill)
+                        if hpPercent < 0.3 then
+                            score = score + 200
+                        elseif hpPercent < 0.5 then
+                            score = score + 100
+                        end
+                        
+                        -- Bonus for multiple enemies nearby (teamfight)
+                        if self.Menu.ultimate.teamfightR:Value() then
+                            local nearbyEnemies = self:CountKnockedUpEnemies(400, enemy.pos)
+                            if nearbyEnemies >= 2 then
+                                score = score + (nearbyEnemies * 75)
+                            end
+                        end
+                        
+                        -- Prioritize ADC and Mid laners
+                        if self.Menu.ultimate.prioritizeADC:Value() and self:IsHighPriorityTarget(enemy) then
+                            score = score + 100
+                        end
+                    end
+                    
+                    if score > bestScore and score > 0 then
+                        bestScore = score
+                        bestRTarget = enemy
+                    end
                 end
             end
             
-            -- If we can't E but Q is ready, use Q with prediction
-            if self.Menu.harass.useQ:Value() and Ready(_Q) then
-                local distanceToEnemy = GetDistance(myHero.pos, enemy.pos)
-                if distanceToEnemy <= 475 then -- Q range
-                    local minHitChance = self.Menu.prediction.hitChance:Value()
-                    
-                    -- Use prediction for Q
-                    if HasQ3() and self.Menu.prediction.useQ3Pred:Value() then
-                        local prediction, hitChance = GetQ3Prediction(enemy)
-                        if prediction and hitChance >= minHitChance then
-                            local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                            Control.CastSpell(HK_Q, predPos)
-                            return
-                        end
-                    elseif self.Menu.prediction.useQPred:Value() then
-                        local prediction, hitChance = GetQPrediction(enemy)
-                        if prediction and hitChance >= minHitChance then
-                            local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                            Control.CastSpell(HK_Q, predPos)
-                            return
-                        end
-                    else
-                        -- Fallback to direct cast if prediction disabled
-                        Control.CastSpell(HK_Q, enemy.pos)
-                        return
-                    end
-                end
+            if bestRTarget then
+                Control.CastSpell(HK_R, bestRTarget)
+                return
             end
         end
-        
-    elseif self.harassState == "waiting_for_q" then
-        -- Wait 600ms after E before casting Q
-        local timeSinceE = GetTickCount() - self.harassTimer
-        if timeSinceE >= 600 then -- Wait 0.6 seconds after E
-            -- Now try to cast Q if it's ready
-            if Ready(_Q) and self.Menu.harass.useQ:Value() then
-                local enemy = self:GetNearestEnemy(self.Menu.harass.enemyRange:Value())
-                if enemy then
-                    local minHitChance = self.Menu.prediction.hitChance:Value()
-                    
-                    -- Use prediction for Q after E
-                    if HasQ3() and self.Menu.prediction.useQ3Pred:Value() then
-                        local prediction, hitChance = GetQ3Prediction(enemy)
-                        if prediction and hitChance >= minHitChance then
-                            local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                            Control.CastSpell(HK_Q, predPos)
-                            self.harassState = "idle"
-                            return
+    end
+    
+    -- PRIORITY 2: Q3 Tornado (highest priority damage spell)
+    if self.Menu.combo.useQ:Value() and qReady and hasQ3 then
+        local q3Pred, q3Chance = GetPrediction(target, "Q3")
+        if q3Pred and q3Chance >= self.Menu.combo.minHitChance:Value() and distanceToTarget <= SPELL_RANGE.Q3 then
+            Control.CastSpell(HK_Q, Vector(q3Pred.x, myHero.pos.y, q3Pred.z))
+            return
+        end
+    end
+    
+    -- PRIORITY 3: E-Q3 Combo (gap close into tornado) - SOLO DIRECTO AL ENEMIGO
+    if hasQ3 and qReady and Ready(_E) and distanceToTarget > SPELL_RANGE.Q3 and distanceToTarget <= SPELL_RANGE.E then
+        -- Con Q3 cargada, SOLO usar E directo al target, NO a minions
+        if not HasEBuff(target) then
+            if self:IsSafeToE(target) then
+                Control.CastSpell(HK_E, target)
+                DelayAction(function()
+                    if Ready(_Q) and HasQ3() then
+                        local pred, chance = GetPrediction(target, "Q3")
+                        if pred and chance >= 2 then
+                            Control.CastSpell(HK_Q, Vector(pred.x, myHero.pos.y, pred.z))
                         end
-                    elseif self.Menu.prediction.useQPred:Value() then
-                        local prediction, hitChance = GetQPrediction(enemy)
-                        if prediction and hitChance >= minHitChance then
-                            local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                            Control.CastSpell(HK_Q, predPos)
-                            self.harassState = "idle"
-                            return
-                        end
-                    else
-                        -- Fallback to direct cast if prediction disabled
-                        Control.CastSpell(HK_Q, enemy.pos)
-                        self.harassState = "idle"
-                        return
                     end
-                end
+                end, 0.1)
+                return
             end
         end
+    end
+    
+    -- PRIORITY 4: Advanced E-Q Combo (standard combo) - SOLO si NO tienes Q3
+    if self.Menu.combo.useE:Value() and self.Menu.combo.useQ:Value() and Ready(_E) and (qReady or qWillBeReadyAfterE) and not hasQ3 then
+        -- Direct E-Q on target
+        if not HasEBuff(target) and distanceToTarget <= SPELL_RANGE.E and self:IsSafeToE(target) then
+            Control.CastSpell(HK_E, target)
+            local qDelay = qReady and 0.1 or 0.2 -- Shorter delay if Q is ready
+            DelayAction(function()
+                if Ready(_Q) then
+                    local pred, chance = GetPrediction(target, "Q")
+                    if pred and chance >= self.Menu.combo.minHitChance:Value() then
+                        Control.CastSpell(HK_Q, Vector(pred.x, myHero.pos.y, pred.z))
+                    end
+                end
+            end, qDelay)
+            return
+        end
         
-        -- Timeout if too much time has passed (safety)
-        if timeSinceE > 2000 then -- 2 seconds timeout
-            self.harassState = "idle"
+        -- E-Q through minions (improved logic)
+        if distanceToTarget <= 700 then
+            local bestMinion = self:GetBestMinionForEQ(target)
+            if bestMinion and not HasEBuff(bestMinion) and self:IsSafeToE(bestMinion) then
+                Control.CastSpell(HK_E, bestMinion)
+                local qDelay = qReady and 0.15 or 0.25
+                DelayAction(function()
+                    if Ready(_Q) then
+                        local pred, chance = GetPrediction(target, "Q")
+                        if pred and chance >= self.Menu.combo.minHitChance:Value() then
+                            Control.CastSpell(HK_Q, Vector(pred.x, myHero.pos.y, pred.z))
+                        end
+                    end
+                end, qDelay)
+                return
+            end
+        end
+    end
+    
+    -- PRIORITY 5: Gapcloser for positioning
+    if self.Menu.gapcloser.enabled:Value() and Ready(_E) and distanceToTarget > basicAttackRange then
+        if self:ManualGapcloser() then
+            return
+        end
+    end
+    
+    -- PRIORITY 6: Basic Q for poke/stack
+    if self.Menu.combo.useQ:Value() and qReady and not hasQ3 then
+        local qRange = SPELL_RANGE.Q
+        if distanceToTarget <= qRange then
+            local pred, chance = GetPrediction(target, "Q")
+            if pred and chance >= self.Menu.combo.minHitChance:Value() then
+                Control.CastSpell(HK_Q, Vector(pred.x, myHero.pos.y, pred.z))
+                return
+            end
+        end
+    end
+    
+    -- PRIORITY 7: Basic E for gap closing
+    if self.Menu.combo.useE:Value() and Ready(_E) and not HasEBuff(target) then
+        if distanceToTarget <= SPELL_RANGE.E and distanceToTarget > basicAttackRange then
+            if self:IsSafeToE(target) then
+                Control.CastSpell(HK_E, target)
+                return
+            end
         end
     end
 end
 
-function Yasuo:Clear()
-    local qDamage = GetQDamage()
-    local eDamage = GetEDamage()
+function DepressiveYasuo2:EQCombo(target)
+    -- Find a minion to E to for better positioning
+    local bestMinion = self:GetBestMinionForEQ(target)
     
-    -- E-Q Combo for clearing multiple minions (Q ready or will be ready after E)
-    if self.Menu.clear.useE:Value() and self.Menu.clear.useQ:Value() and Ready(_E) and (Ready(_Q) or WillQBeReadyAfterE()) then
-        local bestMinion = self:GetBestMinionForEQ()
-        if bestMinion and IsSafeToE(bestMinion, self) then
-            Control.CastSpell(HK_E, bestMinion)
-            -- Cast Q after E (will be ready due to CD reduction)
-            DelayAction(function()
-                if Ready(_Q) then
-                    Control.CastSpell(HK_Q, Game.mousePos())
-                end
-            end, 0.15) -- Slightly longer delay to ensure E CD reduction applies
-            return
-        end
-    end
+    -- Check Q status before E
+    local qSpellData = myHero:GetSpellData(_Q)
+    local qReady = Ready(_Q)
+    local qWillBeReadyAfterE = qSpellData and qSpellData.currentCd <= 0.5 and qSpellData.currentCd > 0
     
-    -- Smart E usage when Q is almost ready
-    if self.Menu.clear.useE:Value() and self.Menu.clear.useQ:Value() and Ready(_E) and WillQBeReadyAfterE() then
-        local minion = self:GetBestMinionForSmartEQ(eDamage, qDamage)
-        if minion and IsSafeToE(minion, self) then
-            Control.CastSpell(HK_E, minion)
-            -- Q will be ready after E
-            DelayAction(function()
-                if Ready(_Q) then
-                    local clearTarget = self:GetBestMinionForQClear()
-                    if clearTarget then
-                        Control.CastSpell(HK_Q, clearTarget.pos)
+    if bestMinion and not HasEBuff(bestMinion) then
+        local minionPos2D = {x = bestMinion.pos.x, z = bestMinion.pos.z}
+        local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+        if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E then
+            if not self.Menu.safety.enabled:Value() or self:IsSafeToE(bestMinion) then
+                Control.CastSpell(HK_E, bestMinion)
+                
+                -- Queue Q after E - if Q will be ready after E (≤0.5s), use minimal delay since E resets Q CD to 0  
+                local qDelay = qReady and 0.15 or (qWillBeReadyAfterE and 0.2 or 0.3)
+                DelayAction(function()
+                    if Ready(_Q) then
+                        local pred, hitChance = GetPrediction(target, "Q")
+                        if pred and hitChance >= 2 then
+                            Control.CastSpell(HK_Q, Vector(pred.x, myHero.pos.y, pred.z))
+                        else
+                            Control.CastSpell(HK_Q, target.pos)
+                        end
                     end
-                end
-            end, 0.15)
-            return
-        end
-    end
-    
-    -- Regular Q clear
-    if self.Menu.clear.useQ:Value() and Ready(_Q) then
-        local minion = self:GetBestMinionForQClear()
-        if minion then
-            Control.CastSpell(HK_Q, minion.pos)
-            return
-        end
-    end
-    
-    -- E clear for single minions
-    if self.Menu.clear.useE:Value() and Ready(_E) then
-        local minion = self:GetBestMinionForEClear()
-        if minion and IsSafeToE(minion, self) then
-            Control.CastSpell(HK_E, minion)
+                end, qDelay)
+            end
         end
     end
 end
 
-function Yasuo:LastHit()
-    local qDamage = GetQDamage()
-    local eDamage = GetEDamage()
+function DepressiveYasuo2:EQ3FlashCombo()
+    local target = self:GetBestTarget()
+    if not target or not HasQ3() or not Ready(_E) or not Ready(_Q) then return end
     
-    -- Simple Q LastHit - same logic as Clear
-    if self.Menu.lasthit.useQ:Value() and Ready(_Q) and qDamage > 0 then
-        for i = 1, Game.MinionCount() do
-            local minion = Game.Minion(i)
-            if minion and minion.isEnemy and minion.alive and minion.visible then
-                local distance = GetDistance(myHero.pos, minion.pos)
-                if distance <= 475 and CanKillMinion(minion, qDamage) then
-                    Control.CastSpell(HK_Q, minion.pos)
-                    return
+    local flashSlot = self:GetSummonerSpellSlot("SummonerFlash")
+    if not flashSlot or not Ready(flashSlot) then return end
+    
+    -- Start combo
+    self.comboState = "eq3flash"
+    self.comboTarget = target
+    
+    -- Find minion or use target directly
+    local eTarget = self:GetBestMinionForEQ(target) or target
+    
+    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E then
+        Control.CastSpell(HK_E, eTarget)
+        
+        DelayAction(function()
+            if Ready(_Q) and HasQ3() then
+                local pred, hitChance = GetPrediction(target, "Q3")
+                if pred and hitChance >= 2 then
+                    Control.CastSpell(HK_Q, pred)
+                else
+                    Control.CastSpell(HK_Q, target.pos)
                 end
+                
+                -- Flash after Q3
+                DelayAction(function()
+                    if Ready(flashSlot) then
+                        local flashPos = myHero.pos:Extended(target.pos, 400)
+                        Control.CastSpell(flashSlot, flashPos)
+                    end
+                    self.comboState = "idle"
+                end, 0.2)
             end
-        end
+        end, 0.1)
     end
+end
+
+function DepressiveYasuo2:BeybladeCombo()
+    local target = self:GetBestTarget()
+    if not target or not Ready(_E) or not Ready(_Q) then return end
     
-    -- Simple E LastHit - same logic as Clear
-    if self.Menu.lasthit.useE:Value() and Ready(_E) and eDamage > 0 then
-        for i = 1, Game.MinionCount() do
-            local minion = Game.Minion(i)
-            if minion and minion.isEnemy and minion.alive and minion.visible and not HasEBuff(minion) and IsSafeToE(minion, self) then
-                local distance = GetDistance(myHero.pos, minion.pos)
-                if distance <= 475 and CanKillMinion(minion, eDamage) then
+    local flashSlot = self:GetSummonerSpellSlot("SummonerFlash")
+    if not flashSlot or not Ready(flashSlot) then return end
+    
+    self.comboState = "beyblade"
+    self.comboTarget = target
+    
+    -- E to minion or target
+    local eTarget = self:GetBestMinionForEQ(target) or target
+    
+    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E then
+        Control.CastSpell(HK_E, eTarget)
+        
+        DelayAction(function()
+            if Ready(_Q) then
+                Control.CastSpell(HK_Q)
+                
+                DelayAction(function()
+                    if Ready(flashSlot) then
+                        local flashPos = myHero.pos:Extended(target.pos, 400)
+                        Control.CastSpell(flashSlot, flashPos)
+                        
+                        DelayAction(function()
+                            if Ready(_Q) and HasQ3() then
+                                local pred, hitChance = GetPrediction(target, "Q3")
+                                if pred and hitChance >= 2 then
+                                    Control.CastSpell(HK_Q, pred)
+                                else
+                                    Control.CastSpell(HK_Q, target.pos)
+                                end
+                                
+                                DelayAction(function()
+                                    if Ready(_R) and self:CanUseUltimate(target) then
+                                        Control.CastSpell(HK_R)
+                                    end
+                                    self.comboState = "idle"
+                                end, 0.3)
+                            end
+                        end, 0.2)
+                    end
+                end, 0.15)
+            end
+        end, 0.1)
+    end
+end
+
+function DepressiveYasuo2:Harass()
+    if not self.Menu.harass.useE:Value() and not self.Menu.harass.useQ:Value() then return end
+    
+    local target = self:GetBestTarget()
+    if not target then return end
+    
+    -- E-Q Harass
+    if self.Menu.harass.useE:Value() and Ready(_E) then
+        local minion = self:GetBestMinionForHarass(target)
+        if minion and not HasEBuff(minion) then
+            if GetDistance(myHero.pos, minion.pos) <= SPELL_RANGE.E then
+                if self:IsSafeToE(minion) then
                     Control.CastSpell(HK_E, minion)
-                    -- TEMPORAL: Print minion buffs after E (REMOVE LATER)
-                    DelayAction(function()
-                        local buffCount = minion.buffCount or 0
-                        for j = 0, buffCount do
-                            local buff = minion:GetBuff(j)
-                            if buff and buff.valid and buff.name then
+                    
+                    if self.Menu.harass.useQ:Value() then
+                        DelayAction(function()
+                            if Ready(_Q) then
+                                local pred, hitChance = GetPrediction(target, "Q")
+                                if pred and hitChance >= 2 then
+                                    Control.CastSpell(HK_Q, pred)
+                                end
+                            end
+                        end, 0.1)
+                    end
+                end
+            end
+        end
+    end
+end
+
+function DepressiveYasuo2:Clear()
+    if not self.Menu.clear.useQ:Value() and not self.Menu.clear.useE:Value() then return end
+    
+    -- VERIFICACIÓN ESPECIAL: Si estamos bajo torre enemiga, SOLO usar Q, no E
+    local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+    local isUnderTurret = IsUnderEnemyTurret(heroPos2D, self.Menu.safety.range:Value())
+    
+    if isUnderTurret and self.Menu.clear.useQ:Value() and Ready(_Q) then
+        -- Solo Q bajo torre - buscar el mejor minion para golpear con Q
+        local qRange = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
+        local bestQPos = nil
+        local bestScore = 0
+        
+        for i = 1, Game.MinionCount() do
+            local minion = Game.Minion(i)
+            if minion and minion.team ~= myHero.team and not minion.dead then
+                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                
+                if GetDistance2D(heroPos2D, minionPos2D) <= qRange then
+                    local score = 1
+                    
+                    -- Contar minions adicionales en el área de Q
+                    for j = 1, Game.MinionCount() do
+                        local otherMinion = Game.Minion(j)
+                        if otherMinion and otherMinion ~= minion and otherMinion.team ~= myHero.team and not otherMinion.dead then
+                            local otherMinionPos2D = {x = otherMinion.pos.x, z = otherMinion.pos.z}
+                            local radius = HasQ3() and SPELL_RADIUS.Q3 or SPELL_RADIUS.Q
+                            if GetDistance2D(minionPos2D, otherMinionPos2D) <= radius then
+                                score = score + 1
                             end
                         end
-                    end, 0.1)
-                    return
-                end
-            end
-        end
-    end
-end
-
--- Get best target for combo
-function Yasuo:GetBestComboTarget()
-    local bestTarget = nil
-    local bestScore = 0
-    
-    for i = 1, Game.HeroCount() do
-        local hero = Game.Hero(i)
-        if hero and hero.isEnemy and not hero.dead and hero.visible then
-            local distance = GetDistance(myHero.pos, hero.pos)
-            if distance <= 1200 then -- Extended range for E possibilities
-                -- Calculate health percentage safely
-                local healthPercent = hero.maxHealth > 0 and (hero.health / hero.maxHealth * 100) or 100
-                
-                -- Score based on priority: low health, close distance, no E buff
-                local score = (100 - healthPercent) + (1200 - distance) / 10
-                
-                -- Bonus if we can E to them
-                if distance <= 475 and not HasEBuff(hero) then
-                    score = score + 50
-                end
-                
-                -- Bonus if they're immobile (with safety check)
-                if _G.GGPrediction and _G.GGPrediction.GetImmobileDuration then
-                    local immobileDuration = _G.GGPrediction:GetImmobileDuration(hero)
-                    if immobileDuration and immobileDuration > 0 then
-                        score = score + 100
+                    end
+                    
+                    if score > bestScore then
+                        bestScore = score
+                        bestQPos = Vector(minionPos2D.x, myHero.pos.y, minionPos2D.z)
                     end
                 end
+            end
+        end
+        
+        -- Castear Q si encontramos un buen target
+        if bestQPos then
+            Control.CastSpell(HK_Q, bestQPos)
+            return
+        end
+    end
+    
+    -- Check Q readiness - either ready or will be ready after E (≤0.5s cd resets to 0 with E)
+    local qSpellData = myHero:GetSpellData(_Q)
+    local qReady = Ready(_Q)
+    local qWillBeReadyAfterE = qSpellData and qSpellData.currentCd <= 0.5 and qSpellData.currentCd > 0
+    
+    -- PRIORIDAD 0: Stack Q si hay minions con buff de E (YasuoE) para poder hacer EQ después
+    if self.Menu.clear.useQ:Value() and qReady and not HasQ3() then
+        -- Verificar si hay minions con buff de E que no podemos dashear
+        local hasMinionsWithEBuff = false
+        local minionsWithoutEBuff = 0
+        
+        for i = 1, Game.MinionCount() do
+            local minion = Game.Minion(i)
+            if minion and minion.team ~= myHero.team and not minion.dead then
+                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
                 
-                if score > bestScore then
-                    bestScore = score
-                    bestTarget = hero
+                if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E then
+                    if HasEBuff(minion) then
+                        hasMinionsWithEBuff = true
+                    else
+                        minionsWithoutEBuff = minionsWithoutEBuff + 1
+                    end
+                end
+            end
+        end
+        
+        -- Si hay minions con E buff y pocos sin E buff, stackear Q
+        if hasMinionsWithEBuff and minionsWithoutEBuff <= 1 then
+            -- Buscar el mejor target para stackear Q (minions o jungle monsters)
+            local bestQTarget = nil
+            local qRange = SPELL_RANGE.Q
+            
+            -- Prioridad a minions sin E buff
+            for i = 1, Game.MinionCount() do
+                local minion = Game.Minion(i)
+                if minion and minion.team ~= myHero.team and not minion.dead and not HasEBuff(minion) then
+                    local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                    local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+                    
+                    if GetDistance2D(heroPos2D, minionPos2D) <= qRange then
+                        bestQTarget = minion
+                        break
+                    end
+                end
+            end
+            
+            -- Si no hay minions sin E buff, usar jungle monsters
+            if not bestQTarget then
+                for i = 1, Game.MinionCount() do
+                    local monster = Game.Minion(i)
+                    if monster and monster.team == 300 and not monster.dead then -- Jungle monsters
+                        local monsterPos2D = {x = monster.pos.x, z = monster.pos.z}
+                        local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+                        
+                        if GetDistance2D(heroPos2D, monsterPos2D) <= qRange then
+                            bestQTarget = monster
+                            break
+                        end
+                    end
+                end
+            end
+            
+            -- Castear Q para stackear
+            if bestQTarget then
+                local pred, chance = GetPrediction(bestQTarget, "Q")
+                if pred and chance >= 2 then
+                    Control.CastSpell(HK_Q, Vector(pred.x, myHero.pos.y, pred.z))
+                else
+                    Control.CastSpell(HK_Q, bestQTarget.pos)
+                end
+                return
+            end
+        end
+    end
+    
+    -- PRIORIDAD 1: Lasthit con E (con mecánica de 0.5s Q)
+    if self.Menu.clear.useE:Value() and Ready(_E) then
+        local eDamage = GetEDamage()
+        local bestLasthitMinion = nil
+        local bestLasthitScore = 0
+        
+        for i = 1, Game.MinionCount() do
+            local minion = Game.Minion(i)
+            if minion and minion.team ~= myHero.team and not minion.dead and not HasEBuff(minion) then
+                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+                
+                if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E then
+                    -- Verificar si puede ser killed con E
+                    if minion.health <= eDamage and minion.health > myHero.totalDamage * 0.7 then
+                        -- Priorizar minions con más vida (más oro)
+                        local score = minion.health
+                        
+                        -- Bonus si Q no está disponible pero está cerca (priorizar E lasthit)
+                        if not qReady and not qWillBeReadyAfterE then
+                            score = score + 200
+                        end
+                        
+                        -- Bonus si Q está listo o se reseteará con E (después del E podemos golpear más minions con Q)
+                        if qReady or qWillBeReadyAfterE then
+                            local futurePos2D = self:CalculateEPosition(minionPos2D)
+                            local qRange = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
+                            local minionsAfterE = 0
+                            
+                            for j = 1, Game.MinionCount() do
+                                local otherMinion = Game.Minion(j)
+                                if otherMinion and otherMinion ~= minion and otherMinion.team ~= myHero.team and not otherMinion.dead then
+                                    local otherMinionPos2D = {x = otherMinion.pos.x, z = otherMinion.pos.z}
+                                    if GetDistance2D(futurePos2D, otherMinionPos2D) <= qRange then
+                                        minionsAfterE = minionsAfterE + 1
+                                    end
+                                end
+                            end
+                            
+                            score = score + (minionsAfterE * 50) -- Bonus por posicionamiento
+                        end
+                        
+                        if score > bestLasthitScore then
+                            bestLasthitScore = score
+                            bestLasthitMinion = minion
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Ejecutar E lasthit si encontramos un minion válido y es seguro
+        if bestLasthitMinion and self:IsSafeToEInClear(bestLasthitMinion) then
+            Control.CastSpell(HK_E, bestLasthitMinion)
+            
+            -- Si Q está listo o se reseteará con E, usarlo después del E
+            if qReady or qWillBeReadyAfterE then
+                local qDelay = qReady and 0.15 or (qWillBeReadyAfterE and 0.2 or 0.3)
+                DelayAction(function()
+                    if Ready(_Q) then
+                        Control.CastSpell(HK_Q)
+                    end
+                end, qDelay)
+            end
+            return
+        end
+    end
+    
+    -- PRIORIDAD 2: E-Q combo cuando ambos están disponibles o Q se reseteará con E (clearing general)
+    if self.Menu.clear.useE:Value() and self.Menu.clear.useQ:Value() and Ready(_E) and (qReady or qWillBeReadyAfterE) then
+        -- Buscar el mejor minion para E-Q combo
+        local bestMinion = nil
+        local bestScore = 0
+        local qRange = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
+        
+        for i = 1, Game.MinionCount() do
+            local minion = Game.Minion(i)
+            if minion and minion.team ~= myHero.team and not minion.dead and not HasEBuff(minion) then
+                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+                
+                -- Verificar que el minion esté en rango de E y sea seguro
+                if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E and self:IsSafeToEInClear(minion) then
+                    -- Calcular posición después de E
+                    local futurePos2D = self:CalculateEPosition(minionPos2D)
+                    
+                    -- Contar cuántos minions estarán en rango de Q desde esa posición
+                    local minionsInQRange = 0
+                    for j = 1, Game.MinionCount() do
+                        local otherMinion = Game.Minion(j)
+                        if otherMinion and otherMinion.team ~= myHero.team and not otherMinion.dead then
+                            local otherMinionPos2D = {x = otherMinion.pos.x, z = otherMinion.pos.z}
+                            if GetDistance2D(futurePos2D, otherMinionPos2D) <= qRange then
+                                minionsInQRange = minionsInQRange + 1
+                            end
+                        end
+                    end
+                    
+                    -- Score basado en cantidad de minions que podremos golpear con Q
+                    local score = minionsInQRange
+                    
+                    -- Bonus si es Q3 (tornado) para múltiples minions
+                    if HasQ3() and minionsInQRange >= 2 then
+                        score = score + 5
+                    end
+                    
+                    -- Solo considerar si puede golpear al menos 1 minion con Q
+                    if score > bestScore and minionsInQRange >= 1 then
+                        bestScore = score
+                        bestMinion = minion
+                    end
+                end
+            end
+        end
+        
+        -- Ejecutar E-Q combo si encontramos un minion válido
+        if bestMinion and bestScore > 0 then
+            Control.CastSpell(HK_E, bestMinion)
+            
+            -- Queue Q después de E con delay apropiado - si Q se reseteará con E (≤0.5s), usar delay mínimo
+            local qDelay = qReady and 0.15 or (qWillBeReadyAfterE and 0.2 or 0.3)
+            DelayAction(function()
+                if Ready(_Q) then
+                    Control.CastSpell(HK_Q)
+                end
+            end, qDelay)
+            return
+        end
+    end
+    
+    -- PRIORIDAD 3: Q solo para clear (cuando E no está disponible o no es seguro)
+    if self.Menu.clear.useQ:Value() and qReady then
+        local qRange = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
+        local bestQPos = nil
+        local bestQScore = 0
+        
+        for i = 1, Game.MinionCount() do
+            local minion = Game.Minion(i)
+            if minion and minion.team ~= myHero.team and not minion.dead then
+                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+                
+                if GetDistance2D(heroPos2D, minionPos2D) <= qRange then
+                    local score = 1
+                    
+                    -- Contar minions adicionales que serán golpeados por Q
+                    for j = 1, Game.MinionCount() do
+                        local otherMinion = Game.Minion(j)
+                        if otherMinion and otherMinion ~= minion and otherMinion.team ~= myHero.team and not otherMinion.dead then
+                            local otherMinionPos2D = {x = otherMinion.pos.x, z = otherMinion.pos.z}
+                            local radius = HasQ3() and SPELL_RADIUS.Q3 or SPELL_RADIUS.Q
+                            if GetDistance2D(minionPos2D, otherMinionPos2D) <= radius then
+                                score = score + 1
+                            end
+                        end
+                    end
+                    
+                    -- Bonus para Q3 (tornado) cuando puede golpear múltiples minions
+                    if HasQ3() and score >= 2 then
+                        score = score + 3
+                    end
+                    
+                    -- Priorizar si E no está disponible o si hay muchos minions con E buff
+                    if not Ready(_E) or score >= 3 then
+                        score = score + 2
+                    end
+                    
+                    if score > bestQScore and score >= 1 then
+                        bestQScore = score
+                        bestQPos = Vector(minionPos2D.x, myHero.pos.y, minionPos2D.z)
+                    end
+                end
+            end
+        end
+        
+        -- Castear Q si encontramos un buen target
+        if bestQPos and bestQScore >= 1 then
+            Control.CastSpell(HK_Q, bestQPos)
+            return
+        end
+    end
+end
+
+function DepressiveYasuo2:LastHit()
+    if not Ready(_Q) and not Ready(_E) then return end
+    
+    -- Find minions that can be last hit with Q
+    if Ready(_Q) then
+        local qRange = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
+        for i = 1, Game.MinionCount() do
+            local minion = Game.Minion(i)
+            if minion and minion.team ~= myHero.team and not minion.dead then
+                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+                
+                if GetDistance2D(heroPos2D, minionPos2D) <= qRange then
+                    local qDamage = GetQDamage()
+                    if minion.health <= qDamage and minion.health > myHero.totalDamage then
+                        Control.CastSpell(HK_Q, minion.pos)
+                        return
+                    end
                 end
             end
         end
     end
     
-    return bestTarget
+    -- Find minions that can be last hit with E
+    if Ready(_E) then
+        for i = 1, Game.MinionCount() do
+            local minion = Game.Minion(i)
+            if minion and minion.team ~= myHero.team and not minion.dead and not HasEBuff(minion) then
+                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+                
+                if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E then
+                    local eDamage = GetEDamage()
+                    if minion.health <= eDamage and minion.health > myHero.totalDamage then
+                        Control.CastSpell(HK_E, minion)
+                        return
+                    end
+                end
+            end
+        end
+    end
 end
 
--- Check if we can use ultimate (enemy is knocked up)
-function Yasuo:CanUseUltimate(target)
-    if not target or not target.valid or target.dead or not target.visible then return false end
-    -- print("Checking if we can use ultimate on target: " .. target.charName)
-    for i = 0, target.buffCount do
-        local buff = target:GetBuff(i)
-        if buff and (buff.type == 30 or buff.type == 31) and buff.count > 0 then
+function DepressiveYasuo2:Flee()
+    if not Ready(_E) then return end
+    
+    local mousePos = Game.mousePos()
+    local mousePos2D = {x = mousePos.x, z = mousePos.z}
+    local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+    
+    -- Buscar el mejor minion para hacer gapcloser hacia el mouse
+    local bestMinion = nil
+    local bestScore = 0
+    
+    for i = 1, Game.MinionCount() do
+        local minion = Game.Minion(i)
+        if minion and not minion.dead and not HasEBuff(minion) then
+            -- SOLO minions enemigos (team diferente) o neutrales (jungle monsters, team 300)
+            if minion.team ~= myHero.team and (minion.team == 300 or minion.team ~= myHero.team) then
+                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                local distanceToMinion = GetDistance2D(heroPos2D, minionPos2D)
+                
+                -- Verificar que el minion esté en rango de E
+                if distanceToMinion <= SPELL_RANGE.E then
+                    -- Calcular si el E nos acerca al mouse
+                    local currentDistanceToMouse = GetDistance2D(heroPos2D, mousePos2D)
+                    local minionToMouseDistance = GetDistance2D(minionPos2D, mousePos2D)
+                    
+                    -- Solo considerar minions que nos acerquen al mouse
+                    if minionToMouseDistance < currentDistanceToMouse then
+                        local score = currentDistanceToMouse - minionToMouseDistance -- Más score = más cerca del mouse
+                        
+                        -- Bonus para minions que están en la dirección del mouse
+                        local heroToMouse = {x = mousePos2D.x - heroPos2D.x, z = mousePos2D.z - heroPos2D.z}
+                        local heroToMinion = {x = minionPos2D.x - heroPos2D.x, z = minionPos2D.z - heroPos2D.z}
+                        
+                        -- Producto escalar normalizado para verificar dirección similar
+                        local heroToMouseMag = math.sqrt(heroToMouse.x^2 + heroToMouse.z^2)
+                        local heroToMinionMag = math.sqrt(heroToMinion.x^2 + heroToMinion.z^2)
+                        
+                        if heroToMouseMag > 0 and heroToMinionMag > 0 then
+                            local dotProduct = (heroToMouse.x * heroToMinion.x + heroToMouse.z * heroToMinion.z) / (heroToMouseMag * heroToMinionMag)
+                            
+                            -- Si el minion está en buena dirección hacia el mouse (coseno > 0.3)
+                            if dotProduct > 0.3 then
+                                score = score + (dotProduct * 200) -- Bonus por buena dirección
+                            end
+                        end
+                        
+                        -- Penalty por estar bajo torre enemiga (pero permitirlo si es para escapar)
+                        local ePosition = CalculateEPosition(minion)
+                        if ePosition and IsUnderEnemyTurret(ePosition, self.Menu.safety.range:Value()) then
+                            score = score - 100 -- Penalty menor para escape
+                        end
+                        
+                        -- Bonus extra para jungle monsters (team 300) ya que son más seguros para escape
+                        if minion.team == 300 then
+                            score = score + 50
+                        end
+                        
+                        if score > bestScore then
+                            bestScore = score
+                            bestMinion = minion
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Ejecutar E al mejor minion encontrado
+    if bestMinion and bestScore > 0 then
+        Control.CastSpell(HK_E, bestMinion)
+    end
+end
+
+-- Helper Functions
+function DepressiveYasuo2:IsInCombat()
+    -- Check if we're in combat with enemies (within 1000 units)
+    for i = 1, Game.HeroCount() do
+        local enemy = Game.Hero(i)
+        if IsValidTarget(enemy, 1000) then
             return true
         end
     end
     return false
 end
 
--- Check if we're in a 1v1 situation
-function Yasuo:IsOneVsOneSituation(target, checkRange)
-    if not target or not target.valid then return false end
+function DepressiveYasuo2:StackQ()
+    -- Smart Q stacking system - prioritize minions over monsters
+    if not Ready(_Q) or HasQ3() then return end
     
-    checkRange = checkRange or 1500 -- Default range to check for other enemies
-    local enemyCount = 0
-    
-    -- Count enemy champions in range
-    for i = 1, Game.HeroCount() do
-        local hero = Game.Hero(i)
-        if hero and hero.isEnemy and not hero.dead and hero.visible then
-            local distance = GetDistance(myHero.pos, hero.pos)
-            if distance <= checkRange then
-                enemyCount = enemyCount + 1
-            end
-        end
-    end
-    
-    -- 1v1 if only 1 enemy in range (our target)
-    return enemyCount == 1
-end
-
--- Get minion for gap closing towards target
-function Yasuo:GetMinionForGapClose(target)
-    local bestMinion = nil
-    local bestScore = 0
-    
-    for i = 1, Game.MinionCount() do
-        local minion = Game.Minion(i)
-        if minion and minion.isEnemy and minion.alive and minion.visible and not HasEBuff(minion) and IsSafeToE(minion, self) then
-            local distanceToMinion = GetDistance(myHero.pos, minion.pos)
-            if distanceToMinion <= 475 then -- E range
-                -- Calculate if this minion gets us closer to target
-                local distanceFromMinionToTarget = GetDistance(minion.pos, target.pos)
-                local currentDistanceToTarget = GetDistance(myHero.pos, target.pos)
-                
-                if distanceFromMinionToTarget < currentDistanceToTarget then
-                    -- Score based on how much closer we get
-                    local score = currentDistanceToTarget - distanceFromMinionToTarget
-                    
-                    -- Bonus for closer minions (easier to reach)
-                    score = score + (475 - distanceToMinion) / 10
-                    
-                    if score > bestScore then
-                        bestScore = score
-                        bestMinion = minion
-                    end
-                end
-            end
-        end
-    end
-    
-    return bestMinion
-end
-
--- Get secondary target (enemy champion) when main target is airborne
-function Yasuo:GetSecondaryTarget(mainTarget, range)
+    local qRange = SPELL_RANGE.Q
     local bestTarget = nil
     local bestScore = 0
     
-    for i = 1, Game.HeroCount() do
-        local hero = Game.Hero(i)
-        if hero and hero.isEnemy and hero ~= mainTarget and not hero.dead and hero.visible then
-            local distance = GetDistance(myHero.pos, hero.pos)
-            if distance <= range then
-                -- Calculate health percentage safely
-                local healthPercent = hero.maxHealth > 0 and (hero.health / hero.maxHealth * 100) or 100
+    -- Priority 1: Minions (easier to hit, more reliable)
+    for i = 1, Game.MinionCount() do
+        local minion = Game.Minion(i)
+        if minion and minion.team ~= myHero.team and not minion.dead then
+            local distance = GetDistance(myHero.pos, minion.pos)
+            if distance <= qRange then
+                local score = 100 -- Base score for minions
                 
-                -- Score based on priority: low health, close distance, no E buff
-                local score = (100 - healthPercent) + (range - distance) / 10
+                -- Prefer closer minions
+                score = score + (qRange - distance) / 10
                 
-                -- Bonus if we can E to them
-                if distance <= 475 and not HasEBuff(hero) then
-                    score = score + 100
+                -- Prefer low HP minions (easier to predict)
+                if minion.health < minion.maxHealth * 0.5 then
+                    score = score + 20
                 end
                 
                 if score > bestScore then
                     bestScore = score
-                    bestTarget = hero
+                    bestTarget = minion
                 end
             end
         end
     end
     
-    return bestTarget
-end
-
--- Get minion near the target (for advanced combo when target is airborne)
-function Yasuo:GetMinionNearTarget(target, range)
-    local bestMinion = nil
-    local closestDistance = math.huge
-    
-    for i = 1, Game.MinionCount() do
-        local minion = Game.Minion(i)
-        if minion and minion.isEnemy and minion.alive and minion.visible and not HasEBuff(minion) and IsSafeToE(minion, self) then
-            local distanceToTarget = GetDistance(minion.pos, target.pos)
-            local distanceToMinion = GetDistance(myHero.pos, minion.pos)
-            
-            -- Minion should be close to target and within E range
-            if distanceToTarget <= range and distanceToMinion <= 475 then
-                -- Prefer minions closer to us for easier E
-                if distanceToMinion < closestDistance then
-                    closestDistance = distanceToMinion
-                    bestMinion = minion
+    -- Priority 2: Jungle monsters (if no minions available)
+    if not bestTarget then
+        for i = 1, Game.MinionCount() do
+            local monster = Game.Minion(i)
+            if monster and monster.team == 300 and not monster.dead then -- Neutral monsters
+                local distance = GetDistance(myHero.pos, monster.pos)
+                if distance <= qRange then
+                    local score = 80 -- Lower base score than minions
+                    score = score + (qRange - distance) / 10
+                    
+                    if score > bestScore then
+                        bestScore = score
+                        bestTarget = monster
+                    end
                 end
             end
         end
     end
     
-    return bestMinion
-end
-function Yasuo:GetBestMinionForEQ()
-    local bestMinion = nil
-    local maxMinions = 0
-    
-    for i = 1, Game.MinionCount() do
-        local minion = Game.Minion(i)
-        if minion and minion.isEnemy and minion.alive and minion.visible and not HasEBuff(minion) and IsSafeToE(minion, self) then
-            local distance = GetDistance(myHero.pos, minion.pos)
-            if distance <= 475 then -- E range
-                -- Count minions around this position for Q
-                local minionsAroundTarget = self:CountMinionsAroundPosition(minion.pos, 250)
-                if minionsAroundTarget >= self.Menu.clear.minMinions:Value() and minionsAroundTarget > maxMinions then
-                    maxMinions = minionsAroundTarget
-                    bestMinion = minion
-                end
-            end
+    -- Cast Q on best target
+    if bestTarget then
+        local pred, chance = GetPrediction(bestTarget, "Q")
+        if pred and chance >= 2 then
+            Control.CastSpell(HK_Q, Vector(pred.x, myHero.pos.y, pred.z))
+        else
+            Control.CastSpell(HK_Q, bestTarget.pos)
         end
     end
-    
-    return bestMinion
 end
 
--- Get nearest enemy champion for harass
-function Yasuo:GetNearestEnemy(range)
-    local nearestEnemy = nil
-    local nearestDistance = math.huge
-    
-    for i = 1, Game.HeroCount() do
-        local hero = Game.Hero(i)
-        if hero and hero.isEnemy and not hero.dead and hero.visible then
-            local distance = GetDistance(myHero.pos, hero.pos)
-            if distance <= range and distance < nearestDistance then
-                nearestDistance = distance
-                nearestEnemy = hero
-            end
-        end
-    end
-    
-    return nearestEnemy
-end
-
--- Get best minion for harass (close to us and allows Q to hit enemy)
-function Yasuo:GetMinionForHarass(enemy)
+function DepressiveYasuo2:GetBestMinionForEQ(target)
     local bestMinion = nil
     local bestScore = 0
+    local qRange = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
+    local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+    local targetPos2D = {x = target.pos.x, z = target.pos.z}
     
     for i = 1, Game.MinionCount() do
         local minion = Game.Minion(i)
-        if minion and minion.isEnemy and minion.alive and minion.visible and not HasEBuff(minion) and IsSafeToE(minion, self) then
-            local distanceToMinion = GetDistance(myHero.pos, minion.pos)
-            if distanceToMinion <= 475 then -- E range
-                -- Calculate if Q from minion position can hit enemy
-                local distanceFromMinionToEnemy = GetDistance(minion.pos, enemy.pos)
+        if minion and minion.team ~= myHero.team and not minion.dead and not HasEBuff(minion) then
+            local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+            
+            -- Check if minion is in E range
+            if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E then
+                local minionToTarget = GetDistance2D(minionPos2D, targetPos2D)
                 
-                -- More lenient range check - if enemy is reasonably close to minion
-                if distanceFromMinionToEnemy <= 600 then -- Extended range for Q possibility
-                    -- Score based on how close minion is to us (closer = better)
-                    local score = 500 - distanceToMinion
+                -- Check if target will be in Q range after E
+                if minionToTarget <= qRange then
+                    local score = 1000 - minionToTarget -- Prefer closer minions to target
                     
-                    -- Bonus if minion is between us and enemy (better positioning)
-                    local distanceToEnemy = GetDistance(myHero.pos, enemy.pos)
-                    if distanceToMinion < distanceToEnemy then
+                    -- Bonus for Q3 positioning (better damage and wider hit)
+                    if HasQ3() and minionToTarget <= SPELL_RANGE.Q3 * 0.8 then
+                        score = score + 200
+                    end
+                    
+                    -- Bonus for good angle (minion between hero and target)
+                    local heroToTarget = GetDistance2D(heroPos2D, targetPos2D)
+                    local heroToMinion = GetDistance2D(heroPos2D, minionPos2D)
+                    if heroToMinion < heroToTarget then -- Minion is closer than target
                         score = score + 100
                     end
                     
-                    -- Bonus for closer minion-to-enemy distance
-                    if distanceFromMinionToEnemy <= 475 then
-                        score = score + 200 -- Big bonus for guaranteed Q range
-                    else
-                        score = score + (100 - (distanceFromMinionToEnemy - 475)) -- Gradual bonus
+                    -- Penalty for low HP minions (might die before combo)
+                    if minion.health < minion.maxHealth * 0.3 then
+                        score = score - 50
                     end
                     
                     if score > bestScore then
@@ -1648,32 +1816,60 @@ function Yasuo:GetMinionForHarass(enemy)
     return bestMinion
 end
 
-function Yasuo:CountMinionsAroundPosition(pos, range)
-    local count = 0
+function DepressiveYasuo2:GetBestQ3Position()
+    if not HasQ3() then return nil end
+    
+    local bestPos = nil
+    local bestScore = 0
+    local qRange = SPELL_RANGE.Q3
+    
+    -- Check around each minion to find best Q3 position
     for i = 1, Game.MinionCount() do
         local minion = Game.Minion(i)
-        if minion and minion.isEnemy and minion.alive and minion.visible then
-            local distance = GetDistance(pos, minion.pos)
-            if distance <= range then
-                count = count + 1
+        if minion and minion.team ~= myHero.team and not minion.dead then
+            local minionPos = minion.pos
+            if GetDistance(myHero.pos, minionPos) <= qRange then
+                local score = 1
+                
+                -- Count other minions that would be hit
+                for j = 1, Game.MinionCount() do
+                    local otherMinion = Game.Minion(j)
+                    if otherMinion and otherMinion ~= minion and otherMinion.team ~= myHero.team and not otherMinion.dead then
+                        if GetDistance(minionPos, otherMinion.pos) <= SPELL_RADIUS.Q3 then
+                            score = score + 1
+                        end
+                    end
+                end
+                
+                if score > bestScore and score >= 2 then -- At least 2 minions
+                    bestScore = score
+                    bestPos = Vector(minionPos.x, myHero.pos.y, minionPos.z)
+                end
             end
         end
     end
-    return count
+    
+    return bestPos
 end
 
-function Yasuo:GetBestMinionForQClear()
+function DepressiveYasuo2:GetBestLasthitMinion(eDamage)
     local bestMinion = nil
     local bestScore = 0
     
     for i = 1, Game.MinionCount() do
         local minion = Game.Minion(i)
-        if minion and minion.isEnemy and minion.alive and minion.visible then
+        if minion and minion.team ~= myHero.team and not minion.dead and not HasEBuff(minion) then
             local distance = GetDistance(myHero.pos, minion.pos)
-            if distance <= 475 then -- Q range
-                -- Prioritize cannon minions and closer minions
-                local score = minion.maxHealth > 300 and 100 or 50 -- Cannon minion bonus
-                score = score + (500 - distance) -- Closer is better
+            if distance <= SPELL_RANGE.E and minion.health <= eDamage then
+                local score = 100
+                
+                -- Prefer closer minions
+                score = score + (SPELL_RANGE.E - distance) / 10
+                
+                -- Bonus if it's a cannon minion
+                if minion.charName:find("Siege") or minion.charName:find("Super") then
+                    score = score + 50
+                end
                 
                 if score > bestScore then
                     bestScore = score
@@ -1686,12 +1882,99 @@ function Yasuo:GetBestMinionForQClear()
     return bestMinion
 end
 
-function Yasuo:GetBestMinionForEClear()
+function DepressiveYasuo2:GetBestClearMinion()
+    local bestMinion = nil
+    local bestScore = 0
+    local qRange = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
+    
     for i = 1, Game.MinionCount() do
         local minion = Game.Minion(i)
-        if minion and minion.isEnemy and minion.alive and minion.visible and not HasEBuff(minion) and IsSafeToE(minion, self) then
+        if minion and minion.team ~= myHero.team and not minion.dead and not HasEBuff(minion) then
             local distance = GetDistance(myHero.pos, minion.pos)
-            if distance <= 475 then -- E range
+            if distance <= SPELL_RANGE.E then
+                -- Calculate future position after E
+                local futurePos = self:CalculateEPosition({x = minion.pos.x, z = minion.pos.z})
+                
+                -- Count minions that will be in Q range after E
+                local minionsInRange = 0
+                for j = 1, Game.MinionCount() do
+                    local otherMinion = Game.Minion(j)
+                    if otherMinion and otherMinion.team ~= myHero.team and not otherMinion.dead then
+                        local otherDistance = GetDistance2D(futurePos, {x = otherMinion.pos.x, z = otherMinion.pos.z})
+                        if otherDistance <= qRange then
+                            minionsInRange = minionsInRange + 1
+                        end
+                    end
+                end
+                
+                if minionsInRange >= 2 then -- At least 2 minions for efficiency
+                    local score = minionsInRange * 100
+                    
+                    if score > bestScore then
+                        bestScore = score
+                        bestMinion = minion
+                    end
+                end
+            end
+        end
+    end
+    
+    return bestMinion
+end
+
+function DepressiveYasuo2:GetBestQPosition()
+    local bestPos = nil
+    local bestScore = 0
+    local qRange = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
+    
+    for i = 1, Game.MinionCount() do
+        local minion = Game.Minion(i)
+        if minion and minion.team ~= myHero.team and not minion.dead then
+            local distance = GetDistance(myHero.pos, minion.pos)
+            if distance <= qRange then
+                local score = 1
+                local minionPos = minion.pos
+                
+                -- Count other minions in range
+                for j = 1, Game.MinionCount() do
+                    local otherMinion = Game.Minion(j)
+                    if otherMinion and otherMinion ~= minion and otherMinion.team ~= myHero.team and not otherMinion.dead then
+                        local otherDistance = GetDistance(minionPos, otherMinion.pos)
+                        local radius = HasQ3() and SPELL_RADIUS.Q3 or SPELL_RADIUS.Q
+                        if otherDistance <= radius then
+                            score = score + 1
+                        end
+                    end
+                end
+                
+                if score > bestScore then
+                    bestScore = score
+                    bestPos = Vector(minionPos.x, myHero.pos.y, minionPos.z)
+                end
+            end
+        end
+    end
+    
+    return bestPos
+end
+
+function DepressiveYasuo2:GetBestQPositionAfterE()
+    -- Use current position as the position after E (simplified)
+    return self:GetBestQPosition()
+end
+
+function DepressiveYasuo2:GetBestMinionForHarass(target)
+    return self:GetBestMinionForEQ(target)
+end
+
+function DepressiveYasuo2:GetBestMinionForQ()
+    local qRange = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
+    for i = 1, Game.MinionCount() do
+        local minion = Game.Minion(i)
+        if minion and minion.team ~= myHero.team and not minion.dead then
+            local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+            local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+            if GetDistance2D(heroPos2D, minionPos2D) <= qRange then
                 return minion
             end
         end
@@ -1699,302 +1982,89 @@ function Yasuo:GetBestMinionForEClear()
     return nil
 end
 
-function Yasuo:GetLastHitMinionQ(qDamage)
-    local bestMinion = nil
-    local lowestHealth = math.huge
-    
-    -- Use the same minion iteration method as LaneClear
+function DepressiveYasuo2:GetBestMinionForE()
     for i = 1, Game.MinionCount() do
         local minion = Game.Minion(i)
-        if minion and minion.isEnemy and minion.alive and minion.visible then
-            local distance = GetDistance(myHero.pos, minion.pos)
-            if distance <= 475 and CanKillMinion(minion, qDamage) then -- Q range is 475
-                -- Prefer minions with lower health (closer to dying)
-                if minion.health < lowestHealth then
-                    lowestHealth = minion.health
-                    bestMinion = minion
-                end
+        if minion and minion.team ~= myHero.team and not minion.dead then
+            local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+            local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+            if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E and not HasEBuff(minion) then
+                return minion
             end
         end
     end
-    
-    return bestMinion
+    return nil
 end
 
-function Yasuo:GetLastHitMinionE(eDamage)
-    local bestMinion = nil
-    local lowestHealth = math.huge
+function DepressiveYasuo2:GetMinionChainToTarget(target)
+    local chain = {}
+    local currentPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+    local targetPos2D = {x = target.pos.x, z = target.pos.z}
+    local maxChainLength = 3
     
-    -- Use the same minion iteration method as LaneClear
-    for i = 1, Game.MinionCount() do
-        local minion = Game.Minion(i)
-        if minion and minion.isEnemy and minion.alive and minion.visible and not HasEBuff(minion) and IsSafeToE(minion, self) then
-            local distance = GetDistance(myHero.pos, minion.pos)
-            if distance <= 475 and CanKillMinion(minion, eDamage) then -- E range is 475
-                -- Prefer minions with lower health (closer to dying)
-                if minion.health < lowestHealth then
-                    lowestHealth = minion.health
-                    bestMinion = minion
-                end
-            end
-        end
-    end
-    
-    return bestMinion
-end
-
--- Initialize
-function Yasuo:GetBestMinionForSmartEQ(eDamage, qDamage)
-    local bestMinion = nil
-    local bestValue = 0
-    
-    for i = 1, Game.MinionCount() do
-        local minion = Game.Minion(i)
-        if minion and minion.isEnemy and minion.alive and minion.visible and not HasEBuff(minion) and IsSafeToE(minion, self) then
-            local distanceToMinion = GetDistance(myHero.pos, minion.pos)
-            if distanceToMinion <= 475 then -- E range
-                -- Check if this minion can be killed by E
-                local canKillWithE = minion.health <= eDamage
-                
-                -- Calculate value: prioritize killing minions and closer targets
-                local value = 0
-                if canKillWithE then
-                    value = value + 100 -- High priority for killing
-                end
-                
-                -- Add distance bonus (closer = better)
-                value = value + (50 - distanceToMinion * 0.1)
-                
-                -- Check if there are Q targets near this minion after E
-                local futurePos = minion.pos
-                local nearbyMinions = 0
-                local nearbyKillable = 0
-                
-                for j = 1, Game.MinionCount() do
-                    local nearMinion = Game.Minion(j)
-                    if nearMinion and nearMinion ~= minion and nearMinion.isEnemy and nearMinion.alive and nearMinion.visible then
-                        if GetDistance(futurePos, nearMinion.pos) <= 475 then -- Q range after E
-                            nearbyMinions = nearbyMinions + 1
-                            if nearMinion.health <= qDamage then
-                                nearbyKillable = nearbyKillable + 1
-                            end
-                        end
+    for chainStep = 1, maxChainLength do
+        local bestMinion = nil
+        local bestDistance = math.huge
+        
+        for i = 1, Game.MinionCount() do
+            local minion = Game.Minion(i)
+            if minion and minion.team ~= myHero.team and not minion.dead then
+                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+                if GetDistance2D(currentPos2D, minionPos2D) <= SPELL_RANGE.E and not HasEBuff(minion) then
+                    local distToTarget = GetDistance2D(minionPos2D, targetPos2D)
+                    if distToTarget < bestDistance then
+                        bestDistance = distToTarget
+                        bestMinion = minion
                     end
                 end
-                
-                -- Bonus for having Q targets nearby
-                value = value + (nearbyMinions * 10) + (nearbyKillable * 20)
-                
-                if value > bestValue then
-                    bestValue = value
-                    bestMinion = minion
-                end
             end
         end
-    end
-    
-    return bestMinion
-end
-
-function Yasuo:CheckAutoWindwall()
-    if not Ready(_W) then return end
-    
-    -- Check for incoming projectiles in range
-    for i = 1, Game.MissileCount() do
-        local missile = Game.Missile(i)
-        if missile and missile.isEnemy and missile.pos then
-            local distanceToMissile = GetDistance(myHero.pos, missile.pos)
-            local detectionRange = self.Menu.windwall.range:Value()
-            if distanceToMissile <= detectionRange then
-                -- Use blockspells
-                local requireBlocking = false
-                -- print(missile.name)
-
-                for i = 1, #blockSpells do
-                    local missileLowerCase = string.lower(missile.name)
-                    if string.find(missileLowerCase, blockSpells[i]) then
-                        requireBlocking = true
-                        break
-                    end
-                end
-                -- print(missile.activeSpell)
-                -- Simple check: if missile is close and we haven't used W recently
-                if GetTickCount() - self.lastWindwallTime > 500 and requireBlocking then -- 0.5s cooldown
-                    -- Cast W towards the missile position
-                    Control.CastSpell(HK_W, missile.pos)
-                    self.lastWindwallTime = GetTickCount()
-                    break -- Only cast one W per check
-                    
-                end
+        
+        if bestMinion and bestDistance < GetDistance2D(currentPos2D, targetPos2D) then
+            table.insert(chain, bestMinion)
+            currentPos2D = {x = bestMinion.pos.x, z = bestMinion.pos.z}
+            
+            -- If we can reach target from this minion, we're done
+            if GetDistance2D(currentPos2D, targetPos2D) <= SPELL_RANGE.E then
+                break
             end
+        else
+            break
         end
     end
+    
+    return chain
 end
 
--- Combo Logic System Functions
-function Yasuo:HandleEQ3FlashCombo()
-    -- CRITICAL: Check if Q3 (tornado) is ready - this combo ONLY works with Q3!
-    -- Also respect the menu option for requiring Q3
-    if self.Menu.comboLogic.requireQ3Ready:Value() then
-        if not HasQ3() or not Ready(_Q) then
-            return
-        end
-    else
-        -- Even if user disabled the option, E-Q3-Flash still needs Q3 to work properly
-        if not HasQ3() or not Ready(_Q) then
-            return
-        end
-    end
-    
-    -- Check if Flash is available
-    local flashSpell = myHero:GetSpellData(SUMMONER_1).name == "SummonerFlash" and SUMMONER_1 or 
-                      (myHero:GetSpellData(SUMMONER_2).name == "SummonerFlash" and SUMMONER_2 or nil)
-    
-    if not flashSpell or not Ready(flashSpell) then 
-        return 
-    end
-    
-    -- Automatically find best target for combo
-    local target = self:GetBestEQ3FlashTarget()
-    if not target then 
-        return 
-    end
-    
-    -- Find best unit (minion or enemy) to E onto for optimal positioning
-    local bestUnit = self:GetBestUnitForEQ3Flash(target)
-    if not bestUnit then 
-        return 
-    end
-    
-    -- Debug info
-    local targetName = target.charName or "Unknown"
-    local unitType = "Unknown"
-    local unitName = "Unknown"
-    
-    if bestUnit.charName then
-        unitType = "Champion"
-        unitName = bestUnit.charName
-    elseif bestUnit.team == 300 then
-        unitType = "Monster"
-        unitName = "Jungle Monster"
-    else
-        unitType = "Minion" 
-        unitName = "Lane Minion"
-    end
-    
-    -- Start the combo
-    self.comboLogicState = "executing_eq3flash"
-    self.comboLogicTarget = target
-    self.eq3FlashStep = 1
-    self.comboLogicTimer = GetTickCount()
-    
-    -- Execute first step immediately (E to best unit + Q simultaneously towards target)
-    if Ready(_E) and not HasEBuff(bestUnit) and IsSafeToE(bestUnit, self) then
-        -- Cast E on the positioning unit
-        Control.CastSpell(HK_E, bestUnit)
-        
-        -- Cast Q with a small delay after E (0.1 seconds)
-        DelayAction(function()
-            if Ready(_Q) and HasQ3() and self.comboLogicState == "executing_eq3flash" then
-                -- ONLY use Q3 for this combo - it's E-Q3-Flash, not E-Q-Flash!
-                -- Q3 is required because it has knockup effect which enables the Flash follow-up
-                local prediction, hitChance = GetQ3Prediction(target)
-                local minHitChance = self.Menu.prediction.hitChance:Value()
-                
-                if self.Menu.prediction.useQ3Pred:Value() and prediction and hitChance >= minHitChance then
-                    local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                    Control.CastSpell(HK_Q, predPos)
-                else
-                    Control.CastSpell(HK_Q, target.pos)
-                end
-                
-                -- Cast Flash with 0.2 second delay after Q3 (tornado)
-                DelayAction(function()
-                    -- Only Flash if: 1) Q3 was used, 2) combo still active, 3) target still valid
-                    if self.Menu.comboLogic.flashAfterQ3:Value() and self.comboLogicState == "executing_eq3flash" and 
-                       self.comboLogicTarget and self.comboLogicTarget.valid and not self.comboLogicTarget.dead then
-                        
-                        -- Re-check Flash availability within DelayAction
-                        local flashSpell = myHero:GetSpellData(SUMMONER_1).name == "SummonerFlash" and SUMMONER_1 or 
-                                          (myHero:GetSpellData(SUMMONER_2).name == "SummonerFlash" and SUMMONER_2 or nil)
-                        
-                        if flashSpell and Ready(flashSpell) then
-                            -- Get updated target position
-                            local currentTarget = self.comboLogicTarget
-                            local flashPos = currentTarget.pos
-                            local distance = GetDistance(myHero.pos, currentTarget.pos)
-                            
-                            -- Flash closer to target if too far, but not too close
-                            if distance > 200 then
-                                local direction = (currentTarget.pos - myHero.pos):Normalized()  
-                                flashPos = myHero.pos + direction * math.min(400, distance - 150)
-                            end
-                            
-                            -- Manually press Flash key and cast to position
-                            Control.SetCursorPos(flashPos)
-                            if flashSpell == SUMMONER_1 then
-                                Control.KeyDown(HK_SUMMONER_1)
-                                Control.KeyUp(HK_SUMMONER_1)
-                            else
-                                Control.KeyDown(HK_SUMMONER_2)
-                                Control.KeyUp(HK_SUMMONER_2)
-                            end
-                        else
-                            local f1Name = myHero:GetSpellData(SUMMONER_1).name or "none"
-                            local f2Name = myHero:GetSpellData(SUMMONER_2).name or "none"
-                            local f1Ready = Ready(SUMMONER_1)
-                            local f2Ready = Ready(SUMMONER_2)
-                        end
-                    end
-                    -- Reset combo state after flash attempt
-                    self:ResetComboLogic()
-                end, 0.2) -- 0.4 second delay for Flash (increased from 0.2)
-            end
-        end, 0.1) -- 0.1 second delay for Q after E
-        
-        self.eq3FlashStep = 2 -- Go to flash step
-        
-    else
-        -- Reset if can't execute
-        self:ResetComboLogic()
-    end
-end
-
-function Yasuo:GetBestEQ3FlashTarget()
+function DepressiveYasuo2:GetBestTarget()
     local bestTarget = nil
-    local bestScore = 0
-    local maxRange = self.Menu.comboLogic.eq3flashRange:Value()
+    local bestPriority = 0
+    local bestDistance = math.huge
     
     for i = 1, Game.HeroCount() do
         local hero = Game.Hero(i)
-        if hero and hero.isEnemy and not hero.dead and hero.visible then
+        if IsValidTarget(hero, 1200) then
             local distance = GetDistance(myHero.pos, hero.pos)
-            if distance <= maxRange then
-                -- Calculate health percentage safely
-                local healthPercent = hero.maxHealth > 0 and (hero.health / hero.maxHealth * 100) or 100
-                
-                -- Score based on priority: low health, reasonable distance
-                local score = (100 - healthPercent) * 2 + (maxRange - distance) / 10
-                
-                -- Bonus for isolated targets
-                local nearbyEnemies = 0
-                for j = 1, Game.HeroCount() do
-                    local otherHero = Game.Hero(j)
-                    if otherHero and otherHero.isEnemy and otherHero ~= hero and not otherHero.dead and otherHero.visible then
-                        if GetDistance(hero.pos, otherHero.pos) <= 600 then
-                            nearbyEnemies = nearbyEnemies + 1
-                        end
-                    end
-                end
-                
-                if nearbyEnemies == 0 then
-                    score = score + 50 -- Bonus for isolated target
-                end
-                
-                if score > bestScore then
-                    bestScore = score
-                    bestTarget = hero
-                end
+            local priority = 1
+            
+            -- Prioritize low HP targets
+            if hero.health / hero.maxHealth < 0.3 then
+                priority = priority + 3
+            elseif hero.health / hero.maxHealth < 0.5 then
+                priority = priority + 2
+            end
+            
+            -- Prioritize AD carries and mid laners
+            if hero.charName:find("Jinx") or hero.charName:find("Caitlyn") or hero.charName:find("Ashe") or 
+               hero.charName:find("Ahri") or hero.charName:find("Zed") or hero.charName:find("Yasuo") then
+                priority = priority + 2
+            end
+            
+            -- Prefer closer targets if same priority
+            if priority > bestPriority or (priority == bestPriority and distance < bestDistance) then
+                bestTarget = hero
+                bestPriority = priority
+                bestDistance = distance
             end
         end
     end
@@ -2002,60 +2072,523 @@ function Yasuo:GetBestEQ3FlashTarget()
     return bestTarget
 end
 
-function Yasuo:ExecuteComboLogic()
-    if self.comboLogicState == "executing_eq3flash" then
-        self:ExecuteEQ3FlashCombo()
+function DepressiveYasuo2:ManualGapcloser()
+    local target = self:GetBestTarget()
+    if not target or not self.Menu.gapcloser.enabled:Value() then 
+        return false 
+    end
+    
+    local targetPos2D = {x = target.pos.x, z = target.pos.z}
+    local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+    local distance = GetDistance2D(heroPos2D, targetPos2D)
+    
+    -- Don't gapclose if we're already close enough for basic abilities
+    if distance <= SPELL_RANGE.Q then
+        return false
+    end
+    
+    if distance <= SPELL_RANGE.E and not HasEBuff(target) then
+        -- Direct E to target
+        if not self.Menu.gapcloser.checkTurret:Value() or self:IsSafeToE(target) then
+            Control.CastSpell(HK_E, target)
+            return true
+        end
+    elseif distance <= self.Menu.gapcloser.maxRange:Value() and self.Menu.gapcloser.useMinions:Value() then
+        -- Use minions to gapclose
+        local gapcloseMinion = self:FindGapcloseMinion(target)
+        if gapcloseMinion then
+            if not self.Menu.gapcloser.checkTurret:Value() or self:IsSafeToE(gapcloseMinion) then
+                Control.CastSpell(HK_E, gapcloseMinion)
+                return true
+            end
+        end
+    end
+    
+    return false
+end
+
+function DepressiveYasuo2:FindGapcloseMinion(target)
+    local bestMinion = nil
+    local bestScore = 0
+    local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+    local targetPos2D = {x = target.pos.x, z = target.pos.z}
+    local currentDistanceToTarget = GetDistance2D(heroPos2D, targetPos2D)
+    
+    local minionCount = 0
+    local validMinions = 0
+    
+    for i = 1, Game.MinionCount() do
+        local minion = Game.Minion(i)
+        minionCount = minionCount + 1
+        
+        if minion and minion.team ~= myHero.team and not minion.dead and not HasEBuff(minion) then
+            local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
+            
+            -- Check if minion is in E range from current position
+            if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E then
+                validMinions = validMinions + 1
+                
+                -- Calculate future position after E (Yasuo stops behind the target)
+                local futurePos2D = self:CalculateEPosition(minionPos2D)
+                
+                -- Calculate distance from future position to enemy
+                local futureDistanceToTarget = GetDistance2D(futurePos2D, targetPos2D)
+                
+                -- Only consider minions that actually bring us closer to the enemy
+                if futureDistanceToTarget < currentDistanceToTarget then
+                    -- Calculate how much closer we get (improvement score)
+                    local improvement = currentDistanceToTarget - futureDistanceToTarget
+                    
+                    -- Bonus score if we can reach target after E
+                    local reachBonus = 0
+                    if futureDistanceToTarget <= SPELL_RANGE.E then
+                        reachBonus = 300 -- High priority if we can reach target directly after
+                    elseif futureDistanceToTarget <= SPELL_RANGE.Q then
+                        reachBonus = 150 -- Medium priority if we can Q after
+                    end
+                    
+                    local totalScore = improvement + reachBonus
+                    
+                    if totalScore > bestScore then
+                        bestScore = totalScore
+                        bestMinion = minion
+                    end
+                end
+            end
+        end
+    end
+    
+    return bestMinion
+end
+
+function DepressiveYasuo2:CalculateEPosition(targetPos2D)
+    -- Calculate where Yasuo will be after E
+    -- Yasuo dashes TOWARDS the target and stops just behind it (approximately 65 units past the target center)
+    local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+    local dashDistance = 65 -- Yasuo stops 65 units past the target center
+    
+    -- Calculate direction from hero TO target (E direction)
+    local dx = targetPos2D.x - heroPos2D.x
+    local dz = targetPos2D.z - heroPos2D.z
+    local distance = math.sqrt(dx * dx + dz * dz)
+    
+    -- Normalize direction vector
+    if distance > 0 then
+        dx = dx / distance
+        dz = dz / distance
+    else
+        -- If positions are identical, use default direction
+        dx = 0
+        dz = 1
+    end
+    
+    -- Calculate final position (past the target in the direction of the dash)
+    local finalPos2D = {
+        x = targetPos2D.x + (dx * dashDistance),
+        z = targetPos2D.z + (dz * dashDistance)
+    }
+    
+    return finalPos2D
+end
+
+function DepressiveYasuo2:Harass()
+    local target = self:GetBestTarget()
+    if not target then return end
+    
+    -- Find minion for harass
+    if self.Menu.harass.useE:Value() and Ready(_E) then
+        local harassMinion = self:GetBestMinionForEQ(target)
+        if harassMinion and not HasEBuff(harassMinion) then
+            Control.CastSpell(HK_E, harassMinion)
+            
+            if self.Menu.harass.useQ:Value() then
+                DelayAction(function()
+                    if Ready(_Q) then
+                        local pred, hitChance = GetPrediction(target, "Q")
+                        if pred and hitChance >= 2 then
+                            Control.CastSpell(HK_Q, pred)
+                        else
+                            Control.CastSpell(HK_Q, target.pos)
+                        end
+                    end
+                end, 0.15)
+            end
+        end
     end
 end
 
-function Yasuo:ExecuteEQ3FlashCombo()
-    local target = self.comboLogicTarget
-    if not target or not target.valid or target.dead then
-        self:ResetComboLogic()
+function DepressiveYasuo2:IsSafeToE(target)
+    if not self.Menu.safety.enabled:Value() then return true end
+    
+    local safetyRange = self.Menu.safety.range:Value()
+    local allowLowHP = self.Menu.safety.allowLowHP:Value()
+    
+    -- Allow if target is low HP
+    if target.health and target.maxHealth then
+        if target.health / target.maxHealth * 100 <= allowLowHP then
+            return true
+        end
+    end
+    
+    -- Check if we would be under turret after E - calculate Yasuo's position after E
+    local targetPos2D = {x = target.pos.x, z = target.pos.z}
+    local futurePos2D = self:CalculateEPosition(targetPos2D)
+    return not IsUnderEnemyTurret(futurePos2D, safetyRange)
+end
+
+function DepressiveYasuo2:CanUseUltimate(target)
+    if not target or not Ready(_R) then return false end
+    
+    -- Use YasuoThePackGod's precise airborne detection method
+    -- Check for knockup/airborne buff types (type 30 and 31 are the correct ones)
+    local buffCount = target.buffCount or 0
+    for i = 0, buffCount - 1 do
+        local buff = target:GetBuff(i)
+        if buff and buff.count > 0 then
+            local bType = buff.type
+            -- Type 30 = Airborne, Type 31 = Knockup (YasuoThePackGod method)
+            if bType == 30 or bType == 31 then
+                return true
+            end
+        end
+    end
+    
+    return false
+end
+
+function DepressiveYasuo2:CountKnockedUpEnemies(range, position)
+    -- Similar to YasuoThePackGod's KnockCount function
+    local pos = position or myHero.pos
+    local count = 0
+    local rangeSq = range * range
+    
+    for i = 1, Game.HeroCount() do
+        local enemy = Game.Hero(i)
+        if IsValidTarget(enemy) then
+            local distanceSq = GetDistance(pos, enemy.pos) * GetDistance(pos, enemy.pos)
+            if distanceSq < rangeSq and self:CanUseUltimate(enemy) then
+                count = count + 1
+            end
+        end
+    end
+    
+    return count
+end
+
+function DepressiveYasuo2:GetKnockedUpTarget()
+    -- Get the first knocked up target in R range
+    for i = 1, Game.HeroCount() do
+        local enemy = Game.Hero(i)
+        if IsValidTarget(enemy, SPELL_RANGE.R) and self:CanUseUltimate(enemy) then
+            return enemy
+        end
+    end
+    return nil
+end
+
+function DepressiveYasuo2:IsTargetKillableWithR(target)
+    if not target then return false end
+    
+    -- Get target's current HP percentage
+    local hpPercent = (target.health / target.maxHealth) * 100
+    
+    -- Check if target is below killable threshold
+    if hpPercent <= self.Menu.ultimate.killableThreshold:Value() then
+        return true
+    end
+    
+    -- Advanced killable calculation (estimate R damage + follow-up damage)
+    local estimatedRDamage = self:CalculateRDamage(target)
+    local estimatedFollowUpDamage = self:CalculateFollowUpDamage(target)
+    local totalDamage = estimatedRDamage + estimatedFollowUpDamage
+    
+    -- Add safety margin (consider armor/MR reductions)
+    local effectiveDamage = totalDamage * 0.8 -- 20% safety margin
+    
+    return target.health <= effectiveDamage
+end
+
+function DepressiveYasuo2:CalculateRDamage(target)
+    if not target then return 0 end
+    
+    -- R damage calculation (200/300/400 + 150% bonus AD per enemy hit)
+    local rLevel = myHero:GetSpellData(_R).level
+    if rLevel == 0 then return 0 end
+    
+    local baseDamage = {200, 300, 400}
+    local bonusAD = myHero.totalDamage - myHero.baseDamage
+    local rDamage = baseDamage[rLevel] + (bonusAD * 1.5)
+    
+    -- Consider armor reduction (simplified)
+    local targetArmor = target.armor
+    local armorReduction = 100 / (100 + targetArmor)
+    
+    return rDamage * armorReduction
+end
+
+function DepressiveYasuo2:CalculateFollowUpDamage(target)
+    if not target then return 0 end
+    
+    local totalDamage = 0
+    
+    -- Q damage if available
+    if Ready(_Q) then
+        totalDamage = totalDamage + GetQDamage() * 0.7 -- Consider armor
+    end
+    
+    -- E damage if available
+    if Ready(_E) and not HasEBuff(target) then
+        totalDamage = totalDamage + GetEDamage() * 0.7 -- Consider MR
+    end
+    
+    -- Auto attack damage (1-2 autos after R)
+    totalDamage = totalDamage + (myHero.totalDamage * 1.5 * 0.7) -- 1.5 autos with armor consideration
+    
+    return totalDamage
+end
+
+function DepressiveYasuo2:IsHighPriorityTarget(target)
+    if not target then return false end
+    
+    -- Check if target is ADC, Mid laner, or other high priority champions
+    local priorityChamps = {
+        "Jinx", "Caitlyn", "Ashe", "Vayne", "Tristana", "Lucian", "Ezreal", "Jhin", "MissFortune", "Sivir",
+        "Ahri", "Zed", "Yasuo", "Azir", "Syndra", "LeBlanc", "Katarina", "Kassadin", "Orianna", "Viktor",
+        "Veigar", "Annie", "Brand", "Xerath", "Lux", "Velkoz", "Ziggs", "Cassiopeia", "Ryze", "Twisted"
+    }
+    
+    for _, champName in ipairs(priorityChamps) do
+        if target.charName:find(champName) then
+            return true
+        end
+    end
+    
+    return false
+end
+
+function DepressiveYasuo2:GetSummonerSpellSlot(spellName)
+    -- Get summoner spell slot by name
+    local summ1 = myHero:GetSpellData(SUMMONER_1)
+    local summ2 = myHero:GetSpellData(SUMMONER_2)
+    
+    if summ1 and summ1.name == spellName then
+        return SUMMONER_1
+    elseif summ2 and summ2.name == spellName then
+        return SUMMONER_2
+    end
+    
+    return nil
+end
+
+function DepressiveYasuo2:AdvancedComboLogic(target)
+    -- Advanced combo decision making based on game state
+    local myHealth = myHero.health / myHero.maxHealth
+    local targetHealth = target.health / target.maxHealth
+    local hasQ3 = HasQ3()
+    local qReady = Ready(_Q)
+    local eReady = Ready(_E)
+    local rReady = Ready(_R)
+    
+    -- Aggressive combo (when ahead or target is low)
+    if targetHealth < 0.4 or myHealth > 0.7 then
+        if hasQ3 and qReady and eReady then
+            return "eq3_aggressive"
+        elseif eReady and qReady then
+            return "eq_aggressive"
+        end
+    end
+    
+    -- Safe combo (when behind or low health)
+    if myHealth < 0.5 or targetHealth > 0.8 then
+        if hasQ3 and qReady then
+            return "q3_safe"
+        elseif qReady then
+            return "q_poke"
+        end
+    end
+    
+    -- Standard combo
+    return "standard"
+end
+
+-- Beyblade System (E-Q3-Flash Combo) Functions
+function DepressiveYasuo2:HandleBeyblade()
+    -- Check if Q3 is ready (essential for Beyblade)
+    if self.Menu.beyblade.requireQ3:Value() then
+        if not HasQ3() or not Ready(_Q) then
+            return
+        end
+    else
+        if not HasQ3() or not Ready(_Q) then
+            return
+        end
+    end
+    
+    -- Check if Flash is available
+    local flashSpell = self:GetFlashSpell()
+    if not flashSpell or not Ready(flashSpell) then
         return
     end
     
-    local timeSinceStart = GetTickCount() - self.comboLogicTimer
+    -- Find best target for Beyblade
+    local target = self:GetBestBeybladeTarget()
+    if not target then
+        return
+    end
     
-    -- Safety timeout - reset if combo takes too long
-    if timeSinceStart > 2000 then -- 2 seconds timeout
-        self:ResetComboLogic()
+    -- Find best unit to E onto for optimal positioning
+    local bestUnit = self:GetBestUnitForBeyblade(target)
+    if not bestUnit then
+        return
+    end
+    
+    -- Start the Beyblade combo
+    self.beybladeState = "executing_beyblade"
+    self.beybladeTarget = target
+    self.beybladeStep = 1
+    self.beybladeTimer = Game.Timer()
+    
+    -- Execute first step immediately (E to positioning unit)
+    if Ready(_E) and not HasEBuff(bestUnit) then
+        Control.CastSpell(HK_E, bestUnit)
+        
+        -- Queue Q3 with small delay
+        DelayAction(function()
+            if Ready(_Q) and HasQ3() and self.beybladeState == "executing_beyblade" then
+                local prediction, hitChance = GetPrediction(self.beybladeTarget, "Q3")
+                local minHitChance = self.Menu.beyblade.minHitChance:Value()
+                
+                if prediction and hitChance >= minHitChance then
+                    local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
+                    Control.CastSpell(HK_Q, predPos)
+                else
+                    Control.CastSpell(HK_Q, self.beybladeTarget.pos)
+                end
+                
+                -- Queue Flash with delay after Q3
+                if self.Menu.beyblade.autoFlash:Value() then
+                    DelayAction(function()
+                        if self.beybladeState == "executing_beyblade" and 
+                           self.beybladeTarget and self.beybladeTarget.valid and not self.beybladeTarget.dead then
+                            
+                            local flashSpell = self:GetFlashSpell()
+                            if flashSpell and Ready(flashSpell) then
+                                local currentTarget = self.beybladeTarget
+                                local flashPos = currentTarget.pos
+                                local distance = GetDistance(myHero.pos, currentTarget.pos)
+                                
+                                -- Calculate optimal flash position
+                                if distance > 200 then
+                                    local direction = (currentTarget.pos - myHero.pos):Normalized()
+                                    flashPos = myHero.pos + direction * math.min(self.Menu.beyblade.flashRange:Value(), distance - 150)
+                                end
+                                
+                                -- Execute Flash
+                                Control.SetCursorPos(flashPos)
+                                if flashSpell == SUMMONER_1 then
+                                    Control.KeyDown(HK_SUMMONER_1)
+                                    Control.KeyUp(HK_SUMMONER_1)
+                                else
+                                    Control.KeyDown(HK_SUMMONER_2)
+                                    Control.KeyUp(HK_SUMMONER_2)
+                                end
+                            end
+                        end
+                        
+                        -- Reset combo state
+                        self:ResetBeyblade()
+                    end, 0.2)
+                else
+                    -- Reset if auto flash is disabled
+                    DelayAction(function()
+                        self:ResetBeyblade()
+                    end, 0.3)
+                end
+            end
+        end, 0.1)
     end
 end
 
-function Yasuo:GetBestUnitForEQ3Flash(target)
+function DepressiveYasuo2:ExecuteBeybladeCombo()
+    -- Safety timeout - reset if combo takes too long
+    local timeSinceStart = Game.Timer() - self.beybladeTimer
+    if timeSinceStart > 2.0 then -- 2 seconds timeout
+        self:ResetBeyblade()
+    end
+    
+    -- Check if target is still valid
+    if not self.beybladeTarget or not self.beybladeTarget.valid or self.beybladeTarget.dead then
+        self:ResetBeyblade()
+    end
+end
+
+function DepressiveYasuo2:GetBestBeybladeTarget()
+    local bestTarget = nil
+    local bestScore = 0
+    local maxRange = self.Menu.beyblade.maxRange:Value()
+    
+    for i = 1, Game.HeroCount() do
+        local hero = Game.Hero(i)
+        if IsValidTarget(hero, maxRange) then
+            local distance = GetDistance(myHero.pos, hero.pos)
+            local healthPercent = hero.health / hero.maxHealth
+            
+            -- Score based on priority and health
+            local score = 1000
+            
+            -- Prioritize low health targets
+            if healthPercent < 0.5 then
+                score = score + 500
+            end
+            
+            -- Prioritize closer targets
+            score = score + (maxRange - distance) / 10
+            
+            -- Prioritize ADC and Mid laners
+            if self.Menu.ultimate.prioritizeADC:Value() then
+                local charName = hero.charName:lower()
+                if string.find(charName, "adc") or string.find(charName, "marksman") or 
+                   string.find(charName, "jinx") or string.find(charName, "caitlyn") or 
+                   string.find(charName, "ashe") or string.find(charName, "vayne") then
+                    score = score + 300
+                end
+            end
+            
+            if score > bestScore then
+                bestScore = score
+                bestTarget = hero
+            end
+        end
+    end
+    
+    return bestTarget
+end
+
+function DepressiveYasuo2:GetBestUnitForBeyblade(target)
     if not target or not target.valid then return nil end
     
     local bestUnit = nil
     local bestScore = 0
-    local flashRange = self.Menu.comboLogic.flashRange:Value() -- Use configurable Flash range
+    local flashRange = self.Menu.beyblade.flashRange:Value()
     
-    -- Check enemy champions first (excluding our target if it's a champion)
+    -- Check enemy champions first (excluding our target)
     for i = 1, Game.HeroCount() do
         local hero = Game.Hero(i)
         if hero and hero.isEnemy and hero ~= target and not hero.dead and hero.visible and 
-           not HasEBuff(hero) and IsSafeToE(hero, self) then
+           not HasEBuff(hero) then
             local distanceToHero = GetDistance(myHero.pos, hero.pos)
-            if distanceToHero <= 475 then -- E range
-                -- Calculate position after E to hero
+            if distanceToHero <= SPELL_RANGE.E then
                 local distanceFromHeroToTarget = GetDistance(hero.pos, target.pos)
                 
-                -- FLASH DISTANCE CHECK: Target must be within Flash range after E
+                -- Target must be within flash range after E
                 if distanceFromHeroToTarget <= flashRange then
-                    -- We want to be in good Q3 range (200-1000) after E - more flexible range
                     if distanceFromHeroToTarget >= 200 and distanceFromHeroToTarget <= 1000 then
-                        -- Score based on optimal positioning for Q3
-                        local optimalDistance = 600 -- Sweet spot for Q3
+                        local optimalDistance = 600
                         local distancePenalty = math.abs(distanceFromHeroToTarget - optimalDistance)
-                        local score = 3000 - distancePenalty -- Higher score for champions
+                        local score = 3000 - distancePenalty
                         
-                        -- Bonus for closer heroes (easier to E)
-                        score = score + (475 - distanceToHero) / 5
-                        
-                        -- Extra bonus for being in optimal Flash range (200-350 units)
-                        if distanceFromHeroToTarget >= 200 and distanceFromHeroToTarget <= 350 then
-                            score = score + 500
-                        end
+                        -- Bonus for closer heroes
+                        score = score + (SPELL_RANGE.E - distanceToHero) / 5
                         
                         if score > bestScore then
                             bestScore = score
@@ -2067,137 +2600,67 @@ function Yasuo:GetBestUnitForEQ3Flash(target)
         end
     end
     
-    -- Check jungle monsters
-    for i = 1, Game.MinionCount() do
-        local monster = Game.Minion(i)
-        if monster and monster.team == 300 and monster.alive and monster.visible and -- Jungle monsters have team 300
-           not HasEBuff(monster) and IsSafeToE(monster, self) then
-            local distanceToMonster = GetDistance(myHero.pos, monster.pos)
-            if distanceToMonster <= 475 then -- E range
-                -- Calculate position after E to monster
-                local distanceFromMonsterToTarget = GetDistance(monster.pos, target.pos)
-                
-                -- FLASH DISTANCE CHECK: Target must be within Flash range after E
-                if distanceFromMonsterToTarget <= flashRange then
-                    -- We want to be in good Q3 range (200-1000) after E
-                    if distanceFromMonsterToTarget >= 200 and distanceFromMonsterToTarget <= 1000 then
-                        -- Score based on optimal positioning for Q3
-                        local optimalDistance = 600 -- Sweet spot for Q3
-                        local distancePenalty = math.abs(distanceFromMonsterToTarget - optimalDistance)
-                        local score = 2000 - distancePenalty -- Medium score for jungle monsters
-                        
-                        -- Bonus for closer monsters (easier to E)
-                        score = score + (475 - distanceToMonster) / 5
-                        
-                        -- Extra bonus for large monsters (more reliable)
-                        if monster.maxHealth > 1000 then
-                            score = score + 300
-                        end
-                        
-                        -- Extra bonus for being in optimal Flash range (200-350 units)
-                        if distanceFromMonsterToTarget >= 200 and distanceFromMonsterToTarget <= 350 then
-                            score = score + 400
-                        end
-                        
-                        if score > bestScore then
-                            bestScore = score
-                            bestUnit = monster
-                        end
-                    end
-                end
-            end
-        end
-    end
-                    
-    -- Check minions if no good champion or monster found
+    -- Check minions and jungle monsters
     for i = 1, Game.MinionCount() do
         local minion = Game.Minion(i)
-        if minion and minion.isEnemy and minion.alive and minion.visible and 
-           not HasEBuff(minion) and IsSafeToE(minion, self) then
-            local distanceToMinion = GetDistance(myHero.pos, minion.pos)
-            if distanceToMinion <= 475 then -- E range
-                -- Calculate position after E to minion
-                local distanceFromMinionToTarget = GetDistance(minion.pos, target.pos)
-                
-                -- FLASH DISTANCE CHECK: Target must be within Flash range after E
-                if distanceFromMinionToTarget <= flashRange then
-                    -- We want to be in good Q3 range (200-1000) after E - more flexible range
-                    if distanceFromMinionToTarget >= 200 and distanceFromMinionToTarget <= 1000 then
-                        -- Score based on optimal positioning for Q3
-                        local optimalDistance = 600 -- Sweet spot for Q3
-                        local distancePenalty = math.abs(distanceFromMinionToTarget - optimalDistance)
-                        local score = 1000 - distancePenalty -- Lower score for minions but still viable
-                        
-                        -- Bonus for closer minions (easier to E)
-                        score = score + (475 - distanceToMinion) / 5
-                        
-                        -- Extra bonus for minions that are cannon or super minions (more reliable)
-                        if minion.charName and (string.find(minion.charName, "Cannon") or string.find(minion.charName, "Super")) then
-                            score = score + 200
-                        end
-                        
-                        -- Extra bonus for being in optimal Flash range (200-350 units)
-                        if distanceFromMinionToTarget >= 200 and distanceFromMinionToTarget <= 350 then
-                            score = score + 300
-                        end
-                        
-                        if score > bestScore then
-                            bestScore = score
-                            bestUnit = minion
+        if minion and minion.alive and minion.visible and not HasEBuff(minion) then
+            local isJungleMonster = minion.team == 300
+            local isEnemyMinion = minion.isEnemy
+            
+            if isJungleMonster or isEnemyMinion then
+                local distanceToMinion = GetDistance(myHero.pos, minion.pos)
+                if distanceToMinion <= SPELL_RANGE.E then
+                    local distanceFromMinionToTarget = GetDistance(minion.pos, target.pos)
+                    
+                    -- Target must be within flash range after E
+                    if distanceFromMinionToTarget <= flashRange then
+                        if distanceFromMinionToTarget >= 200 and distanceFromMinionToTarget <= 1000 then
+                            local optimalDistance = 600
+                            local distancePenalty = math.abs(distanceFromMinionToTarget - optimalDistance)
+                            local baseScore = isJungleMonster and 2000 or 1000
+                            local score = baseScore - distancePenalty
+                            
+                            -- Bonus for closer minions
+                            score = score + (SPELL_RANGE.E - distanceToMinion) / 5
+                            
+                            -- Bonus for large monsters
+                            if isJungleMonster and minion.maxHealth > 1000 then
+                                score = score + 300
+                            end
+                            
+                            if score > bestScore then
+                                bestScore = score
+                                bestUnit = minion
+                            end
                         end
                     end
                 end
             end
         end
-    end
-    
-    -- Debug: Print why no unit was found if bestUnit is nil
-    if not bestUnit then
-        local debugInfo = "E-Q3-Flash Debug: No valid unit found. Checking nearby units:"
-        local unitCount = 0
-        
-        -- Check what units are available
-        for i = 1, Game.HeroCount() do
-            local hero = Game.Hero(i)
-            if hero and hero.isEnemy and hero ~= target and not hero.dead and hero.visible then
-                local distance = GetDistance(myHero.pos, hero.pos)
-                unitCount = unitCount + 1
-                if distance <= 475 then
-                    local hasEBuff = HasEBuff(hero)
-                    local isSafe = IsSafeToE(hero, self)
-                    local distanceToTarget = GetDistance(hero.pos, target.pos)
-                    local withinFlashRange = distanceToTarget <= flashRange
-                    -- print(string.format("Champion %s: dist=%.0f, E-buff=%s, safe=%s, target-dist=%.0f, flash-ok=%s", 
-                    --       hero.charName, distance, tostring(hasEBuff), tostring(isSafe), distanceToTarget, tostring(withinFlashRange)))
-                end
-            end
-        end
-        
-        for i = 1, Game.MinionCount() do
-            local minion = Game.Minion(i)
-            if minion and ((minion.isEnemy and minion.alive) or minion.team == 300) and minion.visible then
-                local distance = GetDistance(myHero.pos, minion.pos)
-                unitCount = unitCount + 1
-                if distance <= 475 then
-                    local hasEBuff = HasEBuff(minion)
-                    local isSafe = IsSafeToE(minion, self)
-                    local unitType = minion.team == 300 and "Monster" or "Minion"
-                    -- print(string.format("%s: dist=%.0f, E-buff=%s, safe=%s", unitType, distance, tostring(hasEBuff), tostring(isSafe)))
-                end
-            end
-        end
-        
-        -- print(string.format("Total units checked: %d", unitCount))
     end
     
     return bestUnit
 end
 
-function Yasuo:ResetComboLogic()
-    self.comboLogicState = "idle"
-    self.comboLogicTarget = nil
-    self.eq3FlashStep = 0
-    self.comboLogicTimer = 0
+function DepressiveYasuo2:GetFlashSpell()
+    local flash1 = myHero:GetSpellData(SUMMONER_1)
+    local flash2 = myHero:GetSpellData(SUMMONER_2)
+    
+    if flash1 and flash1.name == "SummonerFlash" then
+        return SUMMONER_1
+    elseif flash2 and flash2.name == "SummonerFlash" then
+        return SUMMONER_2
+    end
+    
+    return nil
 end
 
-Yasuo()
+function DepressiveYasuo2:ResetBeyblade()
+    self.beybladeState = "idle"
+    self.beybladeTarget = nil
+    self.beybladeStep = 0
+    self.beybladeTimer = 0
+end
+
+-- Initialize the script
+DepressiveYasuo2()
