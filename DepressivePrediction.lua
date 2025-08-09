@@ -1,4 +1,4 @@
-local Version = 2.11
+local Version = 2.20
 local Name = "DepressivePrediction"
 
 -- Verificar si ya está cargado
@@ -20,11 +20,128 @@ local math_sin = assert(math.sin)
 local table_insert = assert(table.insert)
 local Game, Vector, Draw, Callback = _G.Game, _G.Vector, _G.Draw, _G.Callback
 
+-- Tabla completa de neutrales basada en DepressiveAutoSmite (lowercase keys)
+local NeutralLookup = {
+    -- Dragons (all variants)
+    ["sru_dragon_air"] = {type = "epic", priority = 8},
+    ["sru_dragon_earth"] = {type = "epic", priority = 8},
+    ["sru_dragon_fire"] = {type = "epic", priority = 8},
+    ["sru_dragon_water"] = {type = "epic", priority = 8},
+    ["sru_dragon_elder"] = {type = "epic", priority = 10},
+    ["sru_dragon_ruined"] = {type = "epic", priority = 8},
+    ["sru_dragon_chemtech"] = {type = "epic", priority = 8},
+    ["sru_dragon_hextech"] = {type = "epic", priority = 8},
+    ["sru_dragon_cloud"] = {type = "epic", priority = 8},
+    ["sru_dragon_mountain"] = {type = "epic", priority = 8},
+    ["sru_dragon_ocean"] = {type = "epic", priority = 8},
+    ["sru_dragon_infernal"] = {type = "epic", priority = 8},
+    ["sru_dragon_wind"] = {type = "epic", priority = 8},
+    ["sru_dragon_lightning"] = {type = "epic", priority = 8},
+    -- Baron/Horde/Atakhan/Herald
+    ["sru_baron"] = {type = "epic", priority = 10},
+    ["sru_horde"] = {type = "epic", priority = 9},
+    ["sru_atakhan"] = {type = "epic", priority = 10},
+    ["sru_riftherald"] = {type = "epic", priority = 9},
+    -- Buffs
+    ["sru_blue"] = {type = "buff", priority = 7},
+    ["sru_red"] = {type = "buff", priority = 7},
+    -- Camps
+    ["sru_krug"] = {type = "camp", priority = 5},
+    ["sru_krugmini"] = {type = "camp", priority = 3},
+    ["sru_gromp"] = {type = "camp", priority = 5},
+    ["sru_murkwolf"] = {type = "camp", priority = 5},
+    ["sru_murkwolfmini"] = {type = "camp", priority = 3},
+    ["sru_razorbeak"] = {type = "camp", priority = 5},
+    ["sru_razorbeakmini"] = {type = "camp", priority = 3},
+    -- Scuttle
+    ["sru_crab"] = {type = "scuttle", priority = 4},
+}
+
+local function IdentifyNeutralByNameLower(lowerName)
+    if not lowerName or lowerName == "" then return false end
+    -- Exact lookup first
+    if NeutralLookup[lowerName] then
+        local d = NeutralLookup[lowerName]
+        return true, d.type, d.priority, lowerName
+    end
+    -- Heuristics for engine variations
+    if lowerName:find("sru_dragon") or lowerName:find("dragon") then
+        local pr = lowerName:find("elder") and 10 or 8
+        return true, "epic", pr, lowerName
+    end
+    if lowerName:find("baron") then return true, "epic", 10, lowerName end
+    if lowerName:find("atakhan") then return true, "epic", 10, lowerName end
+    if lowerName:find("horde") or lowerName:find("voidgrub") then return true, "epic", 9, lowerName end
+    if lowerName:find("herald") then return true, "epic", 9, lowerName end
+    if lowerName:find("sru_blue") or lowerName:find("blue") then return true, "buff", 7, lowerName end
+    if lowerName:find("sru_red") or lowerName:find("red") then return true, "buff", 7, lowerName end
+    if lowerName:find("gromp") or lowerName:find("murkwolf") or lowerName:find("razorbeak") or lowerName:find("krug") then
+        local pr = (lowerName:find("mini") and 3) or 5
+        return true, "camp", pr, lowerName
+    end
+    if lowerName:find("sru_crab") or lowerName:find("scuttl") or lowerName:find("crab") then
+        return true, "scuttle", 4, lowerName
+    end
+    return false
+end
+
+-- Arena-aware team classification helpers
+local function IsArenaMap()
+    local mapID = Game.mapID or 0
+    if mapID == 30 or mapID == 33 then return true end
+    if mapID >= 30 and mapID <= 35 then return true end
+    local bounds = { maxDistance = 6000 }
+    pcall(function() bounds = Math:GetMapBounds() end)
+    return (bounds and bounds.maxDistance and bounds.maxDistance <= 3000) or false
+end
+
+local function IsEnemyUnit(unit)
+    if not unit or not unit.valid then return false end
+    local isArena = IsArenaMap()
+    -- Prefer team comparison when available
+    if isArena and myHero and myHero.team and unit.team then
+        return unit.team ~= myHero.team
+    end
+    -- Fall back to engine flags when consistent
+    if unit.isEnemy ~= nil and unit.isAlly ~= nil and unit.isEnemy ~= unit.isAlly then
+        return unit.isEnemy == true
+    end
+    -- Last resort in arena: treat any other hero that isn't us and isn't a clear neutral as enemy
+    if isArena and myHero and unit.networkID and myHero.networkID then
+        if unit.networkID == myHero.networkID then return false end
+        -- If names indicate neutral, don't classify as enemy here
+        local lc = (unit.charName and unit.charName:lower()) or ""
+        local ln = (unit.name and unit.name:lower()) or ""
+        local byName = IdentifyNeutralByNameLower(lc) or IdentifyNeutralByNameLower(ln)
+        if byName then return false end
+        return true
+    end
+    return unit.isEnemy == true
+end
+
+local function IsAllyUnit(unit)
+    if not unit or not unit.valid then return false end
+    local isArena = IsArenaMap()
+    if isArena and myHero and myHero.team and unit.team then
+        return unit.team == myHero.team
+    end
+    if unit.isEnemy ~= nil and unit.isAlly ~= nil and unit.isEnemy ~= unit.isAlly then
+        return unit.isAlly == true
+    end
+    if isArena and myHero and unit.networkID and myHero.networkID then
+        if unit.networkID == myHero.networkID then return true end
+    end
+    return unit.isAlly == true
+end
+
 -- Tipos de colisión
 local COLLISION_MINION = 0
 local COLLISION_ALLYHERO = 1
 local COLLISION_ENEMYHERO = 2
 local COLLISION_YASUOWALL = 3
+local COLLISION_NEUTRAL = 4
+local COLLISION_ALLYMINION = 5
+local COLLISION_ENEMYMINION = 6
 
 -- Precisión de predicción mejorada
 local HITCHANCE_IMPOSSIBLE = 0
@@ -76,6 +193,9 @@ end
 -- Clase Math mejorada
 local Math = {}
 
+-- Cache de límites de mapa para evitar recomputar en cada llamada
+Math._boundsCache = { id = nil, bounds = nil }
+
 -- Función para sanear posiciones y evitar valores extremos
 function Math:SanitizePosition(pos, referencePos)
     if not pos then return nil end
@@ -83,15 +203,17 @@ function Math:SanitizePosition(pos, referencePos)
     -- Crear una copia para no modificar el original
     local sanitized = { x = pos.x, z = pos.z, y = pos.y }
     
-    -- Límites más permisivos del mapa de League of Legends
-    local MAP_MIN_X, MAP_MAX_X = -1000, 16000
-    local MAP_MIN_Z, MAP_MAX_Z = -1000, 16000
+    -- Detectar mapa automáticamente y ajustar límites
+    local mapBounds = self:GetMapBounds()
+    local MAP_MIN_X, MAP_MAX_X = mapBounds.minX, mapBounds.maxX
+    local MAP_MIN_Z, MAP_MAX_Z = mapBounds.minZ, mapBounds.maxZ
     
-    -- Aplicar límites del mapa solo si están MUY fuera
-    if sanitized.x < MAP_MIN_X then sanitized.x = MAP_MIN_X end
-    if sanitized.x > MAP_MAX_X then sanitized.x = MAP_MAX_X end
-    if sanitized.z < MAP_MIN_Z then sanitized.z = MAP_MIN_Z end
-    if sanitized.z > MAP_MAX_Z then sanitized.z = MAP_MAX_Z end
+    -- Aplicar límites del mapa únicamente si está extremadamente fuera (tolerante para Arena)
+    local extraMargin = 5000
+    if sanitized.x < MAP_MIN_X - extraMargin then sanitized.x = MAP_MIN_X end
+    if sanitized.x > MAP_MAX_X + extraMargin then sanitized.x = MAP_MAX_X end
+    if sanitized.z < MAP_MIN_Z - extraMargin then sanitized.z = MAP_MIN_Z end
+    if sanitized.z > MAP_MAX_Z + extraMargin then sanitized.z = MAP_MAX_Z end
     
     -- Si hay posición de referencia, verificar distancia máxima (ser más permisivo)
     if referencePos then
@@ -100,8 +222,8 @@ function Math:SanitizePosition(pos, referencePos)
             (sanitized.z - referencePos.z)^2
         )
         
-        -- Aumentar distancia máxima permitida
-        local MAX_DISTANCE = 6000
+        -- Aumentar distancia máxima permitida basada en el tipo de mapa
+        local MAX_DISTANCE = mapBounds.maxDistance or 6000
         if distance > MAX_DISTANCE then
             local factor = MAX_DISTANCE / distance
             sanitized.x = referencePos.x + (sanitized.x - referencePos.x) * factor
@@ -110,6 +232,31 @@ function Math:SanitizePosition(pos, referencePos)
     end
     
     return sanitized
+end
+
+-- Nueva función para detectar automáticamente los límites del mapa
+function Math:GetMapBounds()
+    local mapName = Game.mapID or 0
+    local cache = self._boundsCache
+    if cache.id == mapName and cache.bounds then
+        return cache.bounds
+    end
+    local bounds
+    if mapName == 11 then
+        bounds = { minX = -1000, maxX = 16000, minZ = -1000, maxZ = 16000, maxDistance = 6000 }
+    elseif mapName == 12 then
+        bounds = { minX = -500, maxX = 13000, minZ = -500, maxZ = 13000, maxDistance = 4000 }
+    elseif mapName == 30 or mapName == 33 then
+    -- Arena: mantener límites de coordenadas amplios (como SR) pero con distancia efectiva pequeña
+    bounds = { minX = -1000, maxX = 16000, minZ = -1000, maxZ = 16000, maxDistance = 2200 }
+    elseif mapName >= 30 and mapName <= 35 then
+    -- Otros modos Arena: mismas coordenadas amplias, radio efectivo pequeño
+    bounds = { minX = -1000, maxX = 16000, minZ = -1000, maxZ = 16000, maxDistance = 2800 }
+    else
+        bounds = { minX = -2000, maxX = 20000, minZ = -2000, maxZ = 20000, maxDistance = 8000 }
+    end
+    cache.id, cache.bounds = mapName, bounds
+    return bounds
 end
 
 function Math:Get2D(p)
@@ -131,8 +278,10 @@ function Math:Get2D(p)
         z = actualPos.z or actualPos.y or 0 
     }
     
-    -- SER MÁS PERMISIVO - solo filtrar coordenadas extremas obvias
-    if pos2D.x > 50000 or pos2D.x < -5000 or pos2D.z > 50000 or pos2D.z < -5000 then
+    -- Usar un límite extremo grande, independiente del tamaño del mapa para no fallar en Arena
+    local extremeLimit = 50000
+    if pos2D.x > extremeLimit or pos2D.x < -extremeLimit or 
+       pos2D.z > extremeLimit or pos2D.z < -extremeLimit then
         return nil
     end
     
@@ -143,14 +292,30 @@ end
 -- FUNCIÓN Get3D ELIMINADA - TODO EN 2D
 
 function Math:GetDistance(p1, p2)
+    -- Robust guard: return huge if any input is invalid
+    if not p1 or not p2 then return math_huge end
+    if not p1.x or not p1.z or not p2.x or not p2.z then return math_huge end
     local dx = p2.x - p1.x
     local dz = p2.z - p1.z
-    return math_sqrt(dx * dx + dz * dz)
+    local d2 = dx * dx + dz * dz
+    if d2 <= 0 then return 0 end
+    return math_sqrt(d2)
+end
+
+-- Distancia al cuadrado (evita sqrt) para comparaciones rápidas
+function Math:GetDistanceSqr(p1, p2)
+    if not p1 or not p2 or not p1.x or not p1.z or not p2.x or not p2.z then return math_huge end
+    local dx = p2.x - p1.x
+    local dz = p2.z - p1.z
+    return dx * dx + dz * dz
 end
 
 -- FUNCIÓN GetDistance3D ELIMINADA - TODO EN 2D
 
 function Math:IsInRange(p1, p2, range)
+    if not p1 or not p2 or not p1.x or not p1.z or not p2.x or not p2.z then
+        return false
+    end
     local dx = p1.x - p2.x
     local dz = p1.z - p2.z
     return dx * dx + dz * dz <= range * range
@@ -204,71 +369,69 @@ end
 
 -- Predicción avanzada de intercepción optimizada para 2D
 function Math:AdvancedIntercept(src, targetPos, targetVel, speed, delay)
-    -- Asegurar que trabajamos en 2D
+    -- Asegurar que trabajamos en 2D y considerar el delay antes del lanzamiento
     local srcPos = self:Get2D(src)
-    local tgtPos = self:Get2D(targetPos)
+    local tgtPos0 = self:Get2D(targetPos)
     local tgtVel = { x = targetVel.x or 0, z = targetVel.z or targetVel.y or 0 }
-    
+
+    if not srcPos or not tgtPos0 then return nil end
+
     -- Validar velocidades para evitar cálculos extremos
     local velMagnitude = math_sqrt(tgtVel.x * tgtVel.x + tgtVel.z * tgtVel.z)
-    if velMagnitude > 1000 then -- Velocidad demasiado alta
+    if velMagnitude > 1500 then -- más permisivo pero acotado
         return nil
     end
-    
+
+    local dly = delay or 0
+    -- Avanzar la posición objetivo por el delay de salida
+    local tgtPos = { x = tgtPos0.x + tgtVel.x * dly, z = tgtPos0.z + tgtVel.z * dly }
+
     local dx = tgtPos.x - srcPos.x
     local dz = tgtPos.z - srcPos.z
     local tvx = tgtVel.x
     local tvz = tgtVel.z
-    
+
     -- Validar distancia inicial
     local initialDistance = math_sqrt(dx * dx + dz * dz)
-    if initialDistance > 3000 then -- Demasiado lejos
+    if initialDistance > 4000 then -- más permisivo
         return nil
     end
-    
-    -- Ecuación cuadrática optimizada para 2D
+
+    -- Ecuación cuadrática para el tiempo de vuelo después del delay
     local a = tvx * tvx + tvz * tvz - speed * speed
     local b = 2 * (tvx * dx + tvz * dz)
     local c = dx * dx + dz * dz
-    
+
     local discriminant = b * b - 4 * a * c
     if discriminant < 0 then return nil end
-    
+
     local sqrt_disc = math_sqrt(discriminant)
     local t1 = (-b - sqrt_disc) / (2 * a)
     local t2 = (-b + sqrt_disc) / (2 * a)
-    
-    local t = t1 > delay and t1 or t2
-    if t <= delay or t > 5.0 then -- Limitar tiempo máximo de intercepción
-        return nil
-    end
-    
-    -- Calcular posición de intercepción
-    local interceptX = tgtPos.x + tvx * t
-    local interceptZ = tgtPos.z + tvz * t
-    
-    -- Validar que la intercepción esté dentro de un rango razonable
+
+    -- Elegir la menor raíz positiva
+    local tf = math_huge
+    if t1 and t1 >= 0 then tf = math_min(tf, t1) end
+    if t2 and t2 >= 0 then tf = math_min(tf, t2) end
+    if tf == math_huge or tf > 4.0 then return nil end
+
+    -- Tiempo total hasta el impacto
+    local totalT = dly + tf
+
+    -- Calcular posición de intercepción desde la posición original + velocidad * tiempo total
+    local interceptX = tgtPos0.x + tgtVel.x * totalT
+    local interceptZ = tgtPos0.z + tgtVel.z * totalT
+
+    -- Validaciones razonables
     local interceptDistance = math_sqrt((interceptX - srcPos.x)^2 + (interceptZ - srcPos.z)^2)
-    local maxReasonableDistance = speed * t + 500 -- Distancia que se puede recorrer + buffer
-    
-    if interceptDistance > maxReasonableDistance then
-        return nil
-    end
-    
-    -- Validar que la intercepción no esté demasiado lejos del objetivo actual
-    local distanceFromTarget = math_sqrt((interceptX - tgtPos.x)^2 + (interceptZ - tgtPos.z)^2)
-    local maxPredictionDistance = velMagnitude * t + 200 -- Distancia que puede moverse el objetivo + buffer
-    
-    if distanceFromTarget > maxPredictionDistance then
-        return nil
-    end
-    
-    -- Devolver resultado en 2D
-    return {
-        x = interceptX,
-        z = interceptZ,
-        time = t
-    }
+    local maxReasonableDistance = speed * tf + 600
+    if interceptDistance > maxReasonableDistance then return nil end
+
+    local distanceFromTarget = math_sqrt((interceptX - tgtPos0.x)^2 + (interceptZ - tgtPos0.z)^2)
+    local maxPredictionDistance = velMagnitude * totalT + 300
+    if distanceFromTarget > maxPredictionDistance then return nil end
+
+    return { x = interceptX, z = interceptZ, time = totalT }
 end
 
 -- Análisis de patrones de movimiento
@@ -348,24 +511,37 @@ end
 function Math:AverageVector(vectors)
     if #vectors == 0 then return {x = 0, z = 0} end
     
-    local sum = {x = 0, z = 0}
-    for _, v in ipairs(vectors) do
-        sum.x = sum.x + v.x
-        sum.z = sum.z + v.z
+    -- Ponderar más los últimos valores para mayor reactividad
+    local sumX, sumZ, weightSum = 0, 0, 0
+    for i = 1, #vectors do
+        local w = 0.5 + (i / #vectors) -- peso lineal creciente
+        sumX = sumX + vectors[i].x * w
+        sumZ = sumZ + vectors[i].z * w
+        weightSum = weightSum + w
     end
-    
-    return {
-        x = sum.x / #vectors,
-        z = sum.z / #vectors
-    }
+    return { x = sumX / weightSum, z = sumZ / weightSum }
 end
 
 -- Sistema de seguimiento de unidades mejorado
 local UnitTracker = {
     Units = {},
     MaxHistorySize = 15,
-    UpdateThreshold = 3  -- Umbral más bajo para tracking más preciso
+    UpdateThreshold = 3  -- Umbral más bajo para tracking más preciso (ajustable)
 }
+
+-- Ajuste dinámico de thresholds según el mapa (arena requiere más precisión)
+do
+    local ok, bounds = pcall(function() return Math:GetMapBounds() end)
+    if ok and bounds and bounds.maxDistance then
+        if bounds.maxDistance <= 3000 then
+            UnitTracker.UpdateThreshold = 2
+            UnitTracker.MaxHistorySize = 24
+        else
+            UnitTracker.UpdateThreshold = 3
+            UnitTracker.MaxHistorySize = 18
+        end
+    end
+end
 
 function UnitTracker:UpdateUnit(unit)
     -- VALIDACIÓN CRÍTICA pero más permisiva
@@ -394,14 +570,22 @@ function UnitTracker:UpdateUnit(unit)
             timestamps = {},
             lastUpdate = currentTime,
             isVisible = unit.visible,
-            movementPattern = nil
+            movementPattern = nil,
+            lastAnalysisTime = 0
         }
     end
     
     local unitData = self.Units[id]
     
     -- Actualizar posición con tracking más preciso
-    if #unitData.positions == 0 or Math:GetDistance(pos, unitData.positions[#unitData.positions]) > self.UpdateThreshold then
+    local needInsert = true
+    if #unitData.positions > 0 then
+        local last = unitData.positions[#unitData.positions]
+        local thresh = self.UpdateThreshold
+        local threshSqr = thresh * thresh
+        needInsert = Math:GetDistanceSqr(pos, last) > threshSqr
+    end
+    if needInsert then
         table_insert(unitData.positions, pos)
         table_insert(unitData.timestamps, currentTime)
         
@@ -411,9 +595,13 @@ function UnitTracker:UpdateUnit(unit)
             table.remove(unitData.timestamps, 1)
         end
         
-        -- Analizar patrón de movimiento siempre para mejor tracking
+        -- Analizar patrón de movimiento con throttling para rendimiento
         if #unitData.positions >= 3 then
-            unitData.movementPattern = Math:AnalyzeMovementPattern(unitData.positions, unitData.timestamps)
+            local analyzeGap = 0.2
+            if currentTime - (unitData.lastAnalysisTime or 0) >= analyzeGap then
+                unitData.movementPattern = Math:AnalyzeMovementPattern(unitData.positions, unitData.timestamps)
+                unitData.lastAnalysisTime = currentTime
+            end
         end
     end
     
@@ -700,6 +888,9 @@ function CollisionSystem:GetCollision(source, castPos, speed, delay, radius, col
     -- Trabajar completamente en 2D para mejor rendimiento
     local source2D = Math:Get2D(source)
     local castPos2D = Math:Get2D(castPos)
+    if not source2D or not castPos2D then
+        return false, {}, 0
+    end
     
     -- Extender ligeramente la línea para mejor detección (en 2D)
     local direction = Math:Normalized(castPos2D, source2D)
@@ -717,12 +908,7 @@ function CollisionSystem:GetCollision(source, castPos, speed, delay, radius, col
         end
     end
     
-    -- Ordenar por distancia en 2D
-    table.sort(collisionObjects, function(a, b)
-        local aPos2D = Math:Get2D(a.pos)
-        local bPos2D = Math:Get2D(b.pos)
-        return Math:GetDistance(aPos2D, source2D) < Math:GetDistance(bPos2D, source2D)
-    end)
+    -- Evitar ordenamiento para ahorrar CPU; no es necesario para lógica de colisión
     
     return false, collisionObjects, collisionCount
 end
@@ -732,23 +918,72 @@ function CollisionSystem:GetCollisionObjects(collisionTypes, skipID)
     
     for _, colType in pairs(collisionTypes) do
         if colType == COLLISION_MINION then
+            -- Incluir TODOS los minions (aliados, enemigos y neutrales)
             for i = 1, Game.MinionCount() do
                 local minion = Game.Minion(i)
                 if minion and minion.valid and not minion.dead and minion.networkID ~= skipID then
                     table_insert(objects, minion)
                 end
             end
+        elseif colType == COLLISION_ALLYMINION then
+            -- Solo minions aliados
+            for i = 1, Game.MinionCount() do
+                local minion = Game.Minion(i)
+                if minion and minion.valid and not minion.dead and minion.networkID ~= skipID then
+                    if minion.isAlly then
+                        table_insert(objects, minion)
+                    end
+                end
+            end
+        elseif colType == COLLISION_ENEMYMINION then
+            -- Solo minions enemigos
+            for i = 1, Game.MinionCount() do
+                local minion = Game.Minion(i)
+                if minion and minion.valid and not minion.dead and minion.networkID ~= skipID then
+                    if minion.isEnemy then
+                        table_insert(objects, minion)
+                    end
+                end
+            end
+        elseif colType == COLLISION_NEUTRAL then
+            -- Objetivos neutrales (jungla, monstruos épicos, etc.)
+            for i = 1, Game.MinionCount() do
+                local minion = Game.Minion(i)
+                if minion and minion.valid and not minion.dead and minion.networkID ~= skipID then
+                    if not minion.isAlly and not minion.isEnemy then
+                        table_insert(objects, minion)
+                    else
+                        -- Algunos engines marcan neutrales como ni ally/enemy, otros usan nombres
+                        local lc = (minion.charName and minion.charName:lower()) or ""
+                        local ln = (minion.name and minion.name:lower()) or ""
+                        if IdentifyNeutralByNameLower(lc) or IdentifyNeutralByNameLower(ln) then
+                            table_insert(objects, minion)
+                        end
+                    end
+                end
+            end
+            -- También verificar objetos especiales por nombre con lookup robusto
+            for i = 1, Game.ObjectCount() do
+                local obj = Game.Object(i)
+                if obj and obj.valid and not obj.dead and obj.networkID ~= skipID then
+                    local lc = (obj.charName and obj.charName:lower()) or ""
+                    local ln = (obj.name and obj.name:lower()) or ""
+                    if IdentifyNeutralByNameLower(lc) or IdentifyNeutralByNameLower(ln) then
+                        table_insert(objects, obj)
+                    end
+                end
+            end
         elseif colType == COLLISION_ALLYHERO then
             for i = 1, Game.HeroCount() do
                 local hero = Game.Hero(i)
-                if hero and hero.valid and not hero.dead and hero.isAlly and hero.networkID ~= skipID then
+                if hero and hero.valid and not hero.dead and IsAllyUnit(hero) and hero.networkID ~= skipID then
                     table_insert(objects, hero)
                 end
             end
         elseif colType == COLLISION_ENEMYHERO then
             for i = 1, Game.HeroCount() do
                 local hero = Game.Hero(i)
-                if hero and hero.valid and not hero.dead and hero.isEnemy and hero.networkID ~= skipID then
+                if hero and hero.valid and not hero.dead and IsEnemyUnit(hero) and hero.networkID ~= skipID then
                     table_insert(objects, hero)
                 end
             end
@@ -760,7 +995,6 @@ function CollisionSystem:GetCollisionObjects(collisionTypes, skipID)
                     -- Verificar si es muro de Yasuo
                     local objName = obj.name and obj.name:lower() or ""
                     if objName:find("yasuo") and (objName:find("wall") or objName:find("windwall")) then
-                        -- Agregar el muro como objeto de colisión
                         table_insert(objects, obj)
                     end
                     
@@ -840,6 +1074,11 @@ function CollisionSystem:WillCollide(source, castPos, object, speed, delay, radi
 end
 
 function CollisionSystem:ClosestPointOnLineSegment(p, p1, p2)
+    -- Nil guards for all input points
+    if not p or not p1 or not p2 then return p1 or p2 or p, false end
+    if not p.x or not p.z or not p1.x or not p1.z or not p2.x or not p2.z then
+        return p1 or p2 or p, false
+    end
     local px, pz = p.x, p.z
     local ax, az = p1.x, p1.z
     local bx, bz = p2.x, p2.z
@@ -858,6 +1097,9 @@ end
 
 -- NUEVA FUNCIÓN: Verificar si dos líneas se intersectan
 function CollisionSystem:LinesIntersect(p1, p2, p3, p4)
+    -- Guards against invalid points
+    if not p1 or not p2 or not p3 or not p4 then return false end
+    if not (p1.x and p1.z and p2.x and p2.z and p3.x and p3.z and p4.x and p4.z) then return false end
     -- Función para verificar si dos segmentos de línea se intersectan
     -- p1-p2: primera línea (proyectil)
     -- p3-p4: segunda línea (muro de Yasuo)
@@ -917,10 +1159,8 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
         return nil, nil, -1
     end
     
-    -- Manejo seguro de la actualización de unidades
-    pcall(function()
-        UnitTracker:UpdateUnit(target)
-    end)
+    -- Actualizar tracking de unidad (controlado internamente)
+    UnitTracker:UpdateUnit(target)
     
     local isHero = target.type == Obj_AI_Hero
     
@@ -940,7 +1180,7 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
     
     -- Verificar distancia inicial - ser más permisivo
     local initialDistance = Math:GetDistance(sourcePos, currentPos)
-    if initialDistance > 5000 then -- Aumentar el límite para no fallar predicciones válidas
+    if initialDistance > 12000 then -- Muy permisivo; no bloquear Arena
         return nil, nil, -1
     end
     
@@ -950,10 +1190,7 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
     -- end
     
     -- Verificar si la unidad se está moviendo de forma segura
-    local hasMovePath = false
-    pcall(function()
-        hasMovePath = target.pathing and target.pathing.hasMovePath
-    end)
+    local hasMovePath = (target.pathing and target.pathing.hasMovePath) or false
     
     -- Si no se está moviendo, devolver posición actual en 2D
     if not hasMovePath then
@@ -964,14 +1201,11 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
     
     -- Calcular delay total y limitarlo
     local totalDelay = delay + Menu:GetLatency() + Menu:GetExtraDelay()
-    totalDelay = math_min(totalDelay, 2.0) -- Máximo 2 segundos de delay
+    totalDelay = math_min(totalDelay, 2.5) -- Más permisivo
     
     -- Para habilidades instantáneas, usar predicción 2D
     if speed == math_huge then
-        local predictedPos = currentPos
-        pcall(function()
-            predictedPos = UnitTracker:GetPredictedPosition(target, totalDelay)
-        end)
+    local predictedPos = UnitTracker:GetPredictedPosition(target, totalDelay)
         
         -- Ser más permisivo con predicciones instantáneas
         if not predictedPos then
@@ -1010,7 +1244,7 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
             local predictionDistance = Math:GetDistance(sourcePos, result1)
             local timeDistance = speed * result3
             
-            if predictionDistance <= timeDistance + 600 then -- Aumentar tolerancia
+            if predictionDistance <= timeDistance + 1200 then -- Más tolerancia para Arena
                 return result1, result2, result3
             end
         end
@@ -1024,7 +1258,7 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
     if success and result1 then
         -- Ser más permisivo con validación de predicción básica
         local predictionDistance = Math:GetDistance(sourcePos, result1)
-        if predictionDistance <= 3000 then -- Aumentar límite máximo
+    if predictionDistance <= 8000 then -- Mucho más permisivo
             return result1, result2, result3
         end
     end
@@ -1036,6 +1270,14 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
 end
 
 function PredictionCore:AdvancedPrediction(target, source, speed, delay, radius)
+    -- NUEVA LÓGICA: Verificar si estamos en arena para usar predicción optimizada
+    local mapBounds = Math:GetMapBounds()
+    local isArenaMap = mapBounds.maxDistance <= 3000
+    
+    if isArenaMap then
+        return self:ArenaPrediction(target, source, speed, delay, radius)
+    end
+    
     local unitData = UnitTracker.Units[target.networkID]
     
     if unitData and unitData.movementPattern then
@@ -1056,6 +1298,79 @@ function PredictionCore:AdvancedPrediction(target, source, speed, delay, radius)
     
     -- Fallback a predicción básica
     return self:BasicPrediction(target, source, speed, delay, radius)
+end
+
+-- NUEVA FUNCIÓN: Predicción optimizada para arena
+function PredictionCore:ArenaPrediction(target, source, speed, delay, radius)
+    local currentPos = Math:Get2D(target.pos)
+    local unitData = UnitTracker.Units[target.networkID]
+    
+    -- En arena, los movimientos son más rápidos y erráticos
+    -- Usar predicción más agresiva y reactiva
+    
+    -- Factor de corrección para arena (movimientos más rápidos)
+    local arenaSpeedMultiplier = 1.3 -- Los campeones suelen moverse 30% más rápido en arena
+    local ms = (target.ms or 400) * arenaSpeedMultiplier
+    
+    -- Reducir tiempo de reacción en arena (combates más intensos)
+    local arenaReactionTime = math_min(Menu:GetReactionTime() * 0.7, 0.08) -- Máximo 80ms
+    
+    -- Si el tiempo de predicción es muy corto, usar posición actual
+    if delay < arenaReactionTime then
+        return currentPos, currentPos, delay
+    end
+    
+    -- Usar análisis de movimiento pero con parámetros ajustados para arena
+    if unitData and unitData.movementPattern then
+        local vel = unitData.movementPattern.avgVelocity
+        
+        -- En arena, aplicar factor de velocidad aumentada
+        vel = {
+            x = vel.x * arenaSpeedMultiplier,
+            z = vel.z * arenaSpeedMultiplier
+        }
+        
+        -- Intercepción optimizada para arena
+        local intercept = Math:AdvancedIntercept(source, currentPos, vel, speed, delay)
+        
+        if intercept then
+            local castPos = { x = intercept.x, z = intercept.z }
+            local timeToHit = intercept.time
+            
+            -- Validar que la predicción esté dentro de los límites de arena
+            local mapBounds = Math:GetMapBounds()
+            castPos.x = math.max(mapBounds.minX, math.min(mapBounds.maxX, castPos.x))
+            castPos.z = math.max(mapBounds.minZ, math.min(mapBounds.maxZ, castPos.z))
+            
+            return castPos, castPos, timeToHit
+        end
+    end
+    
+    -- Predicción básica para arena con velocidad ajustada
+    local path = UnitTracker:GetUnitPath(target)
+    
+    if #path > 1 then
+        local direction = Math:Normalized(path[2], path[1])
+        if direction then
+            -- Usar velocidad ajustada para arena
+            local predictedDistance = ms * delay
+            local predictedPos = Math:Extended(currentPos, direction, predictedDistance)
+            
+            -- Validar límites de arena
+            local mapBounds = Math:GetMapBounds()
+            predictedPos.x = math.max(mapBounds.minX, math.min(mapBounds.maxX, predictedPos.x))
+            predictedPos.z = math.max(mapBounds.minZ, math.min(mapBounds.maxZ, predictedPos.z))
+            
+            local distance = Math:GetDistance(source, predictedPos)
+            local timeToHit = delay + distance / speed
+            
+            return predictedPos, predictedPos, timeToHit
+        end
+    end
+    
+    -- Fallback: posición actual
+    local distance = Math:GetDistance(source, currentPos)
+    return currentPos, currentPos, delay + distance / speed
 end
 
 function PredictionCore:BasicPrediction(target, source, speed, delay, radius)
@@ -1201,6 +1516,22 @@ function PredictionCore:SpellPrediction(args)
                 CollisionObjects = {}
             }
         end
+
+        -- Early out por rango para evitar cálculos costosos
+        if self.Range ~= math_huge then
+            local maxRange = self.Range * Menu:GetMaxRange()
+            local distSqr = Math:GetDistanceSqr(source2D, currentTargetPos)
+            local extra = 50 -- pequeño margen
+            if distSqr > (maxRange + extra) * (maxRange + extra) then
+                return {
+                    HitChance = HITCHANCE_IMPOSSIBLE,
+                    CastPosition = nil,
+                    UnitPosition = nil,
+                    TimeToHit = 0,
+                    CollisionObjects = {}
+                }
+            end
+        end
         
         -- Obtener predicción básica en 2D
         unitPosition, castPosition, timeToHit = PredictionCore:GetPrediction(
@@ -1267,7 +1598,7 @@ function PredictionCore:SpellPrediction(args)
                     local hasEnemyYasuo = false
                     for i = 1, Game.HeroCount() do
                         local hero = Game.Hero(i)
-                        if hero and hero.valid and hero.isEnemy and 
+                        if hero and hero.valid and IsEnemyUnit(hero) and 
                            (hero.charName == "Yasuo" or hero.charName == "Yone") then
                             hasEnemyYasuo = true
                             break
@@ -1308,9 +1639,10 @@ function PredictionCore:SpellPrediction(args)
                 castPosition = Math:Get2D(target.pos)
             end
             
-            -- Verificar límites del mapa con más tolerancia
-            castPosition.x = math.max(-1000, math.min(16000, castPosition.x))
-            castPosition.z = math.max(-1000, math.min(16000, castPosition.z))
+            -- Verificar límites del mapa con más tolerancia y usando bounds reales
+            local b = Math:GetMapBounds()
+            castPosition.x = math.max(b.minX, math.min(b.maxX, castPosition.x))
+            castPosition.z = math.max(b.minZ, math.min(b.maxZ, castPosition.z))
             
             -- MANTENER EN 2D - no convertir a 3D
             castPosition2D = castPosition
@@ -1327,9 +1659,10 @@ function PredictionCore:SpellPrediction(args)
                 unitPosition = Math:Get2D(target.pos)
             end
             
-            -- Verificar límites del mapa con más tolerancia
-            unitPosition.x = math.max(-1000, math.min(16000, unitPosition.x))
-            unitPosition.z = math.max(-1000, math.min(16000, unitPosition.z))
+            -- Verificar límites del mapa con más tolerancia y usando bounds reales
+            local b = Math:GetMapBounds()
+            unitPosition.x = math.max(b.minX, math.min(b.maxX, unitPosition.x))
+            unitPosition.z = math.max(b.minZ, math.min(b.maxZ, unitPosition.z))
             
             -- MANTENER EN 2D - no convertir a 3D
             unitPosition2D = unitPosition
@@ -1531,10 +1864,48 @@ end
 
 -- Callback para actualizar datos y mostrar visuals
 Callback.Add("Tick", function()
+    -- Actualizar héroes
     for i = 1, Game.HeroCount() do
         local hero = Game.Hero(i)
         if hero and hero.valid then
             UnitTracker:UpdateUnit(hero)
+        end
+    end
+    
+    -- Actualizar minions importantes (incluyendo neutrales y épicos)
+    for i = 1, Game.MinionCount() do
+        local minion = Game.Minion(i)
+        if minion and minion.valid and not minion.dead then
+            -- Solo trackear minions importantes para rendimiento
+            local shouldTrack = false
+            local minionName = minion.name and minion.name:lower() or ""
+            local charName = minion.charName and minion.charName:lower() or ""
+            
+            -- Trackear objetivos épicos
+            if minionName:find("dragon") or minionName:find("baron") or minionName:find("herald") or
+               charName:find("dragon") or charName:find("baron") or charName:find("herald") then
+                shouldTrack = true
+            end
+            
+            -- Trackear jungla importante
+            if minionName:find("gromp") or minionName:find("krugs") or 
+               minionName:find("blue") or minionName:find("red") or
+               charName:find("gromp") or charName:find("krugs") or
+               charName:find("blue") or charName:find("red") then
+                shouldTrack = true
+            end
+            
+            -- Trackear neutrales en arena (más importante en mapas pequeños)
+            if not minion.isAlly and not minion.isEnemy then
+                local mapBounds = Math:GetMapBounds()
+                if mapBounds.maxDistance <= 3000 then -- En mapas pequeños como arena
+                    shouldTrack = true
+                end
+            end
+            
+            if shouldTrack then
+                UnitTracker:UpdateUnit(minion)
+            end
         end
     end
 end)
@@ -1558,11 +1929,14 @@ end)
 
 -- API Global optimizada para 2D
 _G.DepressivePrediction = {
-    -- Constantes
+    -- Constantes expandidas
     COLLISION_MINION = COLLISION_MINION,
     COLLISION_ALLYHERO = COLLISION_ALLYHERO,
     COLLISION_ENEMYHERO = COLLISION_ENEMYHERO,
     COLLISION_YASUOWALL = COLLISION_YASUOWALL,
+    COLLISION_NEUTRAL = COLLISION_NEUTRAL,
+    COLLISION_ALLYMINION = COLLISION_ALLYMINION,
+    COLLISION_ENEMYMINION = COLLISION_ENEMYMINION,
     
     HITCHANCE_IMPOSSIBLE = HITCHANCE_IMPOSSIBLE,
     HITCHANCE_COLLISION = HITCHANCE_COLLISION,
@@ -1581,6 +1955,30 @@ _G.DepressivePrediction = {
         -- VALIDACIÓN CRÍTICA: Verificar que tenemos un objetivo válido
         if not target or not target.valid or not target.pos or not target.pos.x then
             return nil, nil, -1
+        end
+        -- OVERLOAD: permitir llamada con tabla de configuración como segundo parámetro
+        if type(source) == "table" and (speed == nil and delay == nil and radius == nil) then
+            local cfg = source or {}
+            local stype = cfg.type or cfg.Type or "linear"
+            local src = (cfg.source and (cfg.source.pos or cfg.source)) or _G.myHero or target
+            local pred = PredictionCore:SpellPrediction({
+                Type = (stype == "linear" and SPELLTYPE_LINE) or (stype == "circular" and SPELLTYPE_CIRCLE) or (stype == "cone" and SPELLTYPE_CONE) or SPELLTYPE_LINE,
+                Speed = cfg.speed or math_huge,
+                Range = cfg.range or math_huge,
+                Delay = cfg.delay or 0,
+                Radius = cfg.radius or 0,
+                Collision = cfg.collision or cfg.coll or false,
+                CollisionTypes = cfg.collisionTypes or { COLLISION_MINION },
+                UseBoundingRadius = cfg.useBoundingRadius
+            })
+            local pr = pred:GetPrediction(target, src)
+            return {
+                castPos = pr.CastPosition and { x = pr.CastPosition.x, z = pr.CastPosition.z } or nil,
+                unitPos = pr.UnitPosition,
+                hitChance = pr.HitChance,
+                timeToHit = pr.TimeToHit,
+                collision = pr.CollisionObjects
+            }
         end
         
         -- Convertir source a 2D automáticamente
@@ -1607,14 +2005,15 @@ _G.DepressivePrediction = {
             end
         end
         
-        return unitPos, castPos, time
+    return unitPos, castPos, time
     end,
     
     GetCollision = function(source, castPos, speed, delay, radius, collisionTypes, skipID)
         -- Trabajar en 2D para mejor rendimiento
         local source2D = Math:Get2D(source)
         local castPos2D = Math:Get2D(castPos)
-        return CollisionSystem:GetCollision(source2D, castPos2D, speed, delay, radius, collisionTypes, skipID)
+    if not source2D or not castPos2D then return false, {}, 0 end
+    return CollisionSystem:GetCollision(source2D, castPos2D, speed, delay, radius, collisionTypes, skipID)
     end,
     
     SpellPrediction = function(args)
@@ -1625,7 +2024,8 @@ _G.DepressivePrediction = {
     GetDistance = function(p1, p2)
         local pos1 = Math:Get2D(p1)
         local pos2 = Math:Get2D(p2)
-        return Math:GetDistance(pos1, pos2)
+    if not pos1 or not pos2 then return math_huge end
+    return Math:GetDistance(pos1, pos2)
     end,
     
     IsInRange = function(p1, p2, range)
@@ -1661,6 +2061,111 @@ _G.DepressivePrediction = {
             lastUpdate = unitData.lastUpdate
         }
     end,
+    
+    -- Arena-aware team helpers
+    IsEnemyUnit = function(unit) return IsEnemyUnit(unit) end,
+    IsAllyUnit = function(unit) return IsAllyUnit(unit) end,
+    
+    -- NUEVA FUNCIÓN: Detectar si es un objetivo neutral importante
+    IsNeutralTarget = function(unit)
+    if not unit or not unit.valid then return false end
+    local lc = (unit.charName and unit.charName:lower()) or ""
+    local ln = (unit.name and unit.name:lower()) or ""
+        -- Primero, si no es ally/enemy asumimos neutral
+    local isNeutralFlag = (not unit.isAlly and not unit.isEnemy)
+    -- Prefer exact name detection first
+    local byName, nType, pr = IdentifyNeutralByNameLower(lc)
+        if not byName then
+            byName, nType, pr = IdentifyNeutralByNameLower(ln)
+        end
+
+        if isNeutralFlag or byName then
+            -- Clasificar
+            if nType == "epic" then return true, "epic" end
+            if nType == "buff" then return true, "jungle" end
+            if nType == "camp" then return true, "jungle" end
+            if nType == "scuttle" then return true, "neutral" end
+            -- Arena fallback: cualquier neutral es relevante
+            local mapBounds = Math:GetMapBounds()
+            if mapBounds.maxDistance <= 3000 then
+                return true, "arena_neutral"
+            end
+            return true, "neutral"
+        end
+        return false, "not_neutral"
+    end,
+
+    -- NUEVA FUNCIÓN: Obtener neutrales priorizados en un rango
+    GetNeutralTargets = function(range, source)
+        range = range or 2000
+        source = source or _G.myHero
+    if not source or not source.pos then return {} end
+        local src2D = Math:Get2D(source.pos)
+    if not src2D then return {} end
+        local results = {}
+        -- Recorrer minions para detectar neutrales
+        for i = 1, Game.MinionCount() do
+            local m = Game.Minion(i)
+        if m and m.valid and not m.dead and m.pos and m.pos.x then
+                local ok, t
+                local s, r1, r2 = pcall(_G.DepressivePrediction.IsNeutralTarget, m)
+                if s then ok, t = r1, r2 end
+                if ok then
+                    local p2d = Math:Get2D(m.pos)
+            if p2d and Math:IsInRange(src2D, p2d, range) then
+                        local lc = (m.charName and m.charName:lower()) or ""
+                        local ln = (m.name and m.name:lower()) or ""
+                        local _, nType, pr = IdentifyNeutralByNameLower(lc)
+                        if not nType then _, nType, pr = IdentifyNeutralByNameLower(ln) end
+                        pr = pr or (t == "epic" and 9 or t == "jungle" and 6 or 4)
+                        table_insert(results, { unit = m, type = nType or t, distance = Math:GetDistance(src2D, p2d), priority = pr })
+                    end
+                end
+            end
+        end
+        -- Recorrer objetos para detectar neutrales especiales (dragón, barón, heraldo, etc.)
+        for i = 1, Game.ObjectCount() do
+            local obj = Game.Object(i)
+            if obj and obj.valid and not obj.dead and obj.pos and obj.pos.x then
+                local lc = (obj.charName and obj.charName:lower()) or ""
+                local ln = (obj.name and obj.name:lower()) or ""
+                local byName, nType, pr = IdentifyNeutralByNameLower(lc)
+                if not byName then byName, nType, pr = IdentifyNeutralByNameLower(ln) end
+                if byName then
+                    local p2d = Math:Get2D(obj.pos)
+                    if p2d and Math:IsInRange(src2D, p2d, range) then
+                        pr = pr or (nType == "epic" and 9 or nType == "jungle" and 6 or 4)
+                        table_insert(results, { unit = obj, type = nType, distance = Math:GetDistance(src2D, p2d), priority = pr })
+                    end
+                end
+            end
+        end
+        table.sort(results, function(a,b) return a.priority > b.priority end)
+        return results
+    end,
+    
+    -- NUEVA FUNCIÓN: Obtener información específica del mapa actual
+    GetMapInfo = function()
+        local mapBounds = Math:GetMapBounds()
+        local mapID = Game.mapID or 0
+        local mapType = "unknown"
+        
+        if mapID == 11 then
+            mapType = "summoners_rift"
+        elseif mapID == 12 then
+            mapType = "howling_abyss"
+        elseif mapID >= 30 and mapID <= 35 then
+            mapType = "arena"
+        end
+        
+        return {
+            mapID = mapID,
+            mapType = mapType,
+            bounds = mapBounds,
+            isArena = mapBounds.maxDistance <= 3000,
+            isARAM = mapID == 12
+        }
+    end,
 }
 
-print("DepressivePrediction v" .. Version .. " loaded successfully! (Pure 2D - No 3D calculations)")
+print("DepressivePrediction v" .. Version .. " loaded successfully!")
