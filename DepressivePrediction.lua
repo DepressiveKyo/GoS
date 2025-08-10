@@ -1,4 +1,4 @@
-local Version = 2.20
+local Version = 2.21
 local Name = "DepressivePrediction"
 
 -- Verificar si ya está cargado
@@ -172,6 +172,8 @@ local Menu = {
     DashPrediction = __menu:MenuElement({id = "DashPrediction", name = "Smart Dash Prediction", value = true}),
     ZhonyaDetection = __menu:MenuElement({id = "ZhonyaDetection", name = "Zhonya's/Invuln Detection", value = true}),
     YasuoWallDetection = __menu:MenuElement({id = "YasuoWallDetection", name = "Auto Yasuo Wall Detection", value = true}),
+    -- CENTRADO: limita cuánto adelantamos el tiro respecto a la posición actual del objetivo
+    LeadFactor = __menu:MenuElement({id = "LeadFactor", name = "Lead Factor % (lower = more centered)", value = 35, min = 20, max = 100, step = 5}),
 }
 
 function Menu:GetMaxRange()
@@ -188,6 +190,10 @@ end
 
 function Menu:GetReactionTime()
     return self.ReactionTime:Value() * 0.001
+end
+
+function Menu:GetLeadFactor()
+    return (self.LeadFactor and self.LeadFactor:Value() or 60) * 0.01
 end
 
 -- Clase Math mejorada
@@ -352,6 +358,18 @@ function Math:Extended(vec, dir, range)
     return { x = vec.x + dir.x * range, z = vec.z + dir.z * range }
 end
 
+function Math:ClampTowards(current, predicted, maxDist)
+    if not current or not predicted then return predicted end
+    local dx = (predicted.x or 0) - (current.x or 0)
+    local dz = (predicted.z or 0) - (current.z or 0)
+    local d2 = dx*dx + dz*dz
+    if d2 <= 0 then return predicted end
+    local d = math_sqrt(d2)
+    if d <= maxDist then return predicted end
+    local scale = (maxDist > 0) and (maxDist / d) or 0
+    return { x = current.x + dx * scale, z = current.z + dz * scale }
+end
+
 function Math:Perpendicular(dir)
     if dir == nil then return nil end
     return { x = -dir.z, z = dir.x }
@@ -376,9 +394,9 @@ function Math:AdvancedIntercept(src, targetPos, targetVel, speed, delay)
 
     if not srcPos or not tgtPos0 then return nil end
 
-    -- Validar velocidades para evitar cálculos extremos
+    -- Validar velocidades para evitar cálculos extremos (más permisivo)
     local velMagnitude = math_sqrt(tgtVel.x * tgtVel.x + tgtVel.z * tgtVel.z)
-    if velMagnitude > 1500 then -- más permisivo pero acotado
+    if velMagnitude > 2200 then -- permitir dashes rápidos, filtrar valores absurdos
         return nil
     end
 
@@ -391,9 +409,9 @@ function Math:AdvancedIntercept(src, targetPos, targetVel, speed, delay)
     local tvx = tgtVel.x
     local tvz = tgtVel.z
 
-    -- Validar distancia inicial
+    -- Validar distancia inicial (más permisivo para SR y Arena)
     local initialDistance = math_sqrt(dx * dx + dz * dz)
-    if initialDistance > 4000 then -- más permisivo
+    if initialDistance > 8000 then
         return nil
     end
 
@@ -402,18 +420,29 @@ function Math:AdvancedIntercept(src, targetPos, targetVel, speed, delay)
     local b = 2 * (tvx * dx + tvz * dz)
     local c = dx * dx + dz * dz
 
-    local discriminant = b * b - 4 * a * c
-    if discriminant < 0 then return nil end
-
-    local sqrt_disc = math_sqrt(discriminant)
-    local t1 = (-b - sqrt_disc) / (2 * a)
-    local t2 = (-b + sqrt_disc) / (2 * a)
-
-    -- Elegir la menor raíz positiva
+    -- Resolver de forma robusta, manejando el caso casi lineal cuando |a|≈0
     local tf = math_huge
-    if t1 and t1 >= 0 then tf = math_min(tf, t1) end
-    if t2 and t2 >= 0 then tf = math_min(tf, t2) end
-    if tf == math_huge or tf > 4.0 then return nil end
+    if math_abs(a) < 1e-9 then
+        -- Caso degenerado: b*t + c = 0 -> t = -c / b
+        if math_abs(b) > 1e-9 then
+            local t = -c / b
+            if t and t >= 0 then tf = t end
+        else
+            -- a≈0 y b≈0: si c≈0 ya estamos en el punto, usar t=0
+            if math_abs(c) < 1e-6 then tf = 0 end
+        end
+    else
+        local discriminant = b * b - 4 * a * c
+        if discriminant < 0 then return nil end
+        local sqrt_disc = math_sqrt(discriminant)
+        local t1 = (-b - sqrt_disc) / (2 * a)
+        local t2 = (-b + sqrt_disc) / (2 * a)
+        if t1 and t1 >= 0 then tf = math_min(tf, t1) end
+        if t2 and t2 >= 0 then tf = math_min(tf, t2) end
+    end
+
+    -- Rechazar tiempos imposibles o excesivos
+    if tf == math_huge or tf > 5.0 then return nil end
 
     -- Tiempo total hasta el impacto
     local totalT = dly + tf
@@ -422,14 +451,11 @@ function Math:AdvancedIntercept(src, targetPos, targetVel, speed, delay)
     local interceptX = tgtPos0.x + tgtVel.x * totalT
     local interceptZ = tgtPos0.z + tgtVel.z * totalT
 
-    -- Validaciones razonables
-    local interceptDistance = math_sqrt((interceptX - srcPos.x)^2 + (interceptZ - srcPos.z)^2)
-    local maxReasonableDistance = speed * tf + 600
-    if interceptDistance > maxReasonableDistance then return nil end
-
-    local distanceFromTarget = math_sqrt((interceptX - tgtPos0.x)^2 + (interceptZ - tgtPos0.z)^2)
-    local maxPredictionDistance = velMagnitude * totalT + 300
-    if distanceFromTarget > maxPredictionDistance then return nil end
+    -- Validaciones suaves: evitar falsos negativos por límites demasiado estrictos
+    -- Mantener solo un saneamiento básico de límites del mapa
+    local bounds = self:GetMapBounds()
+    interceptX = math_max(bounds.minX - 200, math_min(bounds.maxX + 200, interceptX))
+    interceptZ = math_max(bounds.minZ - 200, math_min(bounds.maxZ + 200, interceptZ))
 
     return { x = interceptX, z = interceptZ, time = totalT }
 end
@@ -708,6 +734,27 @@ function UnitTracker:GetPredictedPosition(unit, time)
         return currentPos
     end
     
+    -- Si tiene path, proyectar a lo largo de los waypoints primero (más estable que promedio)
+    if unit.pathing and unit.pathing.hasMovePath then
+        local ms = unit.ms or 400
+        local path = self:GetUnitPath(unit)
+        if #path > 1 then
+            local remain = ms * time
+            local pos = { x = currentPos.x, z = currentPos.z }
+            for i = 1, #path - 1 do
+                local a, b = path[i], path[i + 1]
+                local seg = Math:GetDistance(a, b)
+                if remain <= seg then
+                    local dir = Math:Normalized(b, a)
+                    return Math:Extended(a, dir, remain)
+                end
+                remain = remain - seg
+            end
+            -- Si excede el path, retornar el último waypoint
+            return path[#path]
+        end
+    end
+
     -- Usar patrón de movimiento si está disponible (más preciso)
     if unitData.movementPattern and unitData.movementPattern.avgVelocity then
         local vel = unitData.movementPattern.avgVelocity
@@ -742,19 +789,9 @@ function UnitTracker:GetPredictedPosition(unit, time)
         return predictedPos
     end
     
-    -- Predicción básica basada en path o dirección
+    -- Predicción básica basada en dirección
     local ms = unit.ms or 400 -- Velocidad por defecto si no está disponible
-    if ms > 0 and unit.pathing.hasMovePath then
-        local path = self:GetUnitPath(unit)
-        if #path > 1 then
-            local dir = Math:Normalized(path[2], path[1])
-            if dir then
-                local maxDistance = ms * time
-                return Math:Extended(currentPos, dir, maxDistance)
-            end
-        end
-        
-        -- Fallback: usar dirección de la unidad
+    if ms > 0 then
         local unitDir = unit.dir
         if unitDir and unitDir.x then
             local dir2D = Math:Get2D(unitDir)
@@ -1226,6 +1263,13 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
             end
         end
         
+        -- CENTRAR: limitar cuánto adelantamos desde la posición actual
+        do
+            local lead = Menu:GetLeadFactor()
+            local maxLead = (target.ms or 400) * totalDelay * lead
+            predictedPos = Math:ClampTowards(currentPos, predictedPos, maxLead)
+        end
+
         -- ASEGURAR que siempre devolvemos una posición válida
         if not predictedPos or not predictedPos.x then
             predictedPos = currentPos
@@ -1245,7 +1289,11 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
             local timeDistance = speed * result3
             
             if predictionDistance <= timeDistance + 1200 then -- Más tolerancia para Arena
-                return result1, result2, result3
+                -- CENTRAR: clamp respecto a posición actual del objetivo
+                local lead = Menu:GetLeadFactor()
+                local maxLead = (target.ms or 400) * (result3 or 0) * lead
+                local centered = Math:ClampTowards(currentPos, result1, maxLead)
+                return centered, centered, result3
             end
         end
     end
@@ -1259,7 +1307,10 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
         -- Ser más permisivo con validación de predicción básica
         local predictionDistance = Math:GetDistance(sourcePos, result1)
     if predictionDistance <= 8000 then -- Mucho más permisivo
-            return result1, result2, result3
+            local lead = Menu:GetLeadFactor()
+            local maxLead = (target.ms or 400) * (result3 or 0) * lead
+            local centered = Math:ClampTowards(currentPos, result1, maxLead)
+            return centered, centered, result3
         end
     end
     
@@ -1517,12 +1568,11 @@ function PredictionCore:SpellPrediction(args)
             }
         end
 
-        -- Early out por rango para evitar cálculos costosos
-        if self.Range ~= math_huge then
-            local maxRange = self.Range * Menu:GetMaxRange()
+        -- Early out por rango para evitar cálculos costosos (pero permitir clamp luego)
+        local maxRange = self.Range ~= math_huge and (self.Range * Menu:GetMaxRange()) or math_huge
+        if maxRange ~= math_huge then
             local distSqr = Math:GetDistanceSqr(source2D, currentTargetPos)
-            local extra = 50 -- pequeño margen
-            if distSqr > (maxRange + extra) * (maxRange + extra) then
+            if distSqr > (maxRange + 1200) * (maxRange + 1200) then -- hard cap
                 return {
                     HitChance = HITCHANCE_IMPOSSIBLE,
                     CastPosition = nil,
@@ -1533,8 +1583,8 @@ function PredictionCore:SpellPrediction(args)
             end
         end
         
-        -- Obtener predicción básica en 2D
-        unitPosition, castPosition, timeToHit = PredictionCore:GetPrediction(
+    -- Obtener predicción básica en 2D
+    unitPosition, castPosition, timeToHit = PredictionCore:GetPrediction(
             target, source2D, self.Speed, self.Delay, self.Radius, true
         )
         
@@ -1553,27 +1603,43 @@ function PredictionCore:SpellPrediction(args)
             }
         end
         
-        -- VALIDACIÓN: Asegurar que castPosition no sea una coordenada extrema
+        -- VALIDACIÓN: Asegurar que castPosition no sea una coordenada extrema y clamp a rango si aplica
         local distanceFromTarget = Math:GetDistance(currentTargetPos, castPosition)
-        local maxReasonableDistance = (target.ms or 400) * timeToHit + 600 -- Aumentar tolerancia
-        
+        local maxReasonableDistance = (target.ms or 400) * timeToHit + 800
         if distanceFromTarget > maxReasonableDistance then
-            -- Si la predicción está muy lejos del objetivo, usar posición actual PERO SER PERMISIVO
-            local reductionFactor = maxReasonableDistance / distanceFromTarget
+            local reductionFactor = maxReasonableDistance / math_max(1, distanceFromTarget)
             castPosition = {
                 x = currentTargetPos.x + (castPosition.x - currentTargetPos.x) * reductionFactor,
                 z = currentTargetPos.z + (castPosition.z - currentTargetPos.z) * reductionFactor
             }
             unitPosition = castPosition
         end
+
+        -- CENTRAR: aplicar LeadFactor para no sobre-adelantar respecto a la posición actual
+        do
+            local lead = Menu:GetLeadFactor()
+            local maxLead = (target.ms or 400) * (timeToHit or 0) * lead
+            castPosition = Math:ClampTowards(currentTargetPos, castPosition, maxLead)
+            unitPosition = Math:ClampTowards(currentTargetPos, unitPosition, maxLead)
+        end
+        -- Clamp a rango de lanzamiento si corresponde
+        if maxRange ~= math_huge then
+            local distFromMe = Math:GetDistance(source2D, castPosition)
+            if distFromMe > maxRange then
+                local dir = Math:Normalized(castPosition, source2D)
+                if dir then
+                    castPosition = Math:Extended(source2D, dir, maxRange)
+                end
+            end
+        end
         
         -- Calcular hit chance usando posiciones 2D
         hitChance = self:CalculateHitChance(target, castPosition, timeToHit)
         
-        -- Verificar rango en 2D
-        if self.Range ~= math_huge then
+        -- Verificar rango en 2D (después de clamp)
+        if maxRange ~= math_huge then
             local myPos2D = Math:Get2D(myHero.pos)
-            if not Math:IsInRange(myPos2D, castPosition, self.Range * Menu:GetMaxRange()) then
+            if not Math:IsInRange(myPos2D, castPosition, maxRange + (self.UseBoundingRadius and (target.boundingRadius or 0) or 0)) then
                 hitChance = HITCHANCE_IMPOSSIBLE
             end
         end
@@ -1668,7 +1734,7 @@ function PredictionCore:SpellPrediction(args)
             unitPosition2D = unitPosition
         end
         
-        return {
+    return {
             HitChance = hitChance,
             CastPosition = castPosition2D, -- DEVOLVER EN 2D
             UnitPosition = unitPosition2D, -- DEVOLVER EN 2D
@@ -1789,8 +1855,18 @@ function PredictionCore:SpellPrediction(args)
             end
         end
         
-        -- Default para movimiento básico
-        return HITCHANCE_NORMAL
+        -- Modelo simple de sidestep: tiempo para esquivar vs radio efectivo
+        local ms = target.ms or 400
+        local effectiveRadius = (self.Radius or 0) + (self.UseBoundingRadius and (target.boundingRadius or 0) or 0)
+        local sidestepTime = effectiveRadius / ms -- tiempo mínimo para esquivar lateralmente
+        if timeToHit <= sidestepTime * 0.6 then
+            return HITCHANCE_VERYHIGH
+        elseif timeToHit <= sidestepTime * 1.0 then
+            return HITCHANCE_HIGH
+        elseif timeToHit <= sidestepTime * 1.4 then
+            return HITCHANCE_NORMAL
+        end
+        return HITCHANCE_LOW
     end
     
     function spell:GetImmobileDuration(unit)
