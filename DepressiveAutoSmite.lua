@@ -3,7 +3,32 @@ local Heroes = {"All"} -- Works for all heroes
 -- Constants and globals
 local GameMinionCount = Game.MinionCount
 local GameMinion = Game.Minion
+local GameHeroCount = Game.HeroCount
+local GameHero = Game.Hero
 local myHero = myHero
+
+-- Centralized Smite names grouped by kind
+local SmiteNames = {
+    basic = { "SummonerSmite" },                               -- 600 dmg to monsters
+    unleashed = { "S5_SummonerSmiteDuel", "S5_SummonerSmitePlayerGanker" }, -- 900 dmg to monsters, 80-160 to champs
+    primal = { "SummonerSmiteAvatarOffensive", "SummonerSmiteAvatarUtility", "SummonerSmiteAvatarDefensive" } -- 1200 dmg to monsters, 80-160 to champs
+}
+
+local function IsSmiteName(name)
+    if not name or name == "" then return false end
+    for _, n in ipairs(SmiteNames.basic) do if name == n then return true end end
+    for _, n in ipairs(SmiteNames.unleashed) do if name == n then return true end end
+    for _, n in ipairs(SmiteNames.primal) do if name == n then return true end end
+    return false
+end
+
+local function GetSmiteKind(name)
+    if not name then return nil end
+    for _, n in ipairs(SmiteNames.basic) do if name == n then return "basic" end end
+    for _, n in ipairs(SmiteNames.unleashed) do if name == n then return "unleashed" end end
+    for _, n in ipairs(SmiteNames.primal) do if name == n then return "primal" end end
+    return nil
+end
 
 -- Jungle monsters that can be smited (all keys in lowercase)
 local SmiteableMonsters = {
@@ -71,46 +96,24 @@ end
 local function HasSmite()
     local summ1 = myHero:GetSpellData(SUMMONER_1)
     local summ2 = myHero:GetSpellData(SUMMONER_2)
-    
-    local smiteNames = {
-        "SummonerSmite",
-        "S5_SummonerSmiteDuel",
-        "S5_SummonerSmitePlayerGanker",
-        "SummonerSmiteAvatarOffensive",
-        "SummonerSmiteAvatarUtility",
-        "SummonerSmiteAvatarDefensive"
-    }
-    
-    for _, smiteName in pairs(smiteNames) do
-        if summ1.name == smiteName or summ2.name == smiteName then
-            return true
-        end
+    if IsSmiteName(summ1.name) or IsSmiteName(summ2.name) then
+        return true
     end
-    
     return false
 end
 
 local function SmiteReady()
     local summ1 = myHero:GetSpellData(SUMMONER_1)
     local summ2 = myHero:GetSpellData(SUMMONER_2)
-    
-    local smiteNames = {
-        "SummonerSmite",
-        "S5_SummonerSmiteDuel",
-        "S5_SummonerSmitePlayerGanker",
-        "SummonerSmiteAvatarOffensive",
-        "SummonerSmiteAvatarUtility",
-        "SummonerSmiteAvatarDefensive"
-    }
-    
-    for _, smiteName in pairs(smiteNames) do
-        if summ1.name == smiteName then
-            return summ1.currentCd == 0
-        elseif summ2.name == smiteName then
-            return summ2.currentCd == 0
-        end
+    local saveOne = (_G.AutoSmite and _G.AutoSmite.Menu and _G.AutoSmite.Menu.safety and _G.AutoSmite.Menu.safety.saveOne and _G.AutoSmite.Menu.safety.saveOne:Value()) or false
+    local needAmmo = saveOne and 2 or 1
+    if IsSmiteName(summ1.name) then
+        local ammo = summ1.ammo or 0
+        return ammo >= needAmmo and Game.CanUseSpell(SUMMONER_1) == 0
+    elseif IsSmiteName(summ2.name) then
+        local ammo = summ2.ammo or 0
+        return ammo >= needAmmo and Game.CanUseSpell(SUMMONER_2) == 0
     end
-    
     return false
 end
 
@@ -122,26 +125,16 @@ local function CastSmite(target)
     
     local summ1 = myHero:GetSpellData(SUMMONER_1)
     local summ2 = myHero:GetSpellData(SUMMONER_2)
-    
-    local smiteNames = {
-        "SummonerSmite",
-        "S5_SummonerSmiteDuel",
-        "S5_SummonerSmitePlayerGanker",
-        "SummonerSmiteAvatarOffensive",
-        "SummonerSmiteAvatarUtility",
-        "SummonerSmiteAvatarDefensive"
-    }
-    
-    for _, smiteName in pairs(smiteNames) do
-        if summ1.name == smiteName and summ1.currentCd == 0 then
-            Control.CastSpell(HK_SUMMONER_1, target)
-            return true
-        elseif summ2.name == smiteName and summ2.currentCd == 0 then
-            Control.CastSpell(HK_SUMMONER_2, target)
-            return true
-        end
+    local saveOne = (_G.AutoSmite and _G.AutoSmite.Menu and _G.AutoSmite.Menu.safety and _G.AutoSmite.Menu.safety.saveOne and _G.AutoSmite.Menu.safety.saveOne:Value()) or false
+    local needAmmo = saveOne and 2 or 1
+    -- Ensure smite is really ready and equipped with enough charges
+    if IsSmiteName(summ1.name) and (summ1.ammo or 0) >= needAmmo and Game.CanUseSpell(SUMMONER_1) == 0 then
+        Control.CastSpell(HK_SUMMONER_1, target)
+        return true
+    elseif IsSmiteName(summ2.name) and (summ2.ammo or 0) >= needAmmo and Game.CanUseSpell(SUMMONER_2) == 0 then
+        Control.CastSpell(HK_SUMMONER_2, target)
+        return true
     end
-    
     return false
 end
 
@@ -155,6 +148,7 @@ function AutoSmite:__init()
     
     self.lastSmiteTick = GetTickCount()
     self.smiteRange = 500
+    self.smite = { ready = false, slot = nil, name = nil, kind = nil, lastUpdate = 0, ammo = 0, ammoMax = 2, lastAmmo = -1, lastAmmoTick = 0, nextRechargeAt = 0 }
     
     self:LoadMenu()
     
@@ -184,6 +178,7 @@ function AutoSmite:LoadMenu()
     self.Menu.safety:MenuElement({id = "enemyRange", name = "Check enemy range", value = 1000, min = 500, max = 2000, step = 100})
     self.Menu.safety:MenuElement({id = "onlySecure", name = "Only secure (don't steal)", value = false})
     self.Menu.safety:MenuElement({id = "delayMs", name = "Reaction delay (ms)", value = 0, min = 0, max = 500, step = 25})
+    self.Menu.safety:MenuElement({id = "saveOne", name = "Save one Smite charge", value = false})
     
     -- Drawing
     self.Menu:MenuElement({type = MENU, id = "drawing", name = "Drawing"})
@@ -200,25 +195,33 @@ end
 function AutoSmite:Draw()
     if myHero.dead then return end
     
-    if self.Menu.drawing.smiteRange:Value() and SmiteReady() then
+    -- Cache smite state for this frame
+    self:UpdateSmiteState()
+
+    if self.Menu.drawing.smiteRange:Value() and self.smite.ready then
         Draw.Circle(myHero.pos, self.smiteRange, Draw.Color(100, 0xFF, 0xFF, 0x00))
     end
     
-    if self.Menu.drawing.smiteInfo:Value() and SmiteReady() then
-        local smiteDamage = self:GetSmiteDamage()
-        local text = string.format("Smite Damage: %d", smiteDamage)
-        local color = Draw.Color(255, 255, 255, 255)
-        if smiteDamage == 0 then
-            text = "Smite: Not Ready"
+    if self.Menu.drawing.smiteInfo:Value() then
+        local dmg = self:GetSmiteDamageFast(nil)
+        local ammo = self.smite.ammo or 0
+        local text, color
+        if self.smite.ready then
+            text = string.format("Smite: %d/%d | Dmg: %d", ammo, self.smite.ammoMax, dmg)
+            color = Draw.Color(255, 255, 255, 255)
+        else
+            local remain = self:RechargeRemaining()
+            if ammo == 0 then
+                text = string.format("Smite: 0/%d | Next charge in ~%ds", self.smite.ammoMax, remain)
+            else
+                text = string.format("Smite: %d/%d | Waiting GCD", ammo, self.smite.ammoMax)
+            end
             color = Draw.Color(255, 255, 0, 0)
         end
-        Draw.Text(text, 20, myHero.pos2D.x - 100, myHero.pos2D.y - 50, color)
-    elseif self.Menu.drawing.smiteInfo:Value() and not SmiteReady() then
-        local text = "Smite: On Cooldown"
-        Draw.Text(text, 20, myHero.pos2D.x - 100, myHero.pos2D.y - 50, Draw.Color(255, 255, 0, 0))
+        Draw.Text(text, 20, myHero.pos2D.x - 120, myHero.pos2D.y - 50, color)
     end
     
-    if self.Menu.drawing.smiteDamage:Value() and SmiteReady() then
+    if self.Menu.drawing.smiteDamage:Value() and self.smite.ready then
         local heroPos = myHero.pos
         local smiteRange = self.smiteRange
         
@@ -229,7 +232,7 @@ function AutoSmite:Draw()
                 local distance = GetDistance(heroPos, minion.pos)
                 -- Only draw for monsters in smite range to improve performance
                 if distance <= smiteRange then
-                    local smiteDamage = self:GetSmiteDamage(minion)
+                    local smiteDamage = self:GetSmiteDamageFast(minion)
                     local color = Draw.Color(255, 0, 255, 0)
                     if minion.health <= smiteDamage and smiteDamage > 0 then
                         color = Draw.Color(255, 255, 0, 0)
@@ -250,12 +253,12 @@ function AutoSmite:Draw()
         end
     end
 end
-    end
-end
+
 
 function AutoSmite:Tick()
     -- Primary checks: hero status, chat status, and smite availability
-    if myHero.dead or Game.IsChatOpen() or not SmiteReady() then
+    self:UpdateSmiteState()
+    if myHero.dead or Game.IsChatOpen() or not self.smite.ready then
         return
     end
     
@@ -269,16 +272,16 @@ function AutoSmite:Tick()
     local target = self:GetBestSmiteTarget()
     if target then
         -- Double check smite is still ready before calculating damage (optimization)
-        if not SmiteReady() then
+        if not self.smite.ready then
             return
         end
         
-        local smiteDamage = self:GetSmiteDamage(target)
+        local smiteDamage = self:GetSmiteDamageFast(target)
         
         if target.health <= smiteDamage then
             if self:IsSafeToSmite(target) then
                 -- Final check before casting (safety measure)
-                if SmiteReady() and CastSmite(target) then
+                if self.smite.ready and CastSmite(target) then
                     self.lastSmiteTick = GetTickCount()
                 end
             end
@@ -287,6 +290,8 @@ function AutoSmite:Tick()
 end
 
 function AutoSmite:GetBestSmiteTarget()
+    -- No smite? no work.
+    if not self.smite.ready then return nil end
     local bestTarget = nil
     local bestPriority = 0
     local smiteRange = self.smiteRange
@@ -320,7 +325,7 @@ function AutoSmite:GetBestSmiteTarget()
                 
                 -- Only process if in smite range (optimize by checking distance first)
                 if distance <= smiteRange then
-                    local smiteDamage = self:GetSmiteDamage(minion)
+                    local smiteDamage = self:GetSmiteDamageFast(minion)
                     
                     -- Check if can be killed by smite
                     if minion.health <= smiteDamage then
@@ -430,8 +435,8 @@ function AutoSmite:IsSafeToSmite(target)
     -- Check for nearby enemies
     local enemyRange = self.Menu.safety.enemyRange:Value()
     
-    for i = 1, Game.HeroCount() do
-        local hero = Game.Hero(i)
+    for i = 1, GameHeroCount() do
+        local hero = GameHero(i)
         if IsValid(hero) and hero.isEnemy then
             local distance = GetDistance(target.pos, hero.pos)
             if distance <= enemyRange then
@@ -453,19 +458,9 @@ function AutoSmite:GetSmiteSlot()
     local summ1 = myHero:GetSpellData(SUMMONER_1)
     local summ2 = myHero:GetSpellData(SUMMONER_2)
     
-    if summ1.name == "SummonerSmite" or 
-       summ1.name == "S5_SummonerSmiteDuel" or
-       summ1.name == "S5_SummonerSmitePlayerGanker" or
-       summ1.name == "SummonerSmiteAvatarOffensive" or
-       summ1.name == "SummonerSmiteAvatarUtility" or
-       summ1.name == "SummonerSmiteAvatarDefensive" then
+    if IsSmiteName(summ1.name) then
         return SUMMONER_1
-    elseif summ2.name == "SummonerSmite" or 
-           summ2.name == "S5_SummonerSmiteDuel" or
-           summ2.name == "S5_SummonerSmitePlayerGanker" or
-           summ2.name == "SummonerSmiteAvatarOffensive" or
-           summ2.name == "SummonerSmiteAvatarUtility" or
-           summ2.name == "SummonerSmiteAvatarDefensive" then
+    elseif IsSmiteName(summ2.name) then
         return SUMMONER_2
     end
     return nil
@@ -489,27 +484,102 @@ function AutoSmite:GetSmiteDamage(unit)
     if not smiteSpell then return 0 end
     
     if unit and unit.type == Obj_AI_Hero then
-        if smiteSpell.name == "S5_SummonerSmiteDuel" or
-           smiteSpell.name == "S5_SummonerSmitePlayerGanker" then
+        if GetSmiteKind(smiteSpell.name) == "unleashed" then
             return SmiteAdvDamageHero
-        elseif smiteSpell.name == 'SummonerSmiteAvatarOffensive' or
-               smiteSpell.name == 'SummonerSmiteAvatarUtility' or
-               smiteSpell.name == 'SummonerSmiteAvatarDefensive' then
+        elseif GetSmiteKind(smiteSpell.name) == 'primal' then
             return SmiteAdvDamageHero
         end
     else
-        if smiteSpell.name == "SummonerSmite" then
+        local kind = GetSmiteKind(smiteSpell.name)
+        if kind == "basic" then
             return SmiteDamage
-        elseif smiteSpell.name == "S5_SummonerSmiteDuel" or
-               smiteSpell.name == "S5_SummonerSmitePlayerGanker" then
+        elseif kind == "unleashed" then
             return SmiteUnleashedDamage
-        elseif smiteSpell.name == 'SummonerSmiteAvatarOffensive' or
-               smiteSpell.name == 'SummonerSmiteAvatarUtility' or
-               smiteSpell.name == 'SummonerSmiteAvatarDefensive' then
+        elseif kind == 'primal' then
             return SmitePrimalDamage
         end
     end
     
+    return 0
+end
+
+-- Cached smite state update (called every Tick/Draw)
+function AutoSmite:UpdateSmiteState()
+    local now = GetTickCount()
+    -- Update at most once every 50ms
+    if self.smite.lastUpdate and (now - self.smite.lastUpdate) < 50 then return end
+    local s1 = myHero:GetSpellData(SUMMONER_1)
+    local s2 = myHero:GetSpellData(SUMMONER_2)
+    local slot, spell
+    if IsSmiteName(s1.name) then
+        slot = SUMMONER_1
+        spell = s1
+    elseif IsSmiteName(s2.name) then
+        slot = SUMMONER_2
+        spell = s2
+    end
+    if slot and spell then
+        self.smite.slot = slot
+        self.smite.name = spell.name
+        self.smite.kind = GetSmiteKind(spell.name)
+        -- Track ammo (charges) and determine readiness: need >=1 charge (or 2 if saving one) and usable
+        self.smite.ammo = spell.ammo or 0
+        local saveOne = self.Menu and self.Menu.safety and self.Menu.safety.saveOne and self.Menu.safety.saveOne:Value() or false
+        local needAmmo = saveOne and 2 or 1
+        self.smite.ready = (self.smite.ammo >= needAmmo) and (Game.CanUseSpell(slot) == 0)
+        -- Observe ammo changes to approximate recharge timing (90s)
+        if self.smite.lastAmmo == -1 then
+            self.smite.lastAmmo = self.smite.ammo
+            self.smite.lastAmmoTick = now
+        else
+            if self.smite.ammo < self.smite.lastAmmo then
+                -- Smite was used
+                self.smite.lastAmmoTick = now
+                self.smite.nextRechargeAt = now + 90000 -- 90 seconds per charge
+                self.smite.lastAmmo = self.smite.ammo
+            elseif self.smite.ammo > self.smite.lastAmmo then
+                -- A charge recharged
+                self.smite.lastAmmo = self.smite.ammo
+                self.smite.nextRechargeAt = 0
+            end
+        end
+    else
+        self.smite.slot = nil
+        self.smite.name = nil
+        self.smite.kind = nil
+        self.smite.ready = false
+        self.smite.ammo = 0
+    end
+    self.smite.lastUpdate = now
+end
+
+-- Fast damage using cached state
+function AutoSmite:GetSmiteDamageFast(unit)
+    if not self.smite.ready or not self.smite.kind then return 0 end
+    local SmiteDamage = 600
+    local SmiteUnleashedDamage = 900
+    local SmitePrimalDamage = 1200
+    local SmiteAdvDamageHero = 80 + 80 / 17 * (myHero.levelData.lvl - 1)
+
+    if unit and unit.type == Obj_AI_Hero then
+        -- both unleashed and primal deal the same dmg to champs (advanced smite)
+        return SmiteAdvDamageHero
+    else
+        if self.smite.kind == "basic" then return SmiteDamage end
+        if self.smite.kind == "unleashed" then return SmiteUnleashedDamage end
+        if self.smite.kind == "primal" then return SmitePrimalDamage end
+    end
+    return 0
+end
+
+-- Remaining seconds to next charge (approximation using 90s if ammo just dropped)
+function AutoSmite:RechargeRemaining()
+    if self.smite.ammo and self.smite.ammo >= self.smite.ammoMax then return 0 end
+    if self.smite.nextRechargeAt and self.smite.nextRechargeAt > 0 then
+        local now = GetTickCount()
+        local ms = self.smite.nextRechargeAt - now
+        return math.max(0, math.floor(ms / 1000))
+    end
     return 0
 end
 
