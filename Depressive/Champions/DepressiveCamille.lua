@@ -1,4 +1,4 @@
-local scriptVersion = 1.36 -- required first line pattern for loader (scriptVersion = x.xx)
+local scriptVersion = 1.37 -- required first line pattern for loader (scriptVersion = x.xx)
 require "MapPositionGOS"
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
@@ -372,8 +372,8 @@ end
 local WEdgeMovePos, WEdgeHooked, LastWEdgeCalc = nil, false, 0
 
 local function ComputeWEdgePosition(target)
-    if not target or not target.pos then return nil end
-    local desired = Menu and Menu.whelper and Menu.whelper.desired:Value() or 585
+    if not target or not target.pos or not myHero or not myHero.pos then return nil end
+    local desired = (Menu and Menu.whelper and Menu.whelper.desired:Value()) or 585
     local hx, hz = myHero.pos.x, myHero.pos.z
     local tx, tz = target.pos.x, target.pos.z
     local dx, dz = hx - tx, hz - tz
@@ -381,7 +381,7 @@ local function ComputeWEdgePosition(target)
     if dist < 1 then return nil end
     local nx, nz = dx / dist, dz / dist
     local px, pz = tx + nx * desired, tz + nz * desired
-    local pos = { x = px, y = myHero.pos.y, z = pz }
+    local pos = Vector(px, myHero.pos.y, pz)
     if MapPosition and MapPosition.inWall and MapPosition:inWall(pos) then return nil end
     return pos, dist
 end
@@ -402,12 +402,13 @@ local function UpdateWEdgeHelper()
         return
     end
     -- Clamp movement distance
-    local moveDist = math.sqrt((pos.x - myHero.pos.x)^2 + (pos.z - myHero.pos.z)^2)
+    local moveDist = myHero.pos:DistanceTo(pos)
     if moveDist > Menu.whelper.maxAdjust:Value() then
         -- shorten towards target pos
         local ratio = Menu.whelper.maxAdjust:Value() / moveDist
-        pos.x = myHero.pos.x + (pos.x - myHero.pos.x) * ratio
-        pos.z = myHero.pos.z + (pos.z - myHero.pos.z) * ratio
+        local nx = myHero.pos.x + (pos.x - myHero.pos.x) * ratio
+        local nz = myHero.pos.z + (pos.z - myHero.pos.z) * ratio
+        pos = Vector(nx, myHero.pos.y, nz)
     end
     WEdgeMovePos = pos
     LastWEdgeCalc = Game.Timer()
@@ -419,8 +420,7 @@ local function OnPreMovementWEdge(args)
     if not Ready(_W) then return end
     if not Menu or not Menu.whelper or not Menu.whelper.enable:Value() then return end
     if Menu.whelper.onlyCombo:Value() and GetMode() ~= "Combo" then return end
-    local dx, dz = WEdgeMovePos.x - myHero.pos.x, WEdgeMovePos.z - myHero.pos.z
-    local dist = math.sqrt(dx*dx + dz*dz)
+    local dist = myHero.pos:DistanceTo(WEdgeMovePos)
     if dist < 35 then return end
     if args then args.Target = WEdgeMovePos end
 end
@@ -551,11 +551,10 @@ local function OnDraw()
     if Menu.drawing.drawR:Value() and Ready(_R) then Draw.Circle(myHero.pos, 475, 1, Draw.Color(225, 225, 0, 10)) end
     if Menu.drawing.drawE:Value() and Ready(_E) then Draw.Circle(myHero.pos, 900, 1, Draw.Color(225, 225, 125, 10)) end
     if Menu.drawing.drawW:Value() and Ready(_W) then Draw.Circle(myHero.pos, 650, 1, Draw.Color(225, 225, 125, 10)) end
-    if Menu and Menu.whelper and Menu.whelper.draw:Value() and WEdgeMovePos then
+    if Menu and Menu.whelper and Menu.whelper.draw:Value() and WEdgeMovePos and WEdgeMovePos.x then
         Draw.Circle(WEdgeMovePos, 40, 1, Draw.Color(200, 50, 200, 255))
         local from2d = myHero.pos.To2D and myHero.pos:To2D() or nil
-        local toVec = Vector(WEdgeMovePos.x, myHero.pos.y, WEdgeMovePos.z)
-        local to2d = toVec.To2D and toVec:To2D() or nil
+        local to2d = WEdgeMovePos.To2D and WEdgeMovePos:To2D() or nil
         if from2d and to2d and from2d.onScreen and to2d.onScreen then
             Draw.Line(from2d.x, from2d.y, to2d.x, to2d.y, 1, Draw.Color(150, 50, 200, 255))
         end
@@ -580,7 +579,7 @@ local function OnTick()
     -- Update and hook W edge helper
     TryHookWEdge()
     UpdateWEdgeHelper()
-    if WEdgeMovePos and not WEdgeHooked then
+    if WEdgeMovePos and WEdgeMovePos.x and not WEdgeHooked then
         -- fallback manual move
         if Game.Timer() - LastWEdgeCalc > 0.06 then
             Control.Move(WEdgeMovePos)
