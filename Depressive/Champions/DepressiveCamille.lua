@@ -1,4 +1,4 @@
-local scriptVersion = 1.32 -- required first line pattern for loader (scriptVersion = x.xx)
+local scriptVersion = 1.33 -- required first line pattern for loader (scriptVersion = x.xx)
 require "MapPositionGOS"
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
@@ -21,6 +21,7 @@ if _G.DepressiveCamilleLoaded and _G.DepressiveCamilleLoaded >= scriptVersion th
     return _G.DepressiveCamilleModule or {}
 end
 print(string.format("[DepressiveCamille] Initializing v%.2f (prev %.2f)", scriptVersion, _G.DepressiveCamilleLoaded or 0))
+print("[DepressiveCamille][Debug] scriptVersion variable now=", scriptVersion)
 _G.DepressiveCamilleLoaded = scriptVersion
 
 local MyHeroNotReady = Lib.MyHeroNotReady
