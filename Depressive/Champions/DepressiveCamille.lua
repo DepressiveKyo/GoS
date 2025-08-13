@@ -1,4 +1,4 @@
-local scriptVersion = 1.31 -- required first line pattern for loader (scriptVersion = x.xx)
+local scriptVersion = 1.32 -- required first line pattern for loader (scriptVersion = x.xx)
 require "MapPositionGOS"
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
@@ -90,59 +90,7 @@ local function IsUnderEnemyTurret(pos) return Lib.UnderEnemyTurret(pos) end
 
 local Menu
 
-local Movement = {
-    pausedUntil = 0,
-    forcePos = nil,
-    forceUntil = 0,
-    lastReason = nil,
-    lastSet = nil
-}
-
-function Movement:Pause(ms, reason)
-    if not Menu or (Menu.movement and not Menu.movement.enabled:Value()) then return end
-    local t = Game.Timer() + (ms or 0)/1000
-    if t > self.pausedUntil then
-        self.pausedUntil = t
-        self.lastReason = reason or "generic"
-    end
-end
-
-function Movement:Force(pos, ms)
-    if not pos then return end
-    self.forcePos = Vector(pos)
-    self.forceUntil = Game.Timer() + ((ms or 250)/1000)
-end
-
-function Movement:IsPaused()
-    return Game.Timer() < self.pausedUntil
-end
-
-function Movement:ShouldForce()
-    return Game.Timer() < self.forceUntil and self.forcePos ~= nil
-end
-
-function Movement:Update()
-    -- Auto-pause during E dash phases regardless of manual menu if enabled
-    local eName = myHero:GetSpellData(_E).name
-    local isDash = myHero.pathing.isDashing
-    local inEDash2 = (eName == "CamilleEDash2") or isDash
-    local inEHook = (eName == "CamilleEDash1" and HasBuff(myHero, "camilleedashtoggle"))
-    local pauseByState = inEDash2 or inEHook
-    if pauseByState and Menu and Menu.movement and Menu.movement.enabled:Value() then
-        self.pausedUntil = math.max(self.pausedUntil, Game.Timer() + (Menu.movement.holdEHook:Value()/1000))
-        self.lastReason = inEDash2 and "E dash" or "E hook"
-    end
-    local shouldDisable = self:IsPaused()
-    if shouldDisable ~= self.lastSet then
-        SetMovement(not shouldDisable)
-        self.lastSet = shouldDisable
-    end
-    if self:ShouldForce() then
-        Control.Move(self.forcePos)
-    end
-end
-
------------------------------------------------------------------------------
+-- (Removed old generic Movement helper; W Edge Helper handles positioning)
 
  
 
@@ -203,6 +151,8 @@ local function LoadMenu()
     Menu:MenuElement({ type = MENU, id = "pred", name = "Prediction" })
     Menu.pred:MenuElement({ id = "hitchanceW", name = "Hitchance W", value = 1, drop = { "Normal", "High", "Immobile" } })
     Menu.pred:MenuElement({ id = "hitchanceE", name = "Hitchance E2", value = 1, drop = { "Normal", "High", "Immobile" } })
+    Menu.pred:MenuElement({ id = "wEdgeMin", name = "W Edge Min Dist", value = 560, min = 500, max = 610, step = 5 })
+    Menu.pred:MenuElement({ id = "wBackstep", name = "Intento backstep si muy cerca (< edge)", value = false })
 
     Menu:MenuElement({ type = MENU, id = "wall", name = "Wall System" })
     Menu.wall:MenuElement({ id = "enabled", name = "Enable Wall E", value = true })
@@ -217,12 +167,14 @@ local function LoadMenu()
     Menu.drawing:MenuElement({ id = "drawE", name = "Draw E Range", value = false })
     Menu.drawing:MenuElement({ id = "drawR", name = "Draw R Range", value = false })
 
-    Menu:MenuElement({ type = MENU, id = "movement", name = "Movement Helper" })
-    Menu.movement:MenuElement({ id = "enabled", name = "Enable Advanced Movement", value = true })
-    Menu.movement:MenuElement({ id = "holdW", name = "Hold after W cast (ms)", value = 150, min = 0, max = 400, step = 10 })
-    Menu.movement:MenuElement({ id = "holdEHook", name = "Extra hold during E phases (ms)", value = 200, min = 0, max = 600, step = 25 })
-    Menu.movement:MenuElement({ id = "holdQ2", name = "Hold a moment after Q2 (ms)", value = 80, min = 0, max = 250, step = 5 })
-    Menu.movement:MenuElement({ id = "forceGapclose", name = "Force move to predicted W edge", value = false })
+    -- W Edge Positioning Helper (like Lillia Q helper style)
+    Menu:MenuElement({ type = MENU, id = "whelper", name = "W Edge Helper" })
+    Menu.whelper:MenuElement({ id = "enable", name = "Enable W Edge Helper", value = true })
+    Menu.whelper:MenuElement({ id = "onlyCombo", name = "Only in Combo Mode", value = true })
+    Menu.whelper:MenuElement({ id = "desired", name = "Desired Edge Dist", value = 585, min = 540, max = 610, step = 5 })
+    Menu.whelper:MenuElement({ id = "tolerance", name = "Distance Tolerance", value = 25, min = 5, max = 60, step = 5 })
+    Menu.whelper:MenuElement({ id = "maxAdjust", name = "Max Adjust Move Dist", value = 400, min = 150, max = 900, step = 25 })
+    Menu.whelper:MenuElement({ id = "draw", name = "Draw Helper Position", value = true })
 
     
 end
@@ -271,9 +223,7 @@ local function PostAttack_Q(target)
         if not HasBuff(myHero, "camilleqprimingstart") then
             Control.CastSpell(HK_Q)
             lastPostAttackTime = Game.Timer()
-            if Menu and Menu.movement and Menu.movement.enabled:Value() then
-                Movement:Pause(Menu.movement.holdQ2:Value(), "Q2 cast")
-            end
+            -- removed movement pause
         end
         return
     end
@@ -397,17 +347,95 @@ local function CastWPrediction(target)
     })
     local res = spell:GetPrediction(target, myHero.pos)
     if res and res.CastPosition and res.HitChance and res.HitChance >= DPRequiredHC(Menu.pred.hitchanceW:Value()) then
-        local cpos = Vector(res.CastPosition.x, myHero.pos.y, res.CastPosition.z)
-        Control.CastSpell(HK_W, cpos)
-        if Menu and Menu.movement and Menu.movement.enabled:Value() then
-            Movement:Pause(Menu.movement.holdW:Value(), "W cast")
-            if Menu.movement.forceGapclose:Value() then
-                local dir = (cpos - myHero.pos):Normalized()
-                Movement:Force(myHero.pos + dir * 150, Menu.movement.holdW:Value())
+        local predPos = Vector(res.CastPosition.x, myHero.pos.y, res.CastPosition.z)
+        local dist = myHero.pos:DistanceTo(predPos)
+        local edgeMin = Menu.pred.wEdgeMin:Value()
+        -- If target is closer than edge, optional backstep
+        if dist < edgeMin then
+            if Menu.pred.wBackstep:Value() and not myHero.pathing.isDashing and not IsCastingE then
+                local dir = (predPos - myHero.pos):Normalized()
+                local backPos = myHero.pos - dir * math.min(edgeMin - dist + 40, 150)
+                Control.Move(backPos)
             end
+            return
         end
+        if dist > 610 then return end
+        Control.CastSpell(HK_W, predPos)
+        -- no generic movement pause
     end
 end
+
+-- ===================== W EDGE HELPER (Movement Positioner) =====================
+local WEdgeMovePos, WEdgeHooked, LastWEdgeCalc = nil, false, 0
+
+local function ComputeWEdgePosition(target)
+    if not target or not target.pos then return nil end
+    local desired = Menu and Menu.whelper and Menu.whelper.desired:Value() or 585
+    local hx, hz = myHero.pos.x, myHero.pos.z
+    local tx, tz = target.pos.x, target.pos.z
+    local dx, dz = hx - tx, hz - tz
+    local dist = math.sqrt(dx*dx + dz*dz)
+    if dist < 1 then return nil end
+    local nx, nz = dx / dist, dz / dist
+    local px, pz = tx + nx * desired, tz + nz * desired
+    local pos = { x = px, y = myHero.pos.y, z = pz }
+    if MapPosition and MapPosition.inWall and MapPosition:inWall(pos) then return nil end
+    return pos, dist
+end
+
+local function UpdateWEdgeHelper()
+    if not Menu or not Menu.whelper or not Menu.whelper.enable:Value() then WEdgeMovePos = nil; return end
+    if Menu.whelper.onlyCombo:Value() and GetMode() ~= "Combo" then WEdgeMovePos = nil; return end
+    if not Ready(_W) then WEdgeMovePos = nil; return end
+    local target = GetTarget(1200)
+    if not target or not IsValid(target) then WEdgeMovePos = nil; return end
+    local pos, dist = ComputeWEdgePosition(target)
+    if not pos then WEdgeMovePos = nil; return end
+    local desired = Menu.whelper.desired:Value()
+    local tol = Menu.whelper.tolerance:Value()
+    -- Only reposition if we're outside tolerance
+    if math.abs(dist - desired) <= tol then
+        WEdgeMovePos = nil
+        return
+    end
+    -- Clamp movement distance
+    local moveDist = math.sqrt((pos.x - myHero.pos.x)^2 + (pos.z - myHero.pos.z)^2)
+    if moveDist > Menu.whelper.maxAdjust:Value() then
+        -- shorten towards target pos
+        local ratio = Menu.whelper.maxAdjust:Value() / moveDist
+        pos.x = myHero.pos.x + (pos.x - myHero.pos.x) * ratio
+        pos.z = myHero.pos.z + (pos.z - myHero.pos.z) * ratio
+    end
+    WEdgeMovePos = pos
+    LastWEdgeCalc = Game.Timer()
+end
+
+local function OnPreMovementWEdge(args)
+    if not WEdgeMovePos then return end
+    if myHero.pathing.isDashing or IsCastingE then return end
+    if not Ready(_W) then return end
+    if not Menu or not Menu.whelper or not Menu.whelper.enable:Value() then return end
+    if Menu.whelper.onlyCombo:Value() and GetMode() ~= "Combo" then return end
+    local dx, dz = WEdgeMovePos.x - myHero.pos.x, WEdgeMovePos.z - myHero.pos.z
+    local dist = math.sqrt(dx*dx + dz*dz)
+    if dist < 35 then return end
+    if args then args.Target = WEdgeMovePos end
+end
+
+local function TryHookWEdge()
+    if WEdgeHooked then return end
+    if _G.GOS and _G.GOS.Orbwalker and _G.GOS.Orbwalker.OnPreMovement then
+        _G.GOS.Orbwalker:OnPreMovement(OnPreMovementWEdge); WEdgeHooked = true; return
+    end
+    if _G.SDK and _G.SDK.Orbwalker and _G.SDK.Orbwalker.OnPreMovement then
+        _G.SDK.Orbwalker:OnPreMovement(OnPreMovementWEdge); WEdgeHooked = true; return
+    end
+    if _G.Orbwalker and _G.Orbwalker.OnPreMovement then
+        _G.Orbwalker:OnPreMovement(OnPreMovementWEdge); WEdgeHooked = true; return
+    end
+end
+
+-- =============================================================================
 
 local function Combo()
     local target = GetTarget(2000)
@@ -520,6 +548,15 @@ local function OnDraw()
     if Menu.drawing.drawR:Value() and Ready(_R) then Draw.Circle(myHero.pos, 475, 1, Draw.Color(225, 225, 0, 10)) end
     if Menu.drawing.drawE:Value() and Ready(_E) then Draw.Circle(myHero.pos, 900, 1, Draw.Color(225, 225, 125, 10)) end
     if Menu.drawing.drawW:Value() and Ready(_W) then Draw.Circle(myHero.pos, 650, 1, Draw.Color(225, 225, 125, 10)) end
+    if Menu and Menu.whelper and Menu.whelper.draw:Value() and WEdgeMovePos then
+        Draw.Circle(WEdgeMovePos, 40, 1, Draw.Color(200, 50, 200, 255))
+        local from2d = myHero.pos.To2D and myHero.pos:To2D() or nil
+        local toVec = Vector(WEdgeMovePos.x, myHero.pos.y, WEdgeMovePos.z)
+        local to2d = toVec.To2D and toVec:To2D() or nil
+        if from2d and to2d and from2d.onScreen and to2d.onScreen then
+            Draw.Line(from2d.x, from2d.y, to2d.x, to2d.y, 1, Draw.Color(150, 50, 200, 255))
+        end
+    end
 end
 
 local function OnTick()
@@ -530,8 +567,23 @@ local function OnTick()
         IsCastingE = false
     end
 
-    -- Centralized movement update
-    Movement:Update()
+    -- Simple movement disable while in active dash of second E to avoid orb conflicts
+    if myHero:GetSpellData(_E).name == "CamilleEDash2" or myHero.pathing.isDashing then
+        SetMovement(false)
+    else
+        SetMovement(true)
+    end
+
+    -- Update and hook W edge helper
+    TryHookWEdge()
+    UpdateWEdgeHelper()
+    if WEdgeMovePos and not WEdgeHooked then
+        -- fallback manual move
+        if Game.Timer() - LastWEdgeCalc > 0.06 then
+            Control.Move(WEdgeMovePos)
+            LastWEdgeCalc = Game.Timer()
+        end
+    end
 
     PostDashW()
 
