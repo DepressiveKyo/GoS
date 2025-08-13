@@ -106,7 +106,7 @@ local function DPReady()
     local ready = (DP ~= nil and DP.SpellPrediction ~= nil)
     if not ready and not _G.__DepressiveCamillePredWarned then
         _G.__DepressiveCamillePredWarned = true
-        print("[DepressiveCamille][Warn] Prediction lib (DepressivePrediction) no disponible; habilidades W/E2 usarán lógica reducida.")
+    print("[DepressiveCamille][Warn] Prediction lib (DepressivePrediction) unavailable; W/E2 will use reduced logic.")
     end
     return ready
 end
@@ -632,12 +632,29 @@ end
 
 local function LoadScript()
     LoadMenu()
+    -- Force immediate cache build for enemies/minions
+    if Lib and Lib.RefreshCaches then Lib.RefreshCaches(true) end
+    -- Schedule a delayed second forced refresh to catch late hero objects
+    local delayedRefreshDone = false
+    Callback.Add("Tick", function()
+        if not delayedRefreshDone and Game.Timer() > 0.5 then
+            if Lib and Lib.RefreshCaches then Lib.RefreshCaches(true) end
+            delayedRefreshDone = true
+            local eCount = 0
+            if Lib and Lib.ForEachEnemy then Lib.ForEachEnemy(function() eCount = eCount + 1 end) end
+            print(string.format("[DepressiveCamille][Init] Enemies detected after delayed refresh: %d", eCount))
+        end
+    end)
     Callback.Add("Tick", OnTick)
     Callback.Add("Draw", OnDraw)
     InitializeWRAIOCallbacks()
     if DPReady() then
         print("[DepressiveCamille] Prediction listo")
     end
+    -- Debug: print initial enemy count
+    local initEnemies = 0
+    if Lib and Lib.ForEachEnemy then Lib.ForEachEnemy(function() initEnemies = initEnemies + 1 end) end
+    print(string.format("[DepressiveCamille][Init] Immediate enemies detected: %d", initEnemies))
 end
 
 LoadScript()
