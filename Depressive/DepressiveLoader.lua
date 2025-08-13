@@ -1,11 +1,11 @@
-local LOADER_VERSION = 1.01
-local DEPRESSIVE_PATH = COMMON_PATH .. "Depressive/"
+local LOADER_VERSION = 1.02
+local DEPRESSIVE_PATH = COMMON_PATH .. "Depressive/" -- local storage path (unchanged locally)
 local CHAMPIONS_PATH = DEPRESSIVE_PATH .. "Champions/"
 local LOADER_FILE = "DepressiveLoader.lua"
 local LOADER_VERSION_FILE = "DepressiveLoader.version"
 
--- Your real GitHub raw base
-local GITHUB_BASE = "https://raw.githubusercontent.com/DepressiveKyo/GoS/main/Common/Depressive/"
+-- Remote raw base now only uses the single 'Depressive' folder at repo root
+local GITHUB_BASE = "https://raw.githubusercontent.com/DepressiveKyo/GoS/main/Depressive/"
 local GITHUB_CHAMPIONS_BASE = GITHUB_BASE .. "Champions/"
 
 -- Supported champions (file names inside Champions/)
@@ -93,7 +93,7 @@ if _G.MenuElement then
     local list = {}
     for k,v in pairs(Supported) do list[#list+1] = v.alias or k end
     table.sort(list)
-    rootMenu.Champion:MenuElement({id = "Supported", name = "Soportados ("..#list..")", drop = {table.concat(list, ", ")}})
+    rootMenu.Champion:MenuElement({id = "Supported", name = "Supported ("..#list..")", drop = {table.concat(list, ", ")}})
     rootMenu:MenuElement({id = "Settings", name = "Settings", type = MENU})
     rootMenu.Settings:MenuElement({id = "AutoUpdateChamp", name = "Auto-update Champion", value = true})
     rootMenu.Settings:MenuElement({id = "EnableChampion", name = "Enable Champion Logic", value = true})
@@ -117,17 +117,17 @@ if info then
             rootMenu.Info.Status:Remove()
             rootMenu.Info:MenuElement({id = "Status", name = "Status: Loaded "..champName})
         end
-        print("[DepressiveLoader] Cargado "..champName)
+    print("[DepressiveLoader] Loaded "..champName)
     else
         if rootMenu then
             rootMenu.Info.Status:Remove()
             rootMenu.Info:MenuElement({id = "Status", name = "Status: Load Error"})
         end
-        print("[DepressiveLoader] Error loading "..champName..": "..tostring(modOrErr))
+    print("[DepressiveLoader] Error loading "..champName..": "..tostring(modOrErr))
     end
 else
     print("[DepressiveLoader] Unsupported champion: "..champName)
-    if rootMenu then rootMenu.Info:MenuElement({id = "Status", name = "Estado: No soportado"}) end
+    if rootMenu then rootMenu.Info:MenuElement({id = "Status", name = "Status: Unsupported"}) end
 end
 
 if module then
