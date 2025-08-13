@@ -1,4 +1,4 @@
-local LOADER_VERSION = 1.02
+local LOADER_VERSION = 1.03
 local DEPRESSIVE_PATH = COMMON_PATH .. "Depressive/" -- local storage path (unchanged locally)
 local CHAMPIONS_PATH = DEPRESSIVE_PATH .. "Champions/"
 local LOADER_FILE = "DepressiveLoader.lua"
@@ -32,14 +32,26 @@ local function ReadFirstLine(path)
     local f = io.open(path, "r") if not f then return nil end local l = f:read("*l") f:close() return l
 end
 
+local function EnsureDir(path)
+    local testFile = path .. ".__dircheck"
+    local f = io.open(testFile, "w")
+    if not f then
+        if os.execute then os.execute('mkdir "' .. path .. '"') end
+        f = io.open(testFile, "w")
+    end
+    if f then f:close() os.remove(testFile) end
+end
+
 local function DownloadFile(folder, fileName, base)
     base = base or GITHUB_BASE
+    EnsureDir(folder)
     local start = os.clock()
     DownloadFileAsync(base .. fileName, folder .. fileName, function() end)
     repeat until os.clock() - start > 3 or FileExists(folder .. fileName)
 end
 
 local function AutoUpdateLoader()
+    EnsureDir(DEPRESSIVE_PATH)
     DownloadFile(DEPRESSIVE_PATH, LOADER_VERSION_FILE, GITHUB_BASE)
     local remote = tonumber(ReadFirstLine(DEPRESSIVE_PATH .. LOADER_VERSION_FILE)) or LOADER_VERSION
     if remote > LOADER_VERSION then
@@ -56,6 +68,7 @@ local function EnsureChampionUpdated(info)
     if not info or not info.file then return end
     local base = info.file:gsub("%.lua$", "")
     local verFile = base .. ".version"
+    EnsureDir(CHAMPIONS_PATH)
     DownloadFile(CHAMPIONS_PATH, verFile, GITHUB_CHAMPIONS_BASE)
     local remoteVer = tonumber(ReadFirstLine(CHAMPIONS_PATH .. verFile))
     if not remoteVer then return end
