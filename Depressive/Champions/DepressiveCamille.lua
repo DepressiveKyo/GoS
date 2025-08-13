@@ -16,10 +16,12 @@ if not _G.DepressiveCamilleModule then
     _G.DepressiveCamilleModule = DepressiveCamilleModule
 end
 
-if _G.DepressiveCamilleLoaded then
-    return
+if _G.DepressiveCamilleLoaded and _G.DepressiveCamilleLoaded >= scriptVersion then
+    -- Already loaded same or newer version, skip re-init
+    return _G.DepressiveCamilleModule or {}
 end
-_G.DepressiveCamilleLoaded = true
+print(string.format("[DepressiveCamille] Initializing v%.2f (prev %.2f)", scriptVersion, _G.DepressiveCamilleLoaded or 0))
+_G.DepressiveCamilleLoaded = scriptVersion
 
 local MyHeroNotReady = Lib.MyHeroNotReady
 
