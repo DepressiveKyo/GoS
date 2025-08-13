@@ -1,5 +1,12 @@
-local scriptVersion = 1.42 -- required first line pattern for loader (scriptVersion = x.xx)
-require "MapPositionGOS"
+local scriptVersion = 1.45 -- required first line pattern for loader (scriptVersion = x.xx)
+-- Lazy MapPositionGOS retrieval (loaded only when needed)
+local MapPosition = _G.MapPosition or _G.MapPositionGOS
+local function EnsureMapPosition()
+    if not (MapPosition and MapPosition.inWall) then
+        if _G.DepressiveLoadLibrary then _G.DepressiveLoadLibrary("MapPositionGOS") end
+        MapPosition = _G.MapPosition or _G.MapPositionGOS or { inWall = function() return false end }
+    end
+end
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
 
@@ -53,6 +60,7 @@ end
 local Objects = { WALL = 1 }
 
 local function FindBestWPos(mode, towardsPos, searchMin, searchMax, stepDist, angleStep)
+    EnsureMapPosition()
     local startPos, mPos, height = Vector(myHero.pos), Vector(towardsPos or mousePos), myHero.pos.y
     searchMin = searchMin or 100
     searchMax = searchMax or 2000
@@ -71,6 +79,7 @@ local function FindBestWPos(mode, towardsPos, searchMin, searchMax, stepDist, an
 end
 
 local function FindNearestWallNear(centerPos, maxRadius, radialStep, angleStep)
+    EnsureMapPosition()
     if not centerPos then return nil end
     local y = myHero.pos.y
     radialStep = radialStep or 40
@@ -386,6 +395,7 @@ end
 local WEdgeMovePos, WEdgeHooked, LastWEdgeCalc = nil, false, 0
 
 local function ComputeWEdgePosition(target)
+    EnsureMapPosition()
     if not target or not target.pos or not myHero or not myHero.pos then return nil end
     local desired = (Menu and Menu.whelper and Menu.whelper.desired:Value()) or 585
     local hx, hz = myHero.pos.x, myHero.pos.z
