@@ -1,4 +1,4 @@
-local LOADER_VERSION = 1.11
+local LOADER_VERSION = 1.12
 local DEPRESSIVE_PATH = COMMON_PATH .. "Depressive/" -- local storage path (unchanged locally)
 local CHAMPIONS_PATH = DEPRESSIVE_PATH .. "Champions/"
 local UTILITY_PATH = DEPRESSIVE_PATH .. "Utility/"
@@ -73,79 +73,25 @@ end
 
 -- List of core utilities to keep updated and preload
 -- Core (always managed) utilities list. Others in Utility folder will be detected dynamically.
+-- Hardcoded utilities list (no dynamic discovery)
 local CORE_UTILITIES = {
-    { file = "DepressiveLib.lua",          req = "DepressiveLib",          folder = "",        auto = true  },
-    { file = "DepressivePrediction.lua",   req = "DepressivePrediction",   folder = "Utility",  auto = true  },
+    { file = "DepressiveLib.lua",        req = "DepressiveLib",        folder = "",         auto = true  },
+    { file = "DepressivePrediction.lua", req = "DepressivePrediction", folder = "Utility",   auto = true  },
+    { file = "DepressiveActivatorG.lua", req = "DepressiveActivatorG", folder = "Utility",   auto = false },
+    { file = "DepressiveAutoSmite.lua",  req = "DepressiveAutoSmite",  folder = "Utility",   auto = false },
+    { file = "DepressiveCamp.lua",       req = "DepressiveCamp",       folder = "Utility",   auto = false },
 }
 
--- Remote manifest for utilities (must exist in GitHub Utility/ folder). Each line: <LuaFileName.lua>
-local REMOTE_UTILITY_MANIFEST = "Utilities.manifest"
-
-local function LoadRemoteUtilityList()
-    -- Download manifest file
-    DownloadFile(UTILITY_PATH, REMOTE_UTILITY_MANIFEST, GITHUB_BASE .. "Utility/")
-    local path = UTILITY_PATH .. REMOTE_UTILITY_MANIFEST
-    local f = io.open(path, "r")
-    if not f then
-        return false -- manifest not present
-    end
-    -- Build lookup to avoid duplicates
-    local existing = {}
-    for _, u in ipairs(CORE_UTILITIES) do existing[u.file] = true end
-    local added = 0
-    for line in f:lines() do
-        local name = line:gsub("%s+", "")
-        if name ~= "" and name:sub(1,1) ~= "#" and name:match("%.lua$") then
-            if not existing[name] then
-                table.insert(CORE_UTILITIES, { file = name, req = name:gsub("%.lua$",""), folder = "Utility", auto = false })
-                existing[name] = true
-                added = added + 1
-            end
-        end
-    end
-    f:close()
-    return added > 0
-end
-
--- Populate additional utilities from manifest (if present remotely)
-local manifestLoaded = LoadRemoteUtilityList()
-
--- Static fallback list (edit this manually if you don't use manifest)
-local STATIC_FALLBACK_UTILITIES = {
-    "DepressiveActivatorG.lua",
-    "DepressiveAutoSmite.lua",
-    "DepressiveCamp.lua",
-}
-
-if not manifestLoaded then
-    local existing = {}
-    for _, u in ipairs(CORE_UTILITIES) do existing[u.file] = true end
-    for _, name in ipairs(STATIC_FALLBACK_UTILITIES) do
-        if not existing[name] then
-            table.insert(CORE_UTILITIES, { file = name, req = name:gsub("%.lua$",""), folder = "Utility", auto = false })
-            existing[name] = true
-        end
-    end
-    print("[DepressiveLoader] Utilities.manifest no encontrado. Usando lista fallback.")
-end
-
--- Rebuild utility menu dynamically (can be invoked for refresh)
+-- Simple static utility menu
 local UtilityMenu = nil
-local function BuildUtilityMenu()
-    if not _G.MenuElement then return end
-    if UtilityMenu == nil then
-        UtilityMenu = MenuElement({ type = MENU, id = "DepressiveUtilityRoot", name = "Depressive Utility" })
-        UtilityMenu:MenuElement({ id = "info", name = "Toggle utilities to load", value = true })
-        UtilityMenu:MenuElement({ id = "refresh", name = "Refresh Manifest (click)", value = false })
-    end
-    -- Add toggles for every non-auto utility not already present
+if _G.MenuElement then
+    UtilityMenu = MenuElement({ type = MENU, id = "DepressiveUtilityRoot", name = "Depressive Utility" })
+    UtilityMenu:MenuElement({ id = "info", name = "Toggle utilities", value = true })
     for _, u in ipairs(CORE_UTILITIES) do
         if not u.auto then
             local toggleId = "enable_" .. u.req
-            if UtilityMenu[toggleId] == nil then
-                local displayName = (u.req:gsub("Depressive", ""))
-                UtilityMenu:MenuElement({ id = toggleId, name = displayName, value = false })
-            end
+            local displayName = (u.req:gsub("Depressive", ""))
+            UtilityMenu:MenuElement({ id = toggleId, name = displayName, value = false })
         end
     end
 end
@@ -162,8 +108,7 @@ for _, u in ipairs(CORE_UTILITIES) do
     end
 end
 
--- Build menu after core utils update
-BuildUtilityMenu()
+-- Menu already built above
 
 local function TryLoadOptionalUtility(reqName)
     local path = "Depressive/Utility/" .. reqName
@@ -174,24 +119,16 @@ local function TryLoadOptionalUtility(reqName)
 end
 
 Callback.Add("Tick", function()
-    if UtilityMenu then
-        -- Refresh manifest on demand
-        local refreshElem = UtilityMenu.refresh
-        if refreshElem and refreshElem:Value() then
-            refreshElem:Value(false)
-            LoadRemoteUtilityList() -- may append new utilities
-            BuildUtilityMenu() -- add toggles for any new ones
-        end
-        for _, u in ipairs(CORE_UTILITIES) do
-            if not u.auto then
-                local toggleId = "enable_" .. u.req
-                local elem = UtilityMenu[toggleId]
-                if elem and elem:Value() and not UtilityModules[u.req] then
-                    if TryLoadOptionalUtility(u.req) then
-                        print("[DepressiveLoader] Loaded utility: " .. u.req)
-                    else
-                        print("[DepressiveLoader] Failed to load utility: " .. u.req)
-                    end
+    if not UtilityMenu then return end
+    for _, u in ipairs(CORE_UTILITIES) do
+        if not u.auto then
+            local toggleId = "enable_" .. u.req
+            local elem = UtilityMenu[toggleId]
+            if elem and elem:Value() and not UtilityModules[u.req] then
+                if TryLoadOptionalUtility(u.req) then
+                    print("[DepressiveLoader] Loaded utility: " .. u.req)
+                else
+                    print("[DepressiveLoader] Failed to load utility: " .. u.req)
                 end
             end
         end
