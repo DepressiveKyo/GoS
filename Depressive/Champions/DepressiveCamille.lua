@@ -1,4 +1,4 @@
-local scriptVersion = 1.33 -- required first line pattern for loader (scriptVersion = x.xx)
+local scriptVersion = 1.36 -- required first line pattern for loader (scriptVersion = x.xx)
 require "MapPositionGOS"
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
@@ -118,10 +118,10 @@ local function LoadMenu()
     Menu:MenuElement({ name = " ", drop = { "Version " .. tostring(scriptVersion) } })
 
     Menu:MenuElement({ type = MENU, id = "combo", name = "Combo" })
-    Menu.combo:MenuElement({ id = "useAA", name = "Set AutoAttacks", value = 3, min = 0, max = 10, identifier = "AA/s" })
+    Menu.combo:MenuElement({ id = "useAA", name = "Extra AA Count (damage calc)", value = 3, min = 0, max = 10, identifier = "AA" })
     Menu.combo:MenuElement({ id = "useQ", name = "Use Q", value = true })
     Menu.combo:MenuElement({ id = "useW", name = "Use W", value = true })
-    Menu.combo:MenuElement({ id = "eWeave", name = "E > W > E if possible", value = true })
+    Menu.combo:MenuElement({ id = "eWeave", name = "Try E > W > E sequence", value = true })
     Menu.combo:MenuElement({ id = "useE1", name = "Use E1", value = true })
     Menu.combo:MenuElement({ id = "useE2", name = "Use E2", value = true })
     Menu.combo:MenuElement({ id = "useR", name = "Use R", value = true })
@@ -135,7 +135,7 @@ local function LoadMenu()
     Menu:MenuElement({ type = MENU, id = "clear", name = "Lane Clear" })
     Menu.clear:MenuElement({ id = "useQ", name = "Use Q", value = true })
     Menu.clear:MenuElement({ id = "useW", name = "Use W", value = true })
-    Menu.clear:MenuElement({ id = "wCount", name = "W min minions", value = 3, min = 0, max = 10, identifier = "minion/s" })
+    Menu.clear:MenuElement({ id = "wCount", name = "W Min Minions", value = 3, min = 0, max = 10, identifier = "min" })
     Menu.clear:MenuElement({ id = "mana", name = "Min Mana %", value = 40, min = 0, max = 100, identifier = "%" })
 
     Menu:MenuElement({ type = MENU, id = "jclear", name = "Jungle Clear" })
@@ -152,16 +152,16 @@ local function LoadMenu()
     Menu:MenuElement({ type = MENU, id = "pred", name = "Prediction" })
     Menu.pred:MenuElement({ id = "hitchanceW", name = "Hitchance W", value = 1, drop = { "Normal", "High", "Immobile" } })
     Menu.pred:MenuElement({ id = "hitchanceE", name = "Hitchance E2", value = 1, drop = { "Normal", "High", "Immobile" } })
-    Menu.pred:MenuElement({ id = "wEdgeMin", name = "W Edge Min Dist", value = 560, min = 500, max = 610, step = 5 })
-    Menu.pred:MenuElement({ id = "wBackstep", name = "Intento backstep si muy cerca (< edge)", value = false })
+    Menu.pred:MenuElement({ id = "wEdgeMin", name = "W Edge Min Distance", value = 560, min = 500, max = 610, step = 5 })
+    Menu.pred:MenuElement({ id = "wBackstep", name = "Attempt backstep if inside edge", value = false })
 
     Menu:MenuElement({ type = MENU, id = "wall", name = "Wall System" })
     Menu.wall:MenuElement({ id = "enabled", name = "Enable Wall E", value = true })
-    Menu.wall:MenuElement({ id = "autoCombo", name = "Auto E1 to Wall in Combo", value = true })
+    Menu.wall:MenuElement({ id = "autoCombo", name = "Auto E1 wall search in Combo", value = true })
     Menu.wall:MenuElement({ id = "mode", name = "Mode", value = 3, drop = { "Mouse", "Target", "Smart" } })
     Menu.wall:MenuElement({ id = "turretSafety", name = "Avoid Enemy Turret (E)", value = true })
     Menu.wall:MenuElement({ id = "searchMax", name = "Max Search Range", value = 1200, min = 400, max = 2000, step = 50 })
-    Menu.wall:MenuElement({ id = "angleStep", name = "Angle Step", value = 20, min = 10, max = 60, step = 5 })
+    Menu.wall:MenuElement({ id = "angleStep", name = "Angle Step (deg)", value = 20, min = 10, max = 60, step = 5 })
 
     Menu:MenuElement({ type = MENU, id = "drawing", name = "Drawing" })
     Menu.drawing:MenuElement({ id = "drawW", name = "Draw W Range", value = false })
@@ -171,10 +171,10 @@ local function LoadMenu()
     -- W Edge Positioning Helper (like Lillia Q helper style)
     Menu:MenuElement({ type = MENU, id = "whelper", name = "W Edge Helper" })
     Menu.whelper:MenuElement({ id = "enable", name = "Enable W Edge Helper", value = true })
-    Menu.whelper:MenuElement({ id = "onlyCombo", name = "Only in Combo Mode", value = true })
-    Menu.whelper:MenuElement({ id = "desired", name = "Desired Edge Dist", value = 585, min = 540, max = 610, step = 5 })
+    Menu.whelper:MenuElement({ id = "onlyCombo", name = "Only in Combo", value = true })
+    Menu.whelper:MenuElement({ id = "desired", name = "Desired W Edge Distance", value = 585, min = 540, max = 610, step = 5 })
     Menu.whelper:MenuElement({ id = "tolerance", name = "Distance Tolerance", value = 25, min = 5, max = 60, step = 5 })
-    Menu.whelper:MenuElement({ id = "maxAdjust", name = "Max Adjust Move Dist", value = 400, min = 150, max = 900, step = 25 })
+    Menu.whelper:MenuElement({ id = "maxAdjust", name = "Max Adjust Move Distance", value = 400, min = 150, max = 900, step = 25 })
     Menu.whelper:MenuElement({ id = "draw", name = "Draw Helper Position", value = true })
 
     
@@ -246,16 +246,16 @@ local function InitializeWRAIOCallbacks()
     end
 end
 
+local lastWAfterE = 0
 local function PostDashW()
-    if not Menu.combo.eWeave:Value() or not Ready(_W) or not myHero.pathing.isDashing then return end
-    local target = GetTarget(2000)
+    if not Ready(_W) or not myHero.pathing.isDashing then return end
+    if not Menu.combo.eWeave:Value() then return end
+    local target = GetTarget(900)
     if not target or not IsValid(target) then return end
-    local minDesired, maxDesired = 560, 610
-    local endPos = myHero.pathing and myHero.pathing.endPos or target.pos
-    local projDist = endPos and Vector(endPos):DistanceTo(target.pos) or myHero.pos:DistanceTo(target.pos)
-    if projDist >= minDesired and projDist <= maxDesired then
-        Control.CastSpell(HK_W, target.pos)
-    end
+    if Game.Timer() - lastWAfterE < 0.15 then return end
+    -- Force W attempt ignoring edge logic (cast as soon as feasible during dash)
+    CastWPrediction(target, true)
+    lastWAfterE = Game.Timer()
 end
 
 local function GetWallTowardsPosition(target)
@@ -334,7 +334,7 @@ local function CastE2Prediction(target)
     end
 end
 
-local function CastWPrediction(target)
+local function CastWPrediction(target, ignoreEdge)
     if IsCastingE then return end
     if not Menu.combo.useW:Value() or not Ready(_W) then return end
     if not DPReady() then return end
@@ -352,13 +352,15 @@ local function CastWPrediction(target)
         local dist = myHero.pos:DistanceTo(predPos)
         local edgeMin = Menu.pred.wEdgeMin:Value()
         -- If target is closer than edge, optional backstep
-        if dist < edgeMin then
-            if Menu.pred.wBackstep:Value() and not myHero.pathing.isDashing and not IsCastingE then
-                local dir = (predPos - myHero.pos):Normalized()
-                local backPos = myHero.pos - dir * math.min(edgeMin - dist + 40, 150)
-                Control.Move(backPos)
+        if not ignoreEdge then
+            if dist < edgeMin then
+                if Menu.pred.wBackstep:Value() and not myHero.pathing.isDashing and not IsCastingE then
+                    local dir = (predPos - myHero.pos):Normalized()
+                    local backPos = myHero.pos - dir * math.min(edgeMin - dist + 40, 150)
+                    Control.Move(backPos)
+                end
+                return
             end
-            return
         end
         if dist > 610 then return end
         Control.CastSpell(HK_W, predPos)
@@ -594,7 +596,7 @@ local function OnTick()
         Combo()
     elseif Mode == "Harass" then
         Harass()
-    elseif Mode == "Clear" then
+    elseif Mode == "Clear" or Mode == "LaneClear" or Mode == "JungleClear" then
         Clear()
         JungleClear()
     elseif Mode == "LastHit" then
