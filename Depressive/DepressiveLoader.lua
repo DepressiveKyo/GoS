@@ -158,9 +158,17 @@ for _, u in ipairs(CORE_UTILITIES) do
     EnsureUtilityUpdated(u.file, inUtil)
     if u.auto then
         local reqPath = inUtil and ("Depressive/Utility/" .. u.req) or ("Depressive/" .. u.req)
+        -- Single path require to avoid duplicate module caching under different names
         local ok, mod = pcall(function() return require(reqPath) end)
-        if not ok then ok, mod = pcall(function() return require(u.req) end) end
-        if ok then UtilityModules[u.req] = mod end
+        if ok then
+            if UtilityModules[u.req] then
+                print("[DepressiveLoader][Debug] Skipped duplicate utility load: " .. u.req)
+            else
+                UtilityModules[u.req] = mod
+            end
+        else
+            print("[DepressiveLoader][Warn] Failed to load auto utility ("..u.req..") via path "..reqPath..": "..tostring(mod))
+        end
     end
 end
 
