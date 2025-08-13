@@ -328,6 +328,8 @@ local itemLastUsed = {
 
 -- Variable global para prevenir uso múltiple de CC cleanse
 local lastCCCleanseUsed = 0
+-- Ventana de gracia para evitar doble uso instantáneo de pociones (refill/health)
+local potionPendingUntil = 0
 
 -- Función Ready como SimbleActivator
 local function Ready(spell)
@@ -532,7 +534,7 @@ local function UseItemBySlot(slot, itemID)
             end
         end
         
-        if isHydraItem then
+    if isHydraItem then
             -- Titanic Hydra (3748) necesita un target
             if itemID == 3748 then
                 local closestEnemy, closestDistance = GetClosestEnemy()
@@ -562,6 +564,9 @@ local function UseItemBySlot(slot, itemID)
         -- Actualizar el último uso del item
         if itemID then
             itemLastUsed[itemID] = currentTime
+            if itemID == 2003 or itemID == 2031 then
+                potionPendingUntil = Game.Timer() + 0.8 -- asumimos que el buff aparecerá en <0.8s
+            end
             -- Si es un item de CC cleanse, actualizar el cooldown global
             if itemID == 3140 or itemID == 3139 then -- Quicksilver o Mercurial Scimitar
                 lastCCCleanseUsed = currentTime
@@ -1342,6 +1347,9 @@ local function AutoActivator()
                         end
                     end
                 end
+                if not hasHealthPotionBuff and Game.Timer() < potionPendingUntil then
+                    hasHealthPotionBuff = true -- evitar re-casteo mientras esperamos que aparezca el buff
+                end
                 
                 -- Solo usar si mi HP está bajo y no hay buff de poción
                 if not hasHealthPotionBuff and myHpPct <= settings.myHpPct:Value() then
@@ -1363,11 +1371,17 @@ local function AutoActivator()
                         end
                     end
                 end
+                if not hasRefillPotionBuff and Game.Timer() < potionPendingUntil then
+                    hasRefillPotionBuff = true -- buff pendiente (previene gastarse la segunda carga)
+                end
                 
                 -- Solo usar si mi HP está bajo y no hay buff de poción y tiene al menos 1 stack
                 local itemData = myHero:GetItemData(slot)
                 if not hasRefillPotionBuff and myHpPct <= settings.myHpPct:Value() and itemData and itemData.stacks > 0 then
-                    shouldUse = true
+                    -- En lugar de usar itemLastUsed de 1s, aplicamos verificación adicional: no recastear si la última vez fue hace <2.5s
+                    if Game.Timer() - (itemLastUsed[2031] or 0) > 2.5 then
+                        shouldUse = true
+                    end
                 end
             
             -- Locket of Solari (3190)
