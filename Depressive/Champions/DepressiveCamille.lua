@@ -1,11 +1,42 @@
-local scriptVersion = 1.45 -- required first line pattern for loader (scriptVersion = x.xx)
--- Lazy MapPositionGOS retrieval (loaded only when needed)
+local scriptVersion = 1.46 -- required first line pattern for loader (scriptVersion = x.xx)
+-- Lazy MapPositionGOS retrieval (loaded only when needed) with robust multi-path attempts
 local MapPosition = _G.MapPosition or _G.MapPositionGOS
 local function EnsureMapPosition()
-    if not (MapPosition and MapPosition.inWall) then
-        if _G.DepressiveLoadLibrary then _G.DepressiveLoadLibrary("MapPositionGOS") end
-        MapPosition = _G.MapPosition or _G.MapPositionGOS or { inWall = function() return false end }
+    if MapPosition and MapPosition.inWall then return MapPosition end
+    if _G.DepressiveLoadLibrary then _G.DepressiveLoadLibrary("MapPositionGOS") end
+    MapPosition = _G.MapPosition or _G.MapPositionGOS
+    if MapPosition and MapPosition.inWall then return MapPosition end
+    if not _G.__CamilleTriedMapPos then
+        _G.__CamilleTriedMapPos = true
+        local paths = {
+            "Depressive/Libraries/MapPositionGOS",
+            "Depressive/Libraries/MapPosition",
+            "MapPositionGOS",
+            "MapPosition"
+        }
+        for _, p in ipairs(paths) do
+            local ok = pcall(function() require(p) end)
+            if ok then
+                MapPosition = _G.MapPosition or _G.MapPositionGOS
+                if MapPosition and MapPosition.inWall then break end
+            end
+        end
+        if not (MapPosition and MapPosition.inWall) then
+            print("[DepressiveCamille][Warn] MapPositionGOS not found; wall logic fallback active")
+        else
+            print("[DepressiveCamille] MapPositionGOS loaded (late)")
+        end
     end
+    if not (MapPosition and MapPosition.inWall) then
+        MapPosition = { inWall = function() return false end }
+    end
+    return MapPosition
+end
+local function InWall(pos)
+    if not pos then return false end
+    local mp = EnsureMapPosition()
+    local ok, res = pcall(function() return mp and mp.inWall and mp:inWall(pos) end)
+    return ok and res or false
 end
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
@@ -70,7 +101,7 @@ local function FindBestWPos(mode, towardsPos, searchMin, searchMax, stepDist, an
         local endPos = startPos:Extended(mPos, i)
         for j = angleStep, 360, angleStep do
             local testPos = Rotate(startPos, endPos, height, math.rad(j))
-            if mode == Objects.WALL and MapPosition:inWall(testPos) then
+            if mode == Objects.WALL and InWall(testPos) then
                 return testPos
             end
         end
@@ -89,7 +120,7 @@ local function FindNearestWallNear(centerPos, maxRadius, radialStep, angleStep)
         for deg = 0, 360 - angleStep, angleStep do
             local rad = math.rad(deg)
             local testPos = Vector(centerPos.x + math.cos(rad) * r, y, centerPos.z + math.sin(rad) * r)
-            if MapPosition:inWall(testPos) then
+            if InWall(testPos) then
                 local d = centerPos:DistanceTo(testPos)
                 if d < bestDist then
                     bestDist = d
@@ -406,7 +437,7 @@ local function ComputeWEdgePosition(target)
     local nx, nz = dx / dist, dz / dist
     local px, pz = tx + nx * desired, tz + nz * desired
     local pos = Vector(px, myHero.pos.y, pz)
-    if MapPosition and MapPosition.inWall and MapPosition:inWall(pos) then return nil end
+    if InWall(pos) then return nil end
     return pos, dist
 end
 
@@ -658,8 +689,11 @@ local function LoadScript()
     Callback.Add("Tick", OnTick)
     Callback.Add("Draw", OnDraw)
     InitializeWRAIOCallbacks()
+    EnsureMapPosition() -- attempt early so wall logic ready before first combo
     if DPReady() then
-        print("[DepressiveCamille] Prediction listo")
+        print("[DepressiveCamille] Prediction ready")
+    else
+        print("[DepressiveCamille] Prediction not loaded (using fallback)")
     end
     -- Debug: print initial enemy count
     local initEnemies = 0
