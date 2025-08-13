@@ -1,4 +1,4 @@
-local scriptVersion = 1.37 -- required first line pattern for loader (scriptVersion = x.xx)
+local scriptVersion = 1.38 -- required first line pattern for loader (scriptVersion = x.xx)
 require "MapPositionGOS"
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
@@ -258,6 +258,9 @@ local function PostDashW()
     lastWAfterE = Game.Timer()
 end
 
+-- Forward declaration so earlier functions (PostDashW, Combo, Harass) can call it
+local CastWPrediction
+
 local function GetWallTowardsPosition(target)
     local modeVal = Menu.wall.mode:Value()
     if modeVal == 1 then
@@ -334,7 +337,7 @@ local function CastE2Prediction(target)
     end
 end
 
-local function CastWPrediction(target, ignoreEdge)
+CastWPrediction = function(target, ignoreEdge)
     if IsCastingE then return end
     if not Menu.combo.useW:Value() or not Ready(_W) then return end
     if not DPReady() then return end
