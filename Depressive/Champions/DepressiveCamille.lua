@@ -1,4 +1,4 @@
-local scriptVersion = 1.46 -- required first line pattern for loader (scriptVersion = x.xx)
+local scriptVersion = 1.49 -- required first line pattern for loader (scriptVersion = x.xx)
 -- Lazy MapPositionGOS retrieval (loaded only when needed) with robust multi-path attempts
 local MapPosition = _G.MapPosition or _G.MapPositionGOS
 local function EnsureMapPosition()
@@ -677,15 +677,11 @@ local function LoadScript()
     if Lib and Lib.RefreshCaches then Lib.RefreshCaches(true) end
     -- Schedule a delayed second forced refresh to catch late hero objects
     local delayedRefreshDone = false
-    Callback.Add("Tick", function()
-        if not delayedRefreshDone and Game.Timer() > 0.5 then
-            if Lib and Lib.RefreshCaches then Lib.RefreshCaches(true) end
-            delayedRefreshDone = true
-            local eCount = 0
-            if Lib and Lib.ForEachEnemy then Lib.ForEachEnemy(function() eCount = eCount + 1 end) end
-            print(string.format("[DepressiveCamille][Init] Enemies detected after delayed refresh: %d", eCount))
-        end
-    end)
+    -- Single immediate scan after utilities/libraries are loaded
+    if Lib and Lib.RefreshCaches then Lib.RefreshCaches(true) end
+    local eCount = 0
+    if Lib and Lib.ForEachEnemy then Lib.ForEachEnemy(function() eCount = eCount + 1 end) end
+    print(string.format("[DepressiveCamille][Init] Enemies detected: %d", eCount))
     Callback.Add("Tick", OnTick)
     Callback.Add("Draw", OnDraw)
     InitializeWRAIOCallbacks()
@@ -695,10 +691,6 @@ local function LoadScript()
     else
         print("[DepressiveCamille] Prediction not loaded (using fallback)")
     end
-    -- Debug: print initial enemy count
-    local initEnemies = 0
-    if Lib and Lib.ForEachEnemy then Lib.ForEachEnemy(function() initEnemies = initEnemies + 1 end) end
-    print(string.format("[DepressiveCamille][Init] Immediate enemies detected: %d", initEnemies))
 end
 
 LoadScript()
