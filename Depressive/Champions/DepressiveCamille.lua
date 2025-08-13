@@ -1,4 +1,4 @@
-local scriptVersion = 1.41 -- required first line pattern for loader (scriptVersion = x.xx)
+local scriptVersion = 1.42 -- required first line pattern for loader (scriptVersion = x.xx)
 require "MapPositionGOS"
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
@@ -19,12 +19,14 @@ if not _G.DepressiveCamilleModule then
     _G.DepressiveCamilleModule = DepressiveCamilleModule
 end
 
-if _G.DepressiveCamilleLoaded and _G.DepressiveCamilleLoaded >= scriptVersion then
-    -- Already loaded same or newer version, skip re-init
+if _G.DepressiveCamilleLoaded and _G.DepressiveCamilleLoaded >= scriptVersion and not _G.DEPRESSIVE_FORCE_RELOAD then
     return _G.DepressiveCamilleModule or {}
 end
-print(string.format("[DepressiveCamille] Initializing v%.2f (prev %.2f)", scriptVersion, _G.DepressiveCamilleLoaded or 0))
-print("[DepressiveCamille][Debug] scriptVersion variable now=", scriptVersion)
+if _G.DEPRESSIVE_FORCE_RELOAD then
+    print("[DepressiveCamille] FORCE RELOAD flag detected")
+end
+print(string.format("[DepressiveCamille] Initializing v%.2f (prev %.2f)%s", scriptVersion, _G.DepressiveCamilleLoaded or 0, _G.DEPRESSIVE_FORCE_RELOAD and " [FORCED]" or ""))
+print("[DepressiveCamille][Debug] scriptVersion=", scriptVersion)
 _G.DepressiveCamilleLoaded = scriptVersion
 
 local MyHeroNotReady = Lib.MyHeroNotReady
@@ -99,9 +101,14 @@ local Menu
  
 
 -- DepressivePrediction wrappers
-local DP = _G.DepressivePrediction
+local DP = _G.DepressivePrediction or _G.DepressivePredictionLib
 local function DPReady()
-    return DP ~= nil and DP.SpellPrediction ~= nil
+    local ready = (DP ~= nil and DP.SpellPrediction ~= nil)
+    if not ready and not _G.__DepressiveCamillePredWarned then
+        _G.__DepressiveCamillePredWarned = true
+        print("[DepressiveCamille][Warn] Prediction lib (DepressivePrediction) no disponible; habilidades W/E2 usarán lógica reducida.")
+    end
+    return ready
 end
 
 local DP_HITCHANCE = {
@@ -182,7 +189,7 @@ local function LoadMenu()
 
     Menu:MenuElement({ type = MENU, id = "debug", name = "Debug / Safety" })
     Menu.debug:MenuElement({ id = "safe", name = "Safe Mode (extra nil guards)", value = true })
-    Menu.debug:MenuElement({ id = "verbose", name = "Verbose Errors (prints)", value = false })
+    Menu.debug:MenuElement({ id = "verbose", name = "Verbose Errors (prints)", value = true })
     
 end
 
@@ -628,6 +635,9 @@ local function LoadScript()
     Callback.Add("Tick", OnTick)
     Callback.Add("Draw", OnDraw)
     InitializeWRAIOCallbacks()
+    if DPReady() then
+        print("[DepressiveCamille] Prediction listo")
+    end
 end
 
 LoadScript()
