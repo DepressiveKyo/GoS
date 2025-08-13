@@ -1,10 +1,18 @@
 local DepressiveLib = {}
-DepressiveLib.__version = 1.01
+DepressiveLib.__version = 1.02
 -- Mirror for loader compatibility (loader searches scriptVersion = x.y)
 local scriptVersion = DepressiveLib.__version
 
 -- Performance cap: any range query will be clamped to this
 local MAX_RANGE = 2000
+
+-- Clamp helper must exist before any function references it
+local function ClampRange(r)
+    r = r or 0
+    if r > MAX_RANGE then return MAX_RANGE elseif r < 0 then return 0 end
+    return r
+end
+DepressiveLib.ClampRange = ClampRange
 
 -- Internal caches
 local Allies, Enemies, Minions = {}, {}, {}
@@ -145,7 +153,6 @@ function DepressiveLib.ForEachMinion(fn) for _, m in ipairs(Minions) do if fn(m)
 
 -- Counting
 local function Dist(a,b) return (a.x-b.x)*(a.x-b.x)+(a.z-b.z)*(a.z-b.z) end
-local function ClampRange(r) r = r or 0; if r > MAX_RANGE then return MAX_RANGE elseif r < 0 then return 0 end return r end
 function DepressiveLib.CountEnemiesInRange(pos, range)
     range = ClampRange(range)
     local r2, c = range*range, 0
@@ -325,6 +332,7 @@ end
 
 function DepressiveLib.GetBestLinearFarmPos(range, width, minions)
     range = ClampRange(range)
+    width = width or 60
     minions = minions or Minions
     local bestPos, bestHit = nil, 0
     for i = 1, #minions do
@@ -336,9 +344,10 @@ function DepressiveLib.GetBestLinearFarmPos(range, width, minions)
                 if i ~= j then
                     local m2 = minions[j]
                     if m2.isEnemy and DepressiveLib.IsValid(m2) and m2.distance <= range then
-                        -- Simple width check along line p1->p2 (approximate)
-                        local d1 = math.abs((p2 and p2.x or m2.pos.x) - p1.x) -- placeholder to reduce complexity
-                        if d1 < width then hit = hit + 1 end
+                        -- Approximation: treat as cluster width box
+                        if math.abs(m2.pos.x - p1.x) <= width and math.abs(m2.pos.z - p1.z) <= width then
+                            hit = hit + 1
+                        end
                     end
                 end
             end
