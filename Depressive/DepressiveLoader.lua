@@ -1,4 +1,4 @@
-local LOADER_VERSION = 1.10
+local LOADER_VERSION = 1.11
 local DEPRESSIVE_PATH = COMMON_PATH .. "Depressive/" -- local storage path (unchanged locally)
 local CHAMPIONS_PATH = DEPRESSIVE_PATH .. "Champions/"
 local UTILITY_PATH = DEPRESSIVE_PATH .. "Utility/"
@@ -86,24 +86,48 @@ local function LoadRemoteUtilityList()
     DownloadFile(UTILITY_PATH, REMOTE_UTILITY_MANIFEST, GITHUB_BASE .. "Utility/")
     local path = UTILITY_PATH .. REMOTE_UTILITY_MANIFEST
     local f = io.open(path, "r")
-    if not f then return end
+    if not f then
+        return false -- manifest not present
+    end
     -- Build lookup to avoid duplicates
     local existing = {}
     for _, u in ipairs(CORE_UTILITIES) do existing[u.file] = true end
+    local added = 0
     for line in f:lines() do
         local name = line:gsub("%s+", "")
         if name ~= "" and name:sub(1,1) ~= "#" and name:match("%.lua$") then
             if not existing[name] then
                 table.insert(CORE_UTILITIES, { file = name, req = name:gsub("%.lua$",""), folder = "Utility", auto = false })
                 existing[name] = true
+                added = added + 1
             end
         end
     end
     f:close()
+    return added > 0
 end
 
 -- Populate additional utilities from manifest (if present remotely)
-LoadRemoteUtilityList()
+local manifestLoaded = LoadRemoteUtilityList()
+
+-- Static fallback list (edit this manually if you don't use manifest)
+local STATIC_FALLBACK_UTILITIES = {
+    "DepressiveActivatorG.lua",
+    "DepressiveAutoSmite.lua",
+    "DepressiveCamp.lua",
+}
+
+if not manifestLoaded then
+    local existing = {}
+    for _, u in ipairs(CORE_UTILITIES) do existing[u.file] = true end
+    for _, name in ipairs(STATIC_FALLBACK_UTILITIES) do
+        if not existing[name] then
+            table.insert(CORE_UTILITIES, { file = name, req = name:gsub("%.lua$",""), folder = "Utility", auto = false })
+            existing[name] = true
+        end
+    end
+    print("[DepressiveLoader] Utilities.manifest no encontrado. Usando lista fallback.")
+end
 
 -- Rebuild utility menu dynamically (can be invoked for refresh)
 local UtilityMenu = nil
