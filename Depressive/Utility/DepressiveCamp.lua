@@ -894,6 +894,15 @@ function OnLoad()
     Tracker()
 end
 
+-- Auto-instantiate when required as a module (so it works via DepressiveLoader without direct OnLoad call)
+if not _G.__DepressiveCampLoaded then
+    _G.__DepressiveCampLoaded = true
+    if not _G.CampTrackerInstance then
+        -- Directly create tracker instance to ensure callbacks register
+        Tracker()
+    end
+end
+
 --Not In Use
 --[[
 
