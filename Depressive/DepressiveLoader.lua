@@ -1,4 +1,4 @@
-local LOADER_VERSION = 1.07
+local LOADER_VERSION = 1.08
 local DEPRESSIVE_PATH = COMMON_PATH .. "Depressive/" -- local storage path (unchanged locally)
 local CHAMPIONS_PATH = DEPRESSIVE_PATH .. "Champions/"
 local UTILITY_PATH = DEPRESSIVE_PATH .. "Utility/"
@@ -77,44 +77,6 @@ local CORE_UTILITIES = {
     { file = "DepressiveLib.lua",          req = "DepressiveLib",          folder = "",        auto = true  },
     { file = "DepressivePrediction.lua",   req = "DepressivePrediction",   folder = "Utility",  auto = true  },
 }
-
--- Helper set for quick lookup when filtering dynamic utilities
-local coreUtilitySet = {}
-for _, cu in ipairs(CORE_UTILITIES) do coreUtilitySet[cu.file] = true end
-
--- Scan Utility folder for any .lua scripts (excluding core already listed) and register as optional utilities.
-local function ScanUtilityFolder()
-    local files = {}
-    local okPopen = (type(io.popen) == "function")
-    if okPopen then
-        local cmd = string.format("dir /b \"%s\"", UTILITY_PATH)
-        local p = io.popen(cmd)
-        -- Some sandboxes return a number or nil instead of a handle; validate before using
-        if p and type(p) ~= "number" and p.lines then
-            for line in p:lines() do
-                local fname = line:match("[^\\/]+$")
-                if fname and fname:match("%.lua$") and not coreUtilitySet[fname] then
-                    if not fname:lower():match("version") then
-                        table.insert(files, fname)
-                    end
-                end
-            end
-            if p.close then p:close() end
-        else
-            print("[DepressiveLoader] Sandbox blocked directory scan (io.popen). Skipping dynamic utilities.")
-        end
-    else
-        print("[DepressiveLoader] io.popen unavailable. Skipping dynamic utilities.")
-    end
-    return files
-end
-
-local DYNAMIC_UTILITY_FILES = ScanUtilityFolder()
-
--- Convert dynamic file list to utility descriptor entries (optional load)
-for _, f in ipairs(DYNAMIC_UTILITY_FILES) do
-    table.insert(CORE_UTILITIES, { file = f, req = f:gsub("%.lua$",""), folder = "Utility", auto = false })
-end
 
 local UtilityModules = {}
 for _, u in ipairs(CORE_UTILITIES) do
