@@ -1,4 +1,4 @@
-local LOADER_VERSION = 1.08
+local LOADER_VERSION = 1.09
 local DEPRESSIVE_PATH = COMMON_PATH .. "Depressive/" -- local storage path (unchanged locally)
 local CHAMPIONS_PATH = DEPRESSIVE_PATH .. "Champions/"
 local UTILITY_PATH = DEPRESSIVE_PATH .. "Utility/"
@@ -77,6 +77,33 @@ local CORE_UTILITIES = {
     { file = "DepressiveLib.lua",          req = "DepressiveLib",          folder = "",        auto = true  },
     { file = "DepressivePrediction.lua",   req = "DepressivePrediction",   folder = "Utility",  auto = true  },
 }
+
+-- Remote manifest for utilities (must exist in GitHub Utility/ folder). Each line: <LuaFileName.lua>
+local REMOTE_UTILITY_MANIFEST = "Utilities.manifest"
+
+local function LoadRemoteUtilityList()
+    -- Download manifest file
+    DownloadFile(UTILITY_PATH, REMOTE_UTILITY_MANIFEST, GITHUB_BASE .. "Utility/")
+    local path = UTILITY_PATH .. REMOTE_UTILITY_MANIFEST
+    local f = io.open(path, "r")
+    if not f then return end
+    -- Build lookup to avoid duplicates
+    local existing = {}
+    for _, u in ipairs(CORE_UTILITIES) do existing[u.file] = true end
+    for line in f:lines() do
+        local name = line:gsub("%s+", "")
+        if name ~= "" and name:sub(1,1) ~= "#" and name:match("%.lua$") then
+            if not existing[name] then
+                table.insert(CORE_UTILITIES, { file = name, req = name:gsub("%.lua$",""), folder = "Utility", auto = false })
+                existing[name] = true
+            end
+        end
+    end
+    f:close()
+end
+
+-- Populate additional utilities from manifest (if present remotely)
+LoadRemoteUtilityList()
 
 local UtilityModules = {}
 for _, u in ipairs(CORE_UTILITIES) do
