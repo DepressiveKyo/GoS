@@ -1,5 +1,4 @@
 require "MapPositionGOS"
-local SCRIPT_VERSION = "1.3"
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
 
@@ -555,3 +554,4 @@ local function LoadScript()
 end
 
 LoadScript()
+
