@@ -71,15 +71,12 @@ local function EnsureUtilityUpdated(fileName, inUtilityFolder)
     return false
 end
 
--- List of core utilities to keep updated and preload
--- Core (always managed) utilities list. Others in Utility folder will be detected dynamically.
--- Hardcoded utilities list (no dynamic discovery)
 local CORE_UTILITIES = {
     { file = "DepressiveLib.lua",        req = "DepressiveLib",        folder = "",         auto = true  },
     { file = "DepressivePrediction.lua", req = "DepressivePrediction", folder = "Utility",   auto = true  },
     { file = "DepressiveActivatorG.lua", req = "DepressiveActivatorG", folder = "Utility",   auto = false },
     { file = "DepressiveAutoSmite.lua",  req = "DepressiveAutoSmite",  folder = "Utility",   auto = false },
-    { file = "DepressiveCamp.lua",       req = "DepressiveCamp",       folder = "Utility",   auto = false },
+    { file = "DepressiveCamp.lua",       req = "DepressiveCampTracker",       folder = "Utility",   auto = true },
 }
 
 -- Simple static utility menu
