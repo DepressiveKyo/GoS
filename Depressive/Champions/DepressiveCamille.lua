@@ -10,15 +10,16 @@ local Ready = Lib.Ready
 
 if not _G.DepressiveCamilleModule then
     local DepressiveCamilleModule = {}
-    function DepressiveCamilleModule:Init()
-    end
-    function DepressiveCamilleModule:Tick()
-    end
-    function DepressiveCamilleModule:Draw()
-    end
+    function DepressiveCamilleModule:Init() end
+    function DepressiveCamilleModule:Tick() end
+    function DepressiveCamilleModule:Draw() end
     _G.DepressiveCamilleModule = DepressiveCamilleModule
-    return DepressiveCamilleModule
 end
+
+if _G.DepressiveCamilleLoaded then
+    return
+end
+_G.DepressiveCamilleLoaded = true
 
 local MyHeroNotReady = Lib.MyHeroNotReady
 
@@ -87,10 +88,6 @@ local function IsUnderEnemyTurret(pos) return Lib.UnderEnemyTurret(pos) end
 
 local Menu
 
--- Advanced Movement Helper -------------------------------------------------
--- Provides timed movement disabling (pauses), forced movement to a position,
--- and unified control so different spell phases (E hook, E dash, W cast)
--- don't fight each other toggling the orbwalker rapidly.
 local Movement = {
     pausedUntil = 0,
     forcePos = nil,
