@@ -1,3 +1,4 @@
+local scriptVersion = 1.30 -- required first line pattern for loader (scriptVersion = x.xx)
 require "MapPositionGOS"
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
@@ -163,7 +164,7 @@ end
 
 local function LoadMenu()
     Menu = MenuElement({ type = MENU, id = "DepressiveCamille_" .. myHero.charName, name = "Depressive - " .. myHero.charName })
-    Menu:MenuElement({ name = " ", drop = { "Version " .. SCRIPT_VERSION } })
+    Menu:MenuElement({ name = " ", drop = { "Version " .. tostring(scriptVersion) } })
 
     Menu:MenuElement({ type = MENU, id = "combo", name = "Combo" })
     Menu.combo:MenuElement({ id = "useAA", name = "Set AutoAttacks", value = 3, min = 0, max = 10, identifier = "AA/s" })
@@ -555,3 +556,4 @@ end
 
 LoadScript()
 
+return _G.DepressiveCamilleModule or {}
