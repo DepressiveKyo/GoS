@@ -1,5 +1,5 @@
 local DepressiveLib = {}
-DepressiveLib.__version = 1.02
+DepressiveLib.__version = 1.03
 -- Mirror for loader compatibility (loader searches scriptVersion = x.y)
 local scriptVersion = DepressiveLib.__version
 
@@ -142,9 +142,20 @@ local function ScanMinions()
     end
 end
 
+local AggressiveExtendDeadline = nil
 function DepressiveLib.RefreshCaches(force)
     local t = SafeTime()
-    -- During warmup always force
+    local inWarmup = (DepressiveLib.__warmupEnd and t < DepressiveLib.__warmupEnd)
+    -- Aggressive mode: while warmup OR explicitly extended and no enemies yet, rescan every tick
+    if inWarmup or (AggressiveExtendDeadline and t < AggressiveExtendDeadline and #Enemies == 0) then
+        ScanHeroes(); LastHeroScan = t
+        ScanMinions(); LastMinionScan = t
+        -- If warmup finished but still zero enemies, extend aggressive window (once) up to +3s total
+        if not inWarmup and #Enemies == 0 and (not AggressiveExtendDeadline) then
+            AggressiveExtendDeadline = t + 3
+        end
+        return
+    end
     if DepressiveLib.__warmupEnd and t < DepressiveLib.__warmupEnd then force = true end
     if force or t - LastHeroScan > ScanInterval then
         ScanHeroes(); LastHeroScan = t
@@ -233,7 +244,7 @@ end
 ScanHeroes(); ScanMinions(); LastHeroScan = SafeTime(); LastMinionScan = LastHeroScan
 -- If hero count seems too small (only myHero), keep warmup longer
 local initialCount = #Allies + #Enemies
-DepressiveLib.__warmupEnd = SafeTime() + (initialCount <= 1 and 1.2 or 0.6)
+DepressiveLib.__warmupEnd = SafeTime() + (initialCount <= 1 and 2.0 or 0.9)
 Callback.Add("Tick", function() DepressiveLib.RefreshCaches(false) end)
 
 -- =========================
