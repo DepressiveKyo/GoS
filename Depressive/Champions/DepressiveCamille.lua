@@ -1,9 +1,12 @@
-local scriptVersion = 1.38 -- required first line pattern for loader (scriptVersion = x.xx)
+local scriptVersion = 1.41 -- required first line pattern for loader (scriptVersion = x.xx)
 require "MapPositionGOS"
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
 
 local HAS_DAMAGE_LIB = (type(_G.getdmg) == "function")
+
+-- Forward declare CastWPrediction early so later functions (PostDashW, Combo, Harass) resolve the local instead of global
+local CastWPrediction
 
 local IsValid = Lib.IsValid
 local Ready = Lib.Ready
@@ -177,6 +180,9 @@ local function LoadMenu()
     Menu.whelper:MenuElement({ id = "maxAdjust", name = "Max Adjust Move Distance", value = 400, min = 150, max = 900, step = 25 })
     Menu.whelper:MenuElement({ id = "draw", name = "Draw Helper Position", value = true })
 
+    Menu:MenuElement({ type = MENU, id = "debug", name = "Debug / Safety" })
+    Menu.debug:MenuElement({ id = "safe", name = "Safe Mode (extra nil guards)", value = true })
+    Menu.debug:MenuElement({ id = "verbose", name = "Verbose Errors (prints)", value = false })
     
 end
 
@@ -258,9 +264,6 @@ local function PostDashW()
     lastWAfterE = Game.Timer()
 end
 
--- Forward declaration so earlier functions (PostDashW, Combo, Harass) can call it
-local CastWPrediction
-
 local function GetWallTowardsPosition(target)
     local modeVal = Menu.wall.mode:Value()
     if modeVal == 1 then
@@ -275,11 +278,11 @@ end
 local function TryWallE(target)
     if not Menu.wall.enabled:Value() or not Ready(_E) then return false end
     if myHero:GetSpellData(_E).name ~= "CamilleE" and myHero:GetSpellData(_E).name ~= "CamilleEDash1" then return false end
-    if target and IsValid(target) and myHero.pos:DistanceTo(target.pos) <= 350 then return false end
+    if target and IsValid(target) and target.pos and myHero.pos:DistanceTo(target.pos) <= 350 then return false end
     local dynBase = 800
     local dynMax = math.min(Menu.wall.searchMax:Value(), dynBase)
     local castPos
-    if target and IsValid(target) then
+    if target and IsValid(target) and target.pos then
         castPos = FindNearestWallNear(target.pos, dynMax, 40, Menu.wall.angleStep:Value())
     end
     if not castPos then
@@ -296,10 +299,10 @@ end
 
 local function CastELogic(target)
     if not Menu.combo.useE1:Value() or not Ready(_E) then return end
-    if target and IsValid(target) and myHero.pos:DistanceTo(target.pos) <= 350 then return end
+    if target and IsValid(target) and target.pos and myHero.pos:DistanceTo(target.pos) <= 350 then return end
     local dynMax = 800
     local castPos
-    if target and IsValid(target) then
+    if target and IsValid(target) and target.pos then
         castPos = FindNearestWallNear(target.pos, dynMax, 40, Menu.wall.angleStep:Value())
     end
     if not castPos then
@@ -316,6 +319,7 @@ local function CastE2Prediction(target)
     if not Menu.combo.useE2:Value() or not Ready(_E) then return end
     if myHero:GetSpellData(_E).name ~= "CamilleEDash2" then return end
     if not DPReady() then return end
+    if not target or not target.pos then return end
     local dist = myHero.pos:DistanceTo(target.pos)
     local spell = DP.SpellPrediction({
         Type = DP.SPELLTYPE_LINE,
@@ -417,15 +421,26 @@ local function UpdateWEdgeHelper()
     LastWEdgeCalc = Game.Timer()
 end
 
+local LastEdgeManualMove = 0
 local function OnPreMovementWEdge(args)
     if not WEdgeMovePos then return end
     if myHero.pathing.isDashing or IsCastingE then return end
     if not Ready(_W) then return end
     if not Menu or not Menu.whelper or not Menu.whelper.enable:Value() then return end
     if Menu.whelper.onlyCombo:Value() and GetMode() ~= "Combo" then return end
+    -- Avoid interfering with clear / last hit keys (often bound to V)
+    local mode = GetMode()
+    if mode == "Clear" or mode == "LaneClear" or mode == "JungleClear" or mode == "LastHit" then return end
     local dist = myHero.pos:DistanceTo(WEdgeMovePos)
     if dist < 35 then return end
-    if args then args.Target = WEdgeMovePos end
+    if args then
+        -- Cancel orbwalker's own movement command and issue our manual move to a raw position
+        args.Process = false
+        if Game.Timer() - LastEdgeManualMove > 0.05 then
+            Control.Move(WEdgeMovePos)
+            LastEdgeManualMove = Game.Timer()
+        end
+    end
 end
 
 local function TryHookWEdge()
@@ -445,7 +460,7 @@ end
 
 local function Combo()
     local target = GetTarget(2000)
-    if not target or not IsValid(target) then return end
+    if not target or not IsValid(target) or not target.pos then return end
 
     local QRange = (myHero.range + 50 + myHero.boundingRadius + target.boundingRadius)
     local distToTarget = myHero.pos:DistanceTo(target.pos)
@@ -483,7 +498,7 @@ end
 
 local function Harass()
     local target = GetTarget(700)
-    if not target or not IsValid(target) then return end
+    if not target or not IsValid(target) or not target.pos then return end
     if myHero.mana / myHero.maxMana < Menu.harass.mana:Value() / 100 then return end
 
     local QRange = (myHero.range + 50 + myHero.boundingRadius + target.boundingRadius)
@@ -497,18 +512,18 @@ local function Harass()
 end
 
 local function Clear()
+    local safeMode = Menu and Menu.debug and Menu.debug.safe:Value()
     for i = 1, Game.MinionCount() do
-        local minion = Game.Minion(i)
-        if minion and IsValid(minion) and minion.isEnemy and myHero.pos:DistanceTo(minion.pos) <= 700 and myHero.mana / myHero.maxMana >= Menu.clear.mana:Value() / 100 then
-            local QRange = (myHero.range + 50 + myHero.boundingRadius + minion.boundingRadius)
-            local QDmg = (getdmg("Q", minion, myHero, 1) + getdmg("AA", minion, myHero))
-
-            if Ready(_Q) and Menu.clear.useQ:Value() and not HasBuff(myHero, "camilleqprimingstart") and myHero.pos:DistanceTo(minion.pos) <= QRange and QDmg > minion.health then
+        local ok, minion = pcall(Game.Minion, i)
+        if ok and minion and minion.pos and minion.pos.x and minion.isEnemy and myHero.pos:DistanceTo(minion.pos) <= 700 and myHero.mana / myHero.maxMana >= Menu.clear.mana:Value() / 100 then
+            local QRange = (myHero.range + 50 + myHero.boundingRadius + (minion.boundingRadius or 0))
+            local QDmg = (HAS_DAMAGE_LIB and (getdmg("Q", minion, myHero, 1) + getdmg("AA", minion, myHero)) or 0)
+            if Ready(_Q) and Menu.clear.useQ:Value() and not HasBuff(myHero, "camilleqprimingstart") and myHero.pos:DistanceTo(minion.pos) <= QRange and QDmg > 0 and QDmg > minion.health then
                 Control.CastSpell(HK_Q)
             end
-
             if myHero.pos:DistanceTo(minion.pos) < 650 and Menu.clear.useW:Value() and Ready(_W) and not IsCastingE then
-                if GetMinionCount(400, minion) >= Menu.clear.wCount:Value() then
+                local mcOK, cnt = pcall(GetMinionCount, 400, minion)
+                if not safeMode or (mcOK and cnt and cnt >= Menu.clear.wCount:Value()) then
                     Control.CastSpell(HK_W, minion.pos)
                 end
             end
@@ -518,9 +533,9 @@ end
 
 local function JungleClear()
     for i = 1, Game.MinionCount() do
-        local minion = Game.Minion(i)
-        if minion and IsValid(minion) and (minion.team == 300) and myHero.pos:DistanceTo(minion.pos) <= 700 and myHero.mana / myHero.maxMana >= Menu.jclear.mana:Value() / 100 then
-            local QRange = (myHero.range + 50 + myHero.boundingRadius + minion.boundingRadius)
+        local ok, minion = pcall(Game.Minion, i)
+        if ok and minion and minion.pos and minion.pos.x and (minion.team == 300) and myHero.pos:DistanceTo(minion.pos) <= 700 and myHero.mana / myHero.maxMana >= Menu.jclear.mana:Value() / 100 then
+            local QRange = (myHero.range + 50 + myHero.boundingRadius + (minion.boundingRadius or 0))
             if Ready(_Q) and Menu.jclear.useQ:Value() and not HasBuff(myHero, "camilleqprimingstart") and myHero.pos:DistanceTo(minion.pos) <= QRange then
                 Control.CastSpell(HK_Q)
             end
@@ -533,16 +548,18 @@ end
 
 local function LastHit()
     for i = 1, Game.MinionCount() do
-        local minion = Game.Minion(i)
-        if minion and IsValid(minion) and minion.isEnemy and myHero.pos:DistanceTo(minion.pos) <= 700 and myHero.mana / myHero.maxMana >= Menu.lasthit.mana:Value() / 100 then
-            local QDmg = (getdmg("Q", minion, myHero, 1) + getdmg("AA", minion, myHero))
-            local WDmg = getdmg("W", minion, myHero)
-            local QRange = (myHero.range + 50 + myHero.boundingRadius + minion.boundingRadius)
-
-            if Ready(_Q) and Menu.lasthit.useQ:Value() and not HasBuff(myHero, "camilleqprimingstart") and myHero.pos:DistanceTo(minion.pos) <= QRange and QDmg > minion.health then
+        local ok, minion = pcall(Game.Minion, i)
+        if ok and minion and minion.pos and minion.pos.x and minion.isEnemy and myHero.pos:DistanceTo(minion.pos) <= 700 and myHero.mana / myHero.maxMana >= Menu.lasthit.mana:Value() / 100 then
+            local QRange = (myHero.range + 50 + myHero.boundingRadius + (minion.boundingRadius or 0))
+            local QDmg, WDmg = 0, 0
+            if HAS_DAMAGE_LIB then
+                QDmg = (getdmg("Q", minion, myHero, 1) + getdmg("AA", minion, myHero))
+                WDmg = getdmg("W", minion, myHero)
+            end
+            if Ready(_Q) and Menu.lasthit.useQ:Value() and not HasBuff(myHero, "camilleqprimingstart") and myHero.pos:DistanceTo(minion.pos) <= QRange and QDmg > 0 and QDmg > minion.health then
                 Control.CastSpell(HK_Q)
             end
-            if myHero.pos:DistanceTo(minion.pos) < 650 and myHero.pos:DistanceTo(minion.pos) > 200 and Menu.lasthit.useW:Value() and Ready(_W) and WDmg > minion.health and not IsCastingE then
+            if myHero.pos:DistanceTo(minion.pos) < 650 and myHero.pos:DistanceTo(minion.pos) > 200 and Menu.lasthit.useW:Value() and Ready(_W) and WDmg > 0 and WDmg > minion.health and not IsCastingE then
                 Control.CastSpell(HK_W, minion.pos)
             end
         end
