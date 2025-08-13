@@ -1,12 +1,12 @@
 class "Tracker"
 require "MapPositionGOS"
 
--- Versioning (detected by DepressiveLoader via scriptVersion / __version patterns)
-local __version = "1.00"
+-- Versioning
+local __version = "1.01"
 local scriptVersion = __version
 
 function Tracker:__init()
-    PrintChat("Credit to: C41T CampTracker V0.7 (BETA) loaded")
+    PrintChat("C41T CampTracker V0.7 (BETA) loaded")
     self:LoadMenu()
     Callback.Add(
         "Tick",
