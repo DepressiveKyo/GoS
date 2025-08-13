@@ -19,6 +19,8 @@ local Allies, Enemies, Minions = {}, {}, {}
 -- Cached squared distances to myHero for fast in-range checks when querying from myHero position
 local EnemyDist2, AllyDist2 = {}, {}
 local LastHeroScan, LastMinionScan, ScanInterval = 0, 0, 0.33
+-- Warmup window to rescan more aggressively on game start/load to avoid empty caches
+DepressiveLib.__warmupEnd = nil
 
 local function SafeTime()
     return (Game and Game.Timer and Game.Timer()) or os.clock()
@@ -142,8 +144,14 @@ end
 
 function DepressiveLib.RefreshCaches(force)
     local t = SafeTime()
-    if force or t - LastHeroScan > ScanInterval then ScanHeroes(); LastHeroScan = t end
-    if force or t - LastMinionScan > ScanInterval then ScanMinions(); LastMinionScan = t end
+    -- During warmup always force
+    if DepressiveLib.__warmupEnd and t < DepressiveLib.__warmupEnd then force = true end
+    if force or t - LastHeroScan > ScanInterval then
+        ScanHeroes(); LastHeroScan = t
+    end
+    if force or t - LastMinionScan > ScanInterval then
+        ScanMinions(); LastMinionScan = t
+    end
 end
 
 -- Iterators
@@ -221,6 +229,11 @@ function DepressiveLib.CastSpellFast(hk, pos, skipRangeCheck, range)
 end
 
 -- Auto cache refresh
+-- Perform an immediate initial scan (some platforms require slight delay; we do initial + warmup period)
+ScanHeroes(); ScanMinions(); LastHeroScan = SafeTime(); LastMinionScan = LastHeroScan
+-- If hero count seems too small (only myHero), keep warmup longer
+local initialCount = #Allies + #Enemies
+DepressiveLib.__warmupEnd = SafeTime() + (initialCount <= 1 and 1.2 or 0.6)
 Callback.Add("Tick", function() DepressiveLib.RefreshCaches(false) end)
 
 -- =========================
