@@ -1,4 +1,4 @@
-local LOADER_VERSION = 1.09
+local LOADER_VERSION = 1.10
 local DEPRESSIVE_PATH = COMMON_PATH .. "Depressive/" -- local storage path (unchanged locally)
 local CHAMPIONS_PATH = DEPRESSIVE_PATH .. "Champions/"
 local UTILITY_PATH = DEPRESSIVE_PATH .. "Utility/"
@@ -105,6 +105,27 @@ end
 -- Populate additional utilities from manifest (if present remotely)
 LoadRemoteUtilityList()
 
+-- Rebuild utility menu dynamically (can be invoked for refresh)
+local UtilityMenu = nil
+local function BuildUtilityMenu()
+    if not _G.MenuElement then return end
+    if UtilityMenu == nil then
+        UtilityMenu = MenuElement({ type = MENU, id = "DepressiveUtilityRoot", name = "Depressive Utility" })
+        UtilityMenu:MenuElement({ id = "info", name = "Toggle utilities to load", value = true })
+        UtilityMenu:MenuElement({ id = "refresh", name = "Refresh Manifest (click)", value = false })
+    end
+    -- Add toggles for every non-auto utility not already present
+    for _, u in ipairs(CORE_UTILITIES) do
+        if not u.auto then
+            local toggleId = "enable_" .. u.req
+            if UtilityMenu[toggleId] == nil then
+                local displayName = (u.req:gsub("Depressive", ""))
+                UtilityMenu:MenuElement({ id = toggleId, name = displayName, value = false })
+            end
+        end
+    end
+end
+
 local UtilityModules = {}
 for _, u in ipairs(CORE_UTILITIES) do
     local inUtil = (u.folder == "Utility")
@@ -117,19 +138,8 @@ for _, u in ipairs(CORE_UTILITIES) do
     end
 end
 
--- Simple utility master menu
-local UtilityMenu = nil
-if _G.MenuElement then
-    UtilityMenu = MenuElement({ type = MENU, id = "DepressiveUtilityRoot", name = "Depressive Utility" })
-    UtilityMenu:MenuElement({ id = "info", name = "Utilities (toggle to load)", value = true })
-    for _, u in ipairs(CORE_UTILITIES) do
-        if not u.auto then
-            local toggleId = "enable_" .. u.req
-            local displayName = (u.req:gsub("Depressive", ""))
-            UtilityMenu:MenuElement({ id = toggleId, name = displayName, value = false })
-        end
-    end
-end
+-- Build menu after core utils update
+BuildUtilityMenu()
 
 local function TryLoadOptionalUtility(reqName)
     local path = "Depressive/Utility/" .. reqName
@@ -141,12 +151,23 @@ end
 
 Callback.Add("Tick", function()
     if UtilityMenu then
+        -- Refresh manifest on demand
+        local refreshElem = UtilityMenu.refresh
+        if refreshElem and refreshElem:Value() then
+            refreshElem:Value(false)
+            LoadRemoteUtilityList() -- may append new utilities
+            BuildUtilityMenu() -- add toggles for any new ones
+        end
         for _, u in ipairs(CORE_UTILITIES) do
             if not u.auto then
                 local toggleId = "enable_" .. u.req
                 local elem = UtilityMenu[toggleId]
                 if elem and elem:Value() and not UtilityModules[u.req] then
-                    TryLoadOptionalUtility(u.req)
+                    if TryLoadOptionalUtility(u.req) then
+                        print("[DepressiveLoader] Loaded utility: " .. u.req)
+                    else
+                        print("[DepressiveLoader] Failed to load utility: " .. u.req)
+                    end
                 end
             end
         end
