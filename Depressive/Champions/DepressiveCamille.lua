@@ -1,4 +1,4 @@
-local scriptVersion = 1.30 -- required first line pattern for loader (scriptVersion = x.xx)
+local scriptVersion = 1.31 -- required first line pattern for loader (scriptVersion = x.xx)
 require "MapPositionGOS"
 local Lib = require("Depressive/DepressiveLib") or _G.DepressiveLib
 pcall(function() require("DepressivePrediction") end)
