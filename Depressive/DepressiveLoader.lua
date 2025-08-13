@@ -1,7 +1,8 @@
-local LOADER_VERSION = 1.12
+local LOADER_VERSION = 1.15
 local DEPRESSIVE_PATH = COMMON_PATH .. "Depressive/" -- local storage path (unchanged locally)
 local CHAMPIONS_PATH = DEPRESSIVE_PATH .. "Champions/"
 local UTILITY_PATH = DEPRESSIVE_PATH .. "Utility/"
+local LIBRARIES_PATH = DEPRESSIVE_PATH .. "Libraries/"
 local LOADER_FILE = "DepressiveLoader.lua"
 local LOADER_VERSION_FILE = "DepressiveLoader.version"
 
@@ -71,13 +72,71 @@ local function EnsureUtilityUpdated(fileName, inUtilityFolder)
     return false
 end
 
+-- Library auto-update (pure dependencies, always autoload before champions)
+local function EnsureLibraryUpdated(fileName)
+    if not fileName then return end
+    local base = fileName:gsub("%.lua$", "")
+    local verFile = base .. ".version"
+    DownloadFile(LIBRARIES_PATH, verFile, GITHUB_BASE .. "Libraries/")
+    local remoteVer = tonumber(ReadFirstLine(LIBRARIES_PATH .. verFile))
+    local localVer = ExtractLocalVersion(LIBRARIES_PATH .. fileName)
+    if remoteVer and ((not FileExists(LIBRARIES_PATH .. fileName)) or (not localVer) or (remoteVer > localVer)) then
+        DownloadFile(LIBRARIES_PATH, fileName, GITHUB_BASE .. "Libraries/")
+        print(string.format("[DepressiveLoader] Updated library %s (remote %.2f)", base, remoteVer))
+        return true
+    elseif not FileExists(LIBRARIES_PATH .. fileName) then
+        -- Fallback single download if no versioning provided
+        DownloadFile(LIBRARIES_PATH, fileName, GITHUB_BASE .. "Libraries/")
+        print(string.format("[DepressiveLoader] Downloaded library %s (no version file)", base))
+        return true
+    end
+    return false
+end
+
 local CORE_UTILITIES = {
     { file = "DepressiveLib.lua",        req = "DepressiveLib",        folder = "",         auto = true  },
     { file = "DepressivePrediction.lua", req = "DepressivePrediction", folder = "Utility",   auto = true  },
     { file = "DepressiveActivatorG.lua", req = "DepressiveActivatorG", folder = "Utility",   auto = false },
     { file = "DepressiveAutoSmite.lua",  req = "DepressiveAutoSmite",  folder = "Utility",   auto = false },
-    { file = "DepressiveCamp.lua",       req = "DepressiveCampTracker",       folder = "Utility",   auto = true },
+    { file = "DepressiveCamp.lua",       req = "DepressiveCamp",       folder = "Utility",   auto = true  }, -- now autoloads
 }
+
+-- Core libraries (loaded before anything else)
+-- Order matters if there are dependencies (geometry -> collision -> map position)
+-- Registered libraries (lazy load on demand)
+local REGISTERED_LIBRARIES = {
+    MapPositionGOS = { file = "MapPositionGOS.lua" },
+    ["2DGeometry"]  = { file = "2DGeometry.lua" },
+    Collision       = { file = "Collision.lua" },
+}
+
+-- Ensure Libraries directory exists locally (GoS generally creates on download)
+if not FileExists(LIBRARIES_PATH .. "..") then
+    -- creation not guaranteed via io, but downloads will create needed path
+end
+
+-- Lazy loader function exposed globally
+function _G.DepressiveLoadLibrary(name)
+    local info = REGISTERED_LIBRARIES[name]
+    if not info then
+        print("[DepressiveLoader] Library not registered: " .. tostring(name))
+        return false
+    end
+    if _G[name] then return true end -- already loaded
+    EnsureLibraryUpdated(info.file)
+    local ok, mod = pcall(function() return require("Depressive/Libraries/" .. name) end)
+    if not ok then
+        ok, mod = pcall(function() return require(name) end)
+    end
+    if ok then
+        if mod ~= nil then _G[name] = mod end
+        print("[DepressiveLoader] Library loaded (lazy): " .. name)
+        return true
+    else
+        print("[DepressiveLoader] FAILED to load library: " .. name .. " -> " .. tostring(mod))
+    end
+    return false
+end
 
 -- Simple static utility menu
 local UtilityMenu = nil
