@@ -2,7 +2,7 @@ class "Tracker"
 require "MapPositionGOS"
 
 -- Versioning
-local __version = "1.01"
+local __version = "1.02"
 local scriptVersion = __version
 
 function Tracker:__init()
@@ -890,18 +890,19 @@ function Tracker:Draw()
     self:DrawCampTimer()
 end
 
-function OnLoad()
-    Tracker()
+-- Singleton creation helper
+local function CreateCampTracker()
+    if _G.CampTrackerInstance then return _G.CampTrackerInstance end
+    _G.CampTrackerInstance = Tracker()
+    return _G.CampTrackerInstance
 end
 
--- Auto-instantiate when required as a module (so it works via DepressiveLoader without direct OnLoad call)
-if not _G.__DepressiveCampLoaded then
-    _G.__DepressiveCampLoaded = true
-    if not _G.CampTrackerInstance then
-        -- Directly create tracker instance to ensure callbacks register
-        Tracker()
-    end
+function OnLoad()
+    CreateCampTracker()
 end
+
+-- Auto-instantiate for loader require (safe singleton)
+CreateCampTracker()
 
 --Not In Use
 --[[
