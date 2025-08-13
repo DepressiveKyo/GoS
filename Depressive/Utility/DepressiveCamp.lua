@@ -2,11 +2,20 @@ class "Tracker"
 require "MapPositionGOS"
 
 -- Versioning
-local __version = "1.02"
+local __version = "1.03"
 local scriptVersion = __version
 
+-- Hard guard: if module already processed, return existing singleton (prevents multi-require / different paths)
+if _G.__DepressiveCampModuleLoaded then
+    return _G.CampTrackerInstance
+end
+_G.__DepressiveCampModuleLoaded = true
+
 function Tracker:__init()
-    PrintChat("C41T CampTracker V0.7 (BETA) loaded")
+    if not _G.__CampTrackerAnnounced then
+        PrintChat("C41T CampTracker V0.7 (BETA) loaded")
+        _G.__CampTrackerAnnounced = true
+    end
     self:LoadMenu()
     Callback.Add(
         "Tick",
@@ -892,8 +901,9 @@ end
 
 -- Singleton creation helper
 local function CreateCampTracker()
-    if _G.CampTrackerInstance then return _G.CampTrackerInstance end
-    _G.CampTrackerInstance = Tracker()
+    if not _G.CampTrackerInstance then
+        _G.CampTrackerInstance = Tracker()
+    end
     return _G.CampTrackerInstance
 end
 
@@ -903,6 +913,8 @@ end
 
 -- Auto-instantiate for loader require (safe singleton)
 CreateCampTracker()
+
+return _G.CampTrackerInstance
 
 --Not In Use
 --[[
