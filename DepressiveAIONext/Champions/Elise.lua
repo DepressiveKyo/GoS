@@ -1,18 +1,25 @@
+if _G.DepressiveAIONext_EliseLoaded then return end
+_G.DepressiveAIONext_EliseLoaded = true
+
 local Heroes = {"Elise"}
 
 require("DepressivePrediction")
 
--- Hero validation
-if not table.contains(Heroes, myHero.charName) then return end
+-- Hero validation (fallback manual contains)
+local function _contains(t,v) for i=1,#t do if t[i]==v then return true end end return false end
+if not (table.contains and table.contains(Heroes, myHero.charName) or _contains(Heroes, myHero.charName)) then return end
 
 -- Load DepressivePrediction library
 local PredictionLib = nil
+local predictionInitPrinted = false
 DelayAction(function()
-    if _G.DepressivePrediction then
+    if _G.DepressivePrediction and not predictionInitPrinted then
         PredictionLib = _G.DepressivePrediction
         print("DepressiveElise: DepressivePrediction library loaded successfully!")
-    else
+        predictionInitPrinted = true
+    elseif not _G.DepressivePrediction and not predictionInitPrinted then
         print("DepressiveElise: Warning - DepressivePrediction library not found!")
+        predictionInitPrinted = true
     end
 end, 0.1)
 
@@ -2035,14 +2042,14 @@ end
 
 -- Initialize
 DelayAction(function()
-    -- Check for DepressivePrediction one more time before initializing Elise
-    if _G.DepressivePrediction then
+    if _G.DepressivePrediction and not predictionInitPrinted then
         PredictionLib = _G.DepressivePrediction
-        print("DepressiveElise: DepressivePrediction integrated successfully!")
-    else
-        print("DepressiveElise: Running without DepressivePrediction (basic prediction will be used)")
+        print("DepressiveElise: DepressivePrediction library loaded successfully!")
+        predictionInitPrinted = true
     end
-    
-    _G.Elise = Elise()
-    print("DepressiveElise: Loaded successfully!")
+    -- instantiate only once
+    if not _G.DepressiveAIONext_EliseInstance then
+        _G.DepressiveAIONext_EliseInstance = Elise()
+        print("DepressiveElise: Loaded successfully!")
+    end
 end, math.max(0.2, 5 - Game.Timer()))
