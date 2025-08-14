@@ -1,39 +1,34 @@
-local Supported = {"Lillia"}
-if not table.contains and type(_G.table) == "table" then
-    -- fallback contains
-    function table.contains(t,v) for i=1,#t do if t[i]==v then return true end end return false end
-end
-if not table.contains(Supported, myHero.charName) then return end
+local Heroes = {"Lillia"}
+if not (myHero and myHero.charName and table.contains and table.contains(Heroes, myHero.charName) or (function()
+    for i=1,#Heroes do if Heroes[i]==myHero.charName then return true end end return false end)()) then return end
 
--- Avoid double load
 if _G.DepressiveAIONext_LilliaLoaded then return end
 _G.DepressiveAIONext_LilliaLoaded = true
 
 require("DepressivePrediction")
 
+-- (BEGIN Original Script)
+local function contains(tbl, value)
+    for i = 1, #tbl do if tbl[i] == value then return true end end
+    return false
+end
+-- Hero validation already done above
+
 -- Cached aliases
 local GameHeroCount, GameHero, GameTimer, GameMinionCount, GameMinion = Game.HeroCount, Game.Hero, Game.Timer, Game.MinionCount, Game.Minion
 
--- Performance throttling
-local function ShouldRun(key, interval)
-    LilliaNextRun = LilliaNextRun or {}
-    local t = GameTimer()
-    local nxt = LilliaNextRun[key] or 0
-    if t >= nxt then
-        LilliaNextRun[key] = t + interval
-        return true
-    end
-    return false
-end
-
--- Defaults
-local Perf = { heroScan = 0.50, autoCheck = 0.20 }
+-- Perf controls
+local Perf = {
+    heroScan = 0.50,
+    autoCheck = 0.20,
+}
+local lastHeroScan, lastAutoCheck = 0, 0
 local EnemyHeroes = {}
-local passiveCache, lastPassiveSweep = {}, 0
 
 -- State
-local lastQCast, lastWCast, lastECast, lastRCast = 0,0,0,0
-local moveTo, lastHelperSet, movementHooked = nil, 0, false
+local lastQCast, lastWCast, lastECast, lastRCast = 0, 0, 0, 0
+local moveTo, lastHelperSet = nil, 0
+local movementHooked = false
 
 -- Spell data
 local Spell = {
@@ -43,69 +38,95 @@ local Spell = {
     R = { range = 1200, delay = 0.50 },
 }
 
-local function GetDistance2D(a,b)
+local function GetDistance2D(a, b)
     if not a or not b then return math.huge end
-    local dx, dz = (a.x or 0)-(b.x or 0), (a.z or 0)-(b.z or 0)
+    local dx, dz = (a.x or 0) - (b.x or 0), (a.z or 0) - (b.z or 0)
     return math.sqrt(dx*dx + dz*dz)
 end
-local function IsValid(u) return u and u.valid and not u.dead and u.visible end
-local function Ready(slot) local sd = myHero:GetSpellData(slot); return sd and sd.level>0 and Game.CanUseSpell(slot)==0 end
-
-local function RefreshHeroes()
-    EnemyHeroes = {}
-    for i=1, GameHeroCount() do local h=GameHero(i); if h and h.team ~= myHero.team then EnemyHeroes[#EnemyHeroes+1]=h end end
+local function IsValid(u)
+    return u and u.valid and not u.dead and u.visible
+end
+local function Ready(slot)
+    local sd = myHero:GetSpellData(slot)
+    return sd and sd.level > 0 and Game.CanUseSpell(slot) == 0
 end
 
--- Passive detection
+local passiveCache, lastPassiveSweep = {}, 0
 local function HasPassive(unit)
     if not unit or not unit.buffCount then return false end
     local id, now = unit.networkID or unit.handle or unit.charName, GameTimer()
-    local c = passiveCache[id]; if c and now - c.t < 0.15 then return c.v end
-    local found=false
-    for i=0, unit.buffCount do
+    local c = passiveCache[id]
+    if c and now - c.t < 0.15 then return c.v end
+    local found = false
+    for i = 0, unit.buffCount do
         local b = unit:GetBuff(i)
-        if b and b.count and b.count>0 and b.name then
+        if b and b.count and b.count > 0 and b.name then
             local n = string.lower(b.name)
-            if n:find("lillia") and (n:find("pass") or n:find("dream") or n:find("dust")) then found=true; break end
+            if n:find("lillia") and (n:find("pass") or n:find("dream") or n:find("dust")) then
+                found = true; break
+            end
         end
     end
-    passiveCache[id] = { v=found, t=now }
-    if now - lastPassiveSweep > 5 then for k,v in pairs(passiveCache) do if now - v.t > 10 then passiveCache[k]=nil end end lastPassiveSweep=now end
+    passiveCache[id] = { v = found, t = now }
+    if now - lastPassiveSweep > 5.0 then
+        for k,v in pairs(passiveCache) do if now - v.t > 10.0 then passiveCache[k] = nil end end
+        lastPassiveSweep = now
+    end
     return found
 end
 
 local function GetMode()
     if _G.SDK and _G.SDK.Orbwalker and _G.SDK.Orbwalker.Modes then
         local M = _G.SDK.Orbwalker.Modes
-        if M[_G.SDK.ORBWALKER_MODE_COMBO] then return "Combo" end
-        if M[_G.SDK.ORBWALKER_MODE_HARASS] then return "Harass" end
-        if M[_G.SDK.ORBWALKER_MODE_LANECLEAR] or M[_G.SDK.ORBWALKER_MODE_JUNGLECLEAR] then return "Clear" end
+        if M and (M[_G.SDK.ORBWALKER_MODE_COMBO] or M.Combo) then return "Combo" end
+        if M and (M[_G.SDK.ORBWALKER_MODE_HARASS] or M.Harass) then return "Harass" end
+        if M and (M[_G.SDK.ORBWALKER_MODE_LANECLEAR] or M[_G.SDK.ORBWALKER_MODE_JUNGLECLEAR] or M.Clear or M.LaneClear) then return "Clear" end
+        if M and (M[_G.SDK.ORBWALKER_MODE_FLEE] or M.Flee) then return "Flee" end
     end
     if _G.GOS and _G.GOS.GetMode then
-        local m = (type(_G.GOS.GetMode)=="function" and _G.GOS.GetMode()) or nil
-        if m==1 then return "Combo" elseif m==2 then return "Harass" elseif m==3 then return "Clear" end
+        local m = (type(_G.GOS.GetMode) == "function" and _G.GOS.GetMode()) or nil
+        if m == 1 then return "Combo" elseif m == 2 then return "Harass" elseif m == 3 then return "Clear" elseif m == 4 then return "Flee" end
+    end
+    if _G.Orbwalker and _G.Orbwalker.GetMode then
+        local ok, m = pcall(function() return _G.Orbwalker:GetMode() end)
+        if ok then return m end
     end
     return "None"
 end
 
+local function RefreshHeroes()
+    EnemyHeroes = {}
+    for i = 1, GameHeroCount() do
+        local h = GameHero(i)
+        if h and h.team ~= myHero.team then
+            EnemyHeroes[#EnemyHeroes+1] = h
+        end
+    end
+end
+
 local function GetNearestTarget(maxRange)
     local best, bestD = nil, math.huge
-    for i=1,#EnemyHeroes do local e=EnemyHeroes[i]; if IsValid(e) then local d=GetDistance2D(myHero.pos,e.pos); if d<bestD and d <= (maxRange or 2500) then best,bestD=e,d end end end
+    for i = 1, #EnemyHeroes do
+        local e = EnemyHeroes[i]
+        if IsValid(e) then
+            local d = GetDistance2D(myHero.pos, e.pos)
+            if d < bestD and d <= (maxRange or 2500) then best, bestD = e, d end
+        end
+    end
     return best, bestD
 end
 
 local function CalcComboDamage(unit)
     if not IsValid(unit) then return 0 end
     local level, ap = myHero.levelData.lvl or 1, myHero.ap or 0
-    local total=0
-    if Ready(_Q) then total=total+(30+15*level)+ap*0.4 end
-    if Ready(_W) then total=total+(70+50*level)+ap*0.3+unit.maxHealth*(0.05+0.01*level) end
-    if Ready(_E) then total=total+(50+20*level)+ap*0.4 end
-    if Ready(_R) then total=total+(50+50*level)+ap*0.3 end
+    local total = 0
+    if Ready(_Q) then total = total + (30 + 15*level) + ap*0.4 end
+    if Ready(_W) then total = total + (70 + 50*level) + ap*0.3 + unit.maxHealth * (0.05 + 0.01*level) end
+    if Ready(_E) then total = total + (50 + 20*level) + ap*0.4 end
+    if Ready(_R) then total = total + (50 + 50*level) + ap*0.3 end
     return total
 end
 
--- Menu
 local menu = MenuElement({id = "Lillia", name = "Depressive - Lillia", type = MENU})
 menu:MenuElement({id = "prediction", name = "Prediction", type = MENU})
 menu.prediction:MenuElement({id = "hitchance", name = "Min HitChance (1-6)", value = 2, min = 1, max = 6, step = 1})
@@ -152,11 +173,11 @@ menu.helper:MenuElement({id = "maxDistance", name = "Max move distance", value =
 menu.helper:MenuElement({id = "draw", name = "Draw helper position", value = true})
 
 local function GetPred(target, spec)
-    if menu.prediction.advanced:Value() and _G.DepressivePrediction and type(_G.DepressivePrediction.GetPrediction)=="function" then
+    if menu.prediction.advanced:Value() and _G.DepressivePrediction and type(_G.DepressivePrediction.GetPrediction) == "function" then
         local ok, r1, r2 = pcall(_G.DepressivePrediction.GetPrediction, target, spec)
         if ok then
-            if type(r1)=="table" and r1.castPos then return r1.castPos, r1.hitChance or 2
-            elseif type(r1)=="table" and r1.x then return r1, (type(r2)=="number" and r2) or 2 end
+            if type(r1) == "table" and r1.castPos then return r1.castPos, r1.hitChance or 2
+            elseif type(r1) == "table" and r1.x then return r1, (type(r2) == "number" and r2) or 2 end
         end
     end
     return target.pos, 2
@@ -165,8 +186,7 @@ end
 local function CastQ(target)
     if not Ready(_Q) or not target or not IsValid(target) then return false end
     local now = GameTimer(); if now - lastQCast < 0.20 then return false end
-    local d = GetDistance2D(myHero.pos, target.pos)
-    if d > Spell.Q.range then return false end
+    local d = GetDistance2D(myHero.pos, target.pos); if d > Spell.Q.range then return false end
     if menu.combo.qEdgeOnly:Value() and d < Spell.Q.outer - 40 then return false end
     Control.CastSpell(HK_Q); lastQCast = now; moveTo = nil; return true
 end
@@ -204,8 +224,7 @@ local function GetNeutralMonstersIn(range)
 local function ComputeQEdgePosition(target)
     if not target or not target.pos then return nil end
     local desired = (Spell.Q.outer or 330) - 10
-    local tx,tz = target.pos.x,target.pos.z
-    local hx,hz = myHero.pos.x,myHero.pos.z
+    local tx,tz = target.pos.x,target.pos.z; local hx,hz = myHero.pos.x,myHero.pos.z
     local dx,dz = hx-tx,hz-tz; local len = math.sqrt(dx*dx+dz*dz); if len < 1 then return nil end
     local nx,nz = dx/len,dz/len; local px,pz = tx+nx*desired, tz+nz*desired
     local pos = {x=px, y=myHero.pos.y, z=pz}; if MapPosition and MapPosition.inWall and MapPosition:inWall(pos) then return nil end
@@ -262,22 +281,29 @@ local function Clear()
 end
 
 local function OnTick()
-    if ShouldRun("HeroScan", menu.perf.heroScan:Value()) then RefreshHeroes() end
+    local now = GameTimer()
+    if now - lastHeroScan > menu.perf.heroScan:Value() then RefreshHeroes(); lastHeroScan = now end
     TryHookPreMovement(); UpdateHelper()
-    if moveTo and not movementHooked and ShouldRun("HelperMove", 0.06) then Control.Move(moveTo); lastHelperSet = GameTimer() end
+    if moveTo and not movementHooked then if now - lastHelperSet > 0.05 then Control.Move(moveTo); lastHelperSet = now end end
     local mode = GetMode()
     if mode == "Combo" then Combo() elseif mode == "Harass" then Harass() elseif mode == "Clear" or mode == "LaneClear" then Clear() end
 end
 local function OnDraw()
     if myHero.dead then return end
-    if menu.drawing.q:Value() then Draw.Circle(myHero.pos, Spell.Q.range, Draw.Color(120,0,255,0)) end
-    if menu.drawing.w:Value() then Draw.Circle(myHero.pos, Spell.W.range, Draw.Color(120,255,0,0)) end
-    if menu.drawing.e:Value() then Draw.Circle(myHero.pos, Spell.E.range, Draw.Color(120,0,0,255)) end
-    if menu.drawing.r:Value() then Draw.Circle(myHero.pos, Spell.R.range, Draw.Color(120,255,0,255)) end
-    if menu.helper.draw:Value() and moveTo then Draw.Circle(moveTo, 35, Draw.Color(200,255,255,0)) end
+    if menu.drawing.q:Value() then Draw.Circle(myHero.pos, Spell.Q.range, Draw.Color(120, 0, 255, 0)) end
+    if menu.drawing.w:Value() then Draw.Circle(myHero.pos, Spell.W.range, Draw.Color(120, 255, 0, 0)) end
+    if menu.drawing.e:Value() then Draw.Circle(myHero.pos, Spell.E.range, Draw.Color(120, 0, 0, 255)) end
+    if menu.drawing.r:Value() then Draw.Circle(myHero.pos, Spell.R.range, Draw.Color(120, 255, 0, 255)) end
+    if menu.helper.draw:Value() and moveTo then
+        Draw.Circle(moveTo, 35, Draw.Color(200, 255, 255, 0))
+        local from2d = myHero.pos and myHero.pos.To2D and myHero.pos:To2D() or nil
+        local to2d = nil
+        if moveTo.To2D then to2d = moveTo:To2D() elseif type(Vector) == "function" then local v = Vector(moveTo.x or 0, moveTo.y or myHero.pos.y, moveTo.z or 0); if v and v.To2D then to2d = v:To2D() end end
+        if from2d and to2d and from2d.onScreen and to2d.onScreen then Draw.Line(from2d.x, from2d.y, to2d.x, to2d.y, 1, Draw.Color(150, 255, 255, 0)) end
+    end
 end
 
 Callback.Add("Tick", OnTick)
 Callback.Add("Draw", OnDraw)
-
-print("[DepressiveAIONext][Lillia] Module loaded")
+print("[DepressiveAIONext] Lillia module loaded")
+-- (END Original Script)
