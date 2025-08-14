@@ -69,11 +69,16 @@ local function UpdateChampions(remote, localData)
     for champ, info in pairs(remote.Champions) do
         local localEntry = localData.Champions[champ]
         local needs = (not localEntry) or (info.Version or 0) > (localEntry.Version or 0)
+        -- Also force download if local champion script file is missing
+        local fileName = string.format("Champions/%s.lua", champ)
+        local champPath = LOCAL_PATH .. fileName
+        if not FileExists(champPath) then
+            needs = true
+        end
         if needs then
-            local fileName = string.format("Champions/%s.lua", champ)
             print(string.format("[DepressiveAIONext] Downloading %s (v%0.2f)", champ, info.Version or 0))
             _G.DepressiveAIONextPending.count = _G.DepressiveAIONextPending.count + 1
-            Download(BASE_URL .. fileName, LOCAL_PATH .. fileName, function()
+            Download(BASE_URL .. fileName, champPath, function()
                 _G.DepressiveAIONextPending.count = math.max(0, (_G.DepressiveAIONextPending.count or 1) - 1)
             end)
         end
