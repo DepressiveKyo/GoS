@@ -1,7 +1,7 @@
 if _G.__AATROX_CHAMPION_LOADED then return end
 _G.__AATROX_CHAMPION_LOADED = true
 _G.__AATROX_DEPRESSIVE_LOADED = true -- inform standalone script
-local VERSION = "0.13"
+local VERSION = "0.14"
 -- ===================== BASIC UTILITIES ===================== --
 local insert = table.insert
 
@@ -165,7 +165,7 @@ local MENU_GUARD_KEY = "__AATROX_ADV_MENU"
 function LoadScript()
 	if _G[MENU_GUARD_KEY] and Menu then return end -- ya creado
 	_G[MENU_GUARD_KEY] = true
-	Menu = Menu or MenuElement({type = MENU, id = "Aatrox"..myHero.charName.."Adv", name = "Depressive - "..myHero.charName})
+	Menu = Menu or MenuElement({type = MENU, id = "Aatrox"..myHero.charName.."Adv", name = "Depressive - Aatrox"})
 	Menu:MenuElement({name = " ", drop = {"Version "..VERSION}})
 
 	-- Combo
