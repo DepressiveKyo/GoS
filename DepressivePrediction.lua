@@ -1,149 +1,16 @@
-local Version = 2.21
-local Name = "DepressivePrediction"
+-- DepressivePrediction - Mechanical, stable, simplified prediction
+-- Rewritten for reliability: deterministic, guarded, collision-aware
+local Version = 3.0
+if _G.DepressivePrediction then return end
 
--- Verificar si ya está cargado
-if _G.DepressivePrediction then
-    return
-end
+local Game = _G.Game
+local Callback = _G.Callback
+local myHero = _G.myHero
 
--- Constantes mejoradas
+local math_sqrt, math_abs, math_min, math_max = math.sqrt, math.abs, math.min, math.max
 local math_huge = math.huge
-local math_pi = math.pi
-local math_sqrt = assert(math.sqrt)
-local math_abs = assert(math.abs)
-local math_min = assert(math.min)
-local math_max = assert(math.max)
-local math_pow = assert(math.pow)
-local math_atan2 = assert(math.atan2)
-local math_cos = assert(math.cos)
-local math_sin = assert(math.sin)
-local table_insert = assert(table.insert)
-local Game, Vector, Draw, Callback = _G.Game, _G.Vector, _G.Draw, _G.Callback
 
--- Tabla completa de neutrales basada en DepressiveAutoSmite (lowercase keys)
-local NeutralLookup = {
-    -- Dragons (all variants)
-    ["sru_dragon_air"] = {type = "epic", priority = 8},
-    ["sru_dragon_earth"] = {type = "epic", priority = 8},
-    ["sru_dragon_fire"] = {type = "epic", priority = 8},
-    ["sru_dragon_water"] = {type = "epic", priority = 8},
-    ["sru_dragon_elder"] = {type = "epic", priority = 10},
-    ["sru_dragon_ruined"] = {type = "epic", priority = 8},
-    ["sru_dragon_chemtech"] = {type = "epic", priority = 8},
-    ["sru_dragon_hextech"] = {type = "epic", priority = 8},
-    ["sru_dragon_cloud"] = {type = "epic", priority = 8},
-    ["sru_dragon_mountain"] = {type = "epic", priority = 8},
-    ["sru_dragon_ocean"] = {type = "epic", priority = 8},
-    ["sru_dragon_infernal"] = {type = "epic", priority = 8},
-    ["sru_dragon_wind"] = {type = "epic", priority = 8},
-    ["sru_dragon_lightning"] = {type = "epic", priority = 8},
-    -- Baron/Horde/Atakhan/Herald
-    ["sru_baron"] = {type = "epic", priority = 10},
-    ["sru_horde"] = {type = "epic", priority = 9},
-    ["sru_atakhan"] = {type = "epic", priority = 10},
-    ["sru_riftherald"] = {type = "epic", priority = 9},
-    -- Buffs
-    ["sru_blue"] = {type = "buff", priority = 7},
-    ["sru_red"] = {type = "buff", priority = 7},
-    -- Camps
-    ["sru_krug"] = {type = "camp", priority = 5},
-    ["sru_krugmini"] = {type = "camp", priority = 3},
-    ["sru_gromp"] = {type = "camp", priority = 5},
-    ["sru_murkwolf"] = {type = "camp", priority = 5},
-    ["sru_murkwolfmini"] = {type = "camp", priority = 3},
-    ["sru_razorbeak"] = {type = "camp", priority = 5},
-    ["sru_razorbeakmini"] = {type = "camp", priority = 3},
-    -- Scuttle
-    ["sru_crab"] = {type = "scuttle", priority = 4},
-}
-
-local function IdentifyNeutralByNameLower(lowerName)
-    if not lowerName or lowerName == "" then return false end
-    -- Exact lookup first
-    if NeutralLookup[lowerName] then
-        local d = NeutralLookup[lowerName]
-        return true, d.type, d.priority, lowerName
-    end
-    -- Heuristics for engine variations
-    if lowerName:find("sru_dragon") or lowerName:find("dragon") then
-        local pr = lowerName:find("elder") and 10 or 8
-        return true, "epic", pr, lowerName
-    end
-    if lowerName:find("baron") then return true, "epic", 10, lowerName end
-    if lowerName:find("atakhan") then return true, "epic", 10, lowerName end
-    if lowerName:find("horde") or lowerName:find("voidgrub") then return true, "epic", 9, lowerName end
-    if lowerName:find("herald") then return true, "epic", 9, lowerName end
-    if lowerName:find("sru_blue") or lowerName:find("blue") then return true, "buff", 7, lowerName end
-    if lowerName:find("sru_red") or lowerName:find("red") then return true, "buff", 7, lowerName end
-    if lowerName:find("gromp") or lowerName:find("murkwolf") or lowerName:find("razorbeak") or lowerName:find("krug") then
-        local pr = (lowerName:find("mini") and 3) or 5
-        return true, "camp", pr, lowerName
-    end
-    if lowerName:find("sru_crab") or lowerName:find("scuttl") or lowerName:find("crab") then
-        return true, "scuttle", 4, lowerName
-    end
-    return false
-end
-
--- Arena-aware team classification helpers
-local function IsArenaMap()
-    local mapID = Game.mapID or 0
-    if mapID == 30 or mapID == 33 then return true end
-    if mapID >= 30 and mapID <= 35 then return true end
-    local bounds = { maxDistance = 6000 }
-    pcall(function() bounds = Math:GetMapBounds() end)
-    return (bounds and bounds.maxDistance and bounds.maxDistance <= 3000) or false
-end
-
-local function IsEnemyUnit(unit)
-    if not unit or not unit.valid then return false end
-    local isArena = IsArenaMap()
-    -- Prefer team comparison when available
-    if isArena and myHero and myHero.team and unit.team then
-        return unit.team ~= myHero.team
-    end
-    -- Fall back to engine flags when consistent
-    if unit.isEnemy ~= nil and unit.isAlly ~= nil and unit.isEnemy ~= unit.isAlly then
-        return unit.isEnemy == true
-    end
-    -- Last resort in arena: treat any other hero that isn't us and isn't a clear neutral as enemy
-    if isArena and myHero and unit.networkID and myHero.networkID then
-        if unit.networkID == myHero.networkID then return false end
-        -- If names indicate neutral, don't classify as enemy here
-        local lc = (unit.charName and unit.charName:lower()) or ""
-        local ln = (unit.name and unit.name:lower()) or ""
-        local byName = IdentifyNeutralByNameLower(lc) or IdentifyNeutralByNameLower(ln)
-        if byName then return false end
-        return true
-    end
-    return unit.isEnemy == true
-end
-
-local function IsAllyUnit(unit)
-    if not unit or not unit.valid then return false end
-    local isArena = IsArenaMap()
-    if isArena and myHero and myHero.team and unit.team then
-        return unit.team == myHero.team
-    end
-    if unit.isEnemy ~= nil and unit.isAlly ~= nil and unit.isEnemy ~= unit.isAlly then
-        return unit.isAlly == true
-    end
-    if isArena and myHero and unit.networkID and myHero.networkID then
-        if unit.networkID == myHero.networkID then return true end
-    end
-    return unit.isAlly == true
-end
-
--- Tipos de colisión
-local COLLISION_MINION = 0
-local COLLISION_ALLYHERO = 1
-local COLLISION_ENEMYHERO = 2
-local COLLISION_YASUOWALL = 3
-local COLLISION_NEUTRAL = 4
-local COLLISION_ALLYMINION = 5
-local COLLISION_ENEMYMINION = 6
-
--- Precisión de predicción mejorada
+-- Constants (kept for compatibility with existing champion scripts)
 local HITCHANCE_IMPOSSIBLE = 0
 local HITCHANCE_COLLISION = 1
 local HITCHANCE_LOW = 2
@@ -152,117 +19,510 @@ local HITCHANCE_HIGH = 4
 local HITCHANCE_VERYHIGH = 5
 local HITCHANCE_IMMOBILE = 6
 
--- Tipos de habilidad
-local SPELLTYPE_LINE = 0
+local SPELLTYPE_LINE   = 0
 local SPELLTYPE_CIRCLE = 1
-local SPELLTYPE_CONE = 2
+local SPELLTYPE_CONE   = 2
 
--- Menu mejorado
-local __menu = MenuElement({name = "Depressive Prediction", id = "DepressivePrediction", type = _G.MENU})
+local COLLISION_MINION       = 0
+local COLLISION_ALLYHERO     = 1
+local COLLISION_ENEMYHERO    = 2
+local COLLISION_YASUOWALL    = 3 -- (not simulated, reserved)
+local COLLISION_NEUTRAL      = 4
+local COLLISION_ALLYMINION   = 5
+local COLLISION_ENEMYMINION  = 6
 
-local Menu = {
-    MaxRange = __menu:MenuElement({id = "PredMaxRange", name = "Pred Max Range %", value = 100, min = 70, max = 100, step = 1}),
-    Latency = __menu:MenuElement({id = "Latency", name = "Ping/Latency", value = 15, min = 0, max = 200, step = 5}),
-    ExtraDelay = __menu:MenuElement({id = "ExtraDelay", name = "Extra Delay", value = 0, min = 0, max = 100, step = 5}),
-    MovementAnalysis = __menu:MenuElement({id = "MovementAnalysis", name = "Advanced Movement Analysis", value = true}),
-    PathSmoothing = __menu:MenuElement({id = "PathSmoothing", name = "Path Smoothing", value = true}),
-    ReactionTime = __menu:MenuElement({id = "ReactionTime", name = "Enemy Reaction Time (ms)", value = 120, min = 50, max = 300, step = 10}),
-    ShowVisuals = __menu:MenuElement({id = "ShowVisuals", name = "Show Prediction Visuals", value = true}),
-    -- NUEVAS OPCIONES
-    DashPrediction = __menu:MenuElement({id = "DashPrediction", name = "Smart Dash Prediction", value = true}),
-    ZhonyaDetection = __menu:MenuElement({id = "ZhonyaDetection", name = "Zhonya's/Invuln Detection", value = true}),
-    YasuoWallDetection = __menu:MenuElement({id = "YasuoWallDetection", name = "Auto Yasuo Wall Detection", value = true}),
-    -- CENTRADO: limita cuánto adelantamos el tiro respecto a la posición actual del objetivo
-    LeadFactor = __menu:MenuElement({id = "LeadFactor", name = "Lead Factor % (lower = more centered)", value = 35, min = 20, max = 100, step = 5}),
+-- Buff types considered hard CC / immobile (superset for safety)
+local CC_TYPES = {
+    [5]=true,  -- Stun
+    [8]=true,  -- Taunt
+    [9]=true,  -- Polymorph (engine dependent)
+    [11]=true, -- Snare / Root
+    [21]=true, -- Fear
+    [22]=true, -- Charm
+    [24]=true, -- Suppression
+    [28]=true, -- Sleep
+    [29]=true, -- Stasis
+    [30]=true, -- Knockback (treated as immobilized while airborne)
+    [31]=true, -- Knockup
+    [39]=true, -- Knockup (alt)
 }
 
-function Menu:GetMaxRange()
-    return self.MaxRange:Value() * 0.01
+-- Menu (reintroducido)
+local Menu = nil
+do
+    local ok, err = pcall(function()
+        if _G.MenuElement then
+            local root = MenuElement({name = "Depressive Prediction", id = "DepressivePrediction", type = _G.MENU})
+            Menu = {
+                Root = root,
+                Enable = root:MenuElement({id = "Enable", name = "Enable Prediction", value = true}),
+                MaxRange = root:MenuElement({id = "MaxRange", name = "Max Range %", value = 100, min = 60, max = 100, step = 5}),
+                ExtraDelay = root:MenuElement({id = "ExtraDelay", name = "Extra Delay (ms)", value = 0, min = 0, max = 200, step = 10}),
+                LeadFactor = root:MenuElement({id = "LeadFactor", name = "Lead Factor %", value = 100, min = 25, max = 120, step = 5}),
+                Collision = root:MenuElement({id = "Collision", name = "Check Minion Collision", value = true}),
+                HitchanceBias = root:MenuElement({id = "HCBias", name = "Hitchance Bias (-1 low/+1 high)", value = 0, min = -1, max = 1, step = 1}),
+                DrawStatus = root:MenuElement({id = "DrawStatus", name = "Draw Status", value = true}),
+                EdgeOnly = root:MenuElement({id = "EdgeOnly", name = "Require target near max range", value = false}),
+                EdgePercent = root:MenuElement({id = "EdgePercent", name = "Edge range % threshold", value = 90, min = 70, max = 100, step = 1}),
+                Profile = root:MenuElement({id = "Profile", name = "Profile", value = 5, drop = {"Long Range","All In","Melee","Semi-Melee","Custom"}}),
+                ProfileNote = root:MenuElement({id = "ProfileNote", name = "Profiles overwrite settings unless Custom", type = _G.SPACE}),
+                InfoHeader = root:MenuElement({id = "InfoHeader", name = "--- Champion Examples ---", type = _G.SPACE}),
+                InfoAhri = root:MenuElement({id = "InfoAhri", name = "Ahri: Long Range (Q/E poke) -> Profile: Long Range", type = _G.SPACE}),
+                InfoYasuo = root:MenuElement({id = "InfoYasuo", name = "Yasuo: Short Q trades -> Profile: Melee", type = _G.SPACE}),
+                InfoAatrox = root:MenuElement({id = "InfoAatrox", name = "Aatrox: Q1/Q2 zone -> Profile: Semi-Melee", type = _G.SPACE}),
+                InfoCass = root:MenuElement({id = "InfoCass", name = "Cassiopeia: Sustained DPS -> Profile: All In", type = _G.SPACE}),
+                InfoElise = root:MenuElement({id = "InfoElise", name = "Elise: Human E pick -> Long Range / Spider burst -> All In", type = _G.SPACE}),
+                InfoLillia = root:MenuElement({id = "InfoLillia", name = "Lillia: Q spam + E snipe -> Semi-Melee (lane) / Long Range (E)", type = _G.SPACE}),
+                InfoTF = root:MenuElement({id = "InfoTF", name = "Twisted Fate: Gold Card setup -> All In / Blue poke -> Long Range", type = _G.SPACE})
+            }
+            -- Alias to avoid key mismatch (HitchanceBias vs HCBias)
+            Menu.HCBias = Menu.HitchanceBias
+        end
+    end)
+    if not ok then print("[DepressivePrediction] Menu creation failed: "..tostring(err)) end
 end
 
-function Menu:GetLatency()
-    return self.Latency:Value() * 0.001
+local function SafePos(obj)
+    if not obj then return nil end
+    if obj.pos and obj.pos.x then return obj.pos end
+    if obj.x and obj.z then return obj end
+    return nil
 end
 
-function Menu:GetExtraDelay()
-    return self.ExtraDelay:Value() * 0.001
+local function DistanceSqr(a,b)
+    if not a or not b then return math_huge end
+    local dx = a.x - b.x
+    local dz = a.z - b.z
+    return dx*dx + dz*dz
 end
 
-function Menu:GetReactionTime()
-    return self.ReactionTime:Value() * 0.001
+local function Distance(a,b)
+    local d2 = DistanceSqr(a,b)
+    if d2 == math_huge then return math_huge end
+    return math_sqrt(d2)
 end
 
-function Menu:GetLeadFactor()
-    return (self.LeadFactor and self.LeadFactor:Value() or 60) * 0.01
+local function IsValidTarget(t)
+    return t and t.valid and not t.dead and t.visible and t.isTargetable and t.pos and t.pos.x
 end
 
--- Clase Math mejorada
-local Math = {}
-
--- Cache de límites de mapa para evitar recomputar en cada llamada
-Math._boundsCache = { id = nil, bounds = nil }
-
--- Función para sanear posiciones y evitar valores extremos
-function Math:SanitizePosition(pos, referencePos)
-    if not pos then return nil end
-    
-    -- Crear una copia para no modificar el original
-    local sanitized = { x = pos.x, z = pos.z, y = pos.y }
-    
-    -- Detectar mapa automáticamente y ajustar límites
-    local mapBounds = self:GetMapBounds()
-    local MAP_MIN_X, MAP_MAX_X = mapBounds.minX, mapBounds.maxX
-    local MAP_MIN_Z, MAP_MAX_Z = mapBounds.minZ, mapBounds.maxZ
-    
-    -- Aplicar límites del mapa únicamente si está extremadamente fuera (tolerante para Arena)
-    local extraMargin = 5000
-    if sanitized.x < MAP_MIN_X - extraMargin then sanitized.x = MAP_MIN_X end
-    if sanitized.x > MAP_MAX_X + extraMargin then sanitized.x = MAP_MAX_X end
-    if sanitized.z < MAP_MIN_Z - extraMargin then sanitized.z = MAP_MIN_Z end
-    if sanitized.z > MAP_MAX_Z + extraMargin then sanitized.z = MAP_MAX_Z end
-    
-    -- Si hay posición de referencia, verificar distancia máxima (ser más permisivo)
-    if referencePos then
-        local distance = math_sqrt(
-            (sanitized.x - referencePos.x)^2 + 
-            (sanitized.z - referencePos.z)^2
-        )
-        
-        -- Aumentar distancia máxima permitida basada en el tipo de mapa
-        local MAX_DISTANCE = mapBounds.maxDistance or 6000
-        if distance > MAX_DISTANCE then
-            local factor = MAX_DISTANCE / distance
-            sanitized.x = referencePos.x + (sanitized.x - referencePos.x) * factor
-            sanitized.z = referencePos.z + (sanitized.z - referencePos.z) * factor
+local function IsImmobile(unit)
+    if not unit or not unit.buffCount then return false end
+    local now = Game.Timer()
+    for i=0, unit.buffCount do
+        local b = unit:GetBuff(i)
+        if b and b.count > 0 and b.expireTime > now and b.startTime <= now and CC_TYPES[b.type] then
+            return true, b.expireTime - now
         end
     end
-    
-    return sanitized
+    return false, 0
 end
 
--- Nueva función para detectar automáticamente los límites del mapa
-function Math:GetMapBounds()
-    local mapName = Game.mapID or 0
-    local cache = self._boundsCache
-    if cache.id == mapName and cache.bounds then
-        return cache.bounds
+-- Basic line projection for collision
+local function VectorPointProjectionOnLineSegment(v1,v2,v)
+    local cx,cz,ax,az,bx,bz = v.x,v.z,v1.x,v1.z,v2.x,v2.z
+    local rL = ((cx-ax)*(bx-ax)+(cz-az)*(bz-az)) / ((bx-ax)*(bx-ax)+(bz-az)*(bz-az)+1e-9)
+    local pointLine = {x = ax + rL*(bx-ax), z = az + rL*(bz-az)}
+    local rS = rL < 0 and 0 or (rL>1 and 1 or rL)
+    local isOnSegment = rS == rL
+    local pointSegment = isOnSegment and pointLine or {x = ax + rS*(bx-ax), z = az + rS*(bz-az)}
+    return pointSegment, pointLine, isOnSegment
+end
+
+local function CountLineMinionCollision(sourcePos, castPos, width, target)
+    local count = 0
+    for i=Game.MinionCount(),1,-1 do
+        local m = Game.Minion(i)
+        if m and m.valid and not m.dead and m.isTargetable and m.team ~= myHero.team and m ~= target then
+            local mp = m.pos
+            local pointSegment, _, isOnSegment = VectorPointProjectionOnLineSegment(sourcePos, castPos, mp)
+            local rad = width + (m.boundingRadius or 45)
+            if isOnSegment and DistanceSqr(pointSegment, mp) < rad*rad and DistanceSqr(sourcePos, castPos) > DistanceSqr(sourcePos, mp) then
+                count = count + 1
+            end
+        end
     end
-    local bounds
-    if mapName == 11 then
-        bounds = { minX = -1000, maxX = 16000, minZ = -1000, maxZ = 16000, maxDistance = 6000 }
-    elseif mapName == 12 then
-        bounds = { minX = -500, maxX = 13000, minZ = -500, maxZ = 13000, maxDistance = 4000 }
-    elseif mapName == 30 or mapName == 33 then
-    -- Arena: mantener límites de coordenadas amplios (como SR) pero con distancia efectiva pequeña
-    bounds = { minX = -1000, maxX = 16000, minZ = -1000, maxZ = 16000, maxDistance = 2200 }
-    elseif mapName >= 30 and mapName <= 35 then
-    -- Otros modos Arena: mismas coordenadas amplias, radio efectivo pequeño
-    bounds = { minX = -1000, maxX = 16000, minZ = -1000, maxZ = 16000, maxDistance = 2800 }
+    return count
+end
+
+-- Analytic intercept for linear movement (adapted from Eternal Prediction)
+local function LinearIntercept(source, origin, velocityVec, speed, delay)
+    -- origin: current target pos, velocityVec: 2D velocity (units/sec)
+    if speed <= 0 then return origin, delay end
+    local sx, sz = source.x, source.z
+    local ox, oz = origin.x, origin.z
+    local vx, vz = velocityVec.x, velocityVec.z
+    local dx, dz = ox - sx, oz - sz
+    local a = vx*vx + vz*vz - speed*speed
+    local b = 2*(vx*dx + vz*dz)
+    local c = dx*dx + dz*dz
+    local t = 0
+    if math_abs(a) < 1e-6 then
+        if math_abs(b) < 1e-6 then
+            t = 0
+        else
+            t = -c / (b+1e-9)
+        end
     else
-        bounds = { minX = -2000, maxX = 20000, minZ = -2000, maxZ = 20000, maxDistance = 8000 }
+        local disc = b*b - 4*a*c
+        if disc < 0 then
+            return origin, delay + Distance(source, origin)/speed
+        end
+        local sqrtDisc = math_sqrt(disc)
+        local t1 = (-b + sqrtDisc)/(2*a)
+        local t2 = (-b - sqrtDisc)/(2*a)
+        t = math_min(t1,t2)
+        if t < 0 then t = math_max(t1,t2) end
+        if t < 0 then t = 0 end
     end
-    cache.id, cache.bounds = mapName, bounds
-    return bounds
+    local total = t + delay
+    return {x = ox + vx*t, z = oz + vz*t}, total
+end
+
+-- SpellPrediction object
+local SpellPred = {}
+SpellPred.__index = SpellPred
+
+function SpellPred:New(data)
+    local o = setmetatable({}, self)
+    o.Type = data.Type or SPELLTYPE_LINE
+    o.Speed = data.Speed or math_huge
+    o.Range = data.Range or 1200
+    o.Delay = data.Delay or 0
+    o.Radius = data.Radius or 50
+    o.Collision = data.Collision or false
+    o.CollisionTypes = data.CollisionTypes or { COLLISION_MINION }
+    o.UseBoundingRadius = data.UseBoundingRadius ~= false
+    -- runtime fields
+    o.CastPosition = nil
+    o.UnitPosition = nil
+    o.HitChance = HITCHANCE_LOW
+    o.TimeToHit = 0
+    o.CollisionObjects = nil
+    return o
+end
+
+local function ComputeCastPosition(self, target, source)
+    local sourcePos = SafePos(source) or (myHero and myHero.pos)
+    if not sourcePos then return end
+    local tpos = target.pos
+    local targetPosTo = target.posTo and (target.posTo.x~=0 or target.posTo.z~=0) and target.posTo or tpos
+    local moving = (targetPosTo.x ~= tpos.x) or (targetPosTo.z ~= tpos.z)
+    local ms = target.ms or 350
+    local dir
+    if moving then
+        dir = {x = (targetPosTo.x - tpos.x), z = (targetPosTo.z - tpos.z)}
+        local len = math_sqrt(dir.x*dir.x + dir.z*dir.z)
+        if len > 0 then dir.x, dir.z = dir.x/len, dir.z/len else moving = false end
+    end
+    local immobile, immobileTime = IsImmobile(target)
+
+    -- Base predicted position
+    local castPos
+    local travelTime = 0
+    -- Apply menu extra delay
+    local extraDelay = 0
+    if Menu and Menu.ExtraDelay then extraDelay = (Menu.ExtraDelay:Value() or 0) / 1000 end
+    local baseDelay = self.Delay + extraDelay
+    if immobile then
+        castPos = {x = tpos.x, z = tpos.z}
+    travelTime = baseDelay + (self.Speed==math_huge and 0 or Distance(sourcePos, castPos)/self.Speed)
+        -- Adjust if immobile ends before projectile arrives: reduce hitchance
+        if immobileTime < self.Delay then
+            immobile = false -- treat as not fully immobile
+        end
+    elseif moving and self.Type ~= SPELLTYPE_CIRCLE then
+        local velocity = {x = dir.x * ms, z = dir.z * ms}
+        -- Lead factor scaling
+        local leadFactor = 1
+        if Menu and Menu.LeadFactor then leadFactor = (Menu.LeadFactor:Value() or 100)/100 end
+        velocity.x = velocity.x * leadFactor
+        velocity.z = velocity.z * leadFactor
+        local intercept, total = LinearIntercept(sourcePos, tpos, velocity, (self.Speed==math_huge and 20000 or self.Speed), baseDelay)
+        castPos = intercept
+        travelTime = total
+    else
+        -- Stationary or circle skill -> simple lead = current position
+        castPos = {x = tpos.x, z = tpos.z}
+        travelTime = baseDelay + (self.Speed==math_huge and 0 or Distance(sourcePos, castPos)/self.Speed)
+    end
+
+    -- Clamp to range
+    local range = self.Range
+    if Menu and Menu.MaxRange then range = range * (Menu.MaxRange:Value()/100) end
+    if Distance(sourcePos, castPos) > range then
+        -- Bring inside range along line
+        local sx,sz = sourcePos.x, sourcePos.z
+        local dx,dz = castPos.x - sx, castPos.z - sz
+        local dlen = math_sqrt(dx*dx + dz*dz)
+        if dlen > 0 then
+            local scale = (range-5)/dlen
+            castPos.x = sx + dx*scale
+            castPos.z = sz + dz*scale
+        end
+    end
+
+    -- Set values
+    self.CastPosition = castPos
+    self.UnitPosition = {x = tpos.x, z = tpos.z}
+    self.TimeToHit = travelTime
+
+    -- Determine HitChance
+    local hitchance = HITCHANCE_NORMAL
+    if not moving then hitchance = HITCHANCE_HIGH end
+    if immobile then hitchance = HITCHANCE_IMMOBILE end
+    -- If far and long travel time reduce
+    if travelTime > 1.0 and hitchance < HITCHANCE_IMMOBILE then
+        hitchance = hitchance - 1
+    end
+    -- Edge-only requirement: force low hitchance if target isn't at required edge percentage of range
+    if Menu and Menu.EdgeOnly and Menu.EdgeOnly:Value() then
+        local pctNeeded = (Menu.EdgePercent and Menu.EdgePercent:Value() or 90) / 100
+        local dist = Distance(sourcePos, {x = tpos.x, z = tpos.z})
+        local effRange = self.Range * (Menu.MaxRange and (Menu.MaxRange:Value()/100) or 1)
+        if dist < effRange * pctNeeded then
+            hitchance = HITCHANCE_LOW -- se verá como no casteable para lógicas que pidan >= normal
+        end
+    end
+    self.HitChance = math_max(HITCHANCE_LOW, math_min(hitchance, HITCHANCE_IMMOBILE))
+
+    -- Collision (only line spells)
+    self.CollisionObjects = nil
+    local collisionEnabled = self.Collision
+    if Menu and Menu.Collision and not Menu.Collision:Value() then collisionEnabled = false end
+    if collisionEnabled and self.Type == SPELLTYPE_LINE then
+        local width = self.Radius
+        local colCount = CountLineMinionCollision(sourcePos, castPos, width, target)
+        if colCount > 0 then
+            self.HitChance = HITCHANCE_COLLISION
+            self.CollisionObjects = colCount
+        end
+    end
+
+    -- Hitchance bias
+    if Menu and Menu.HitchanceBias then
+        local bias = Menu.HitchanceBias:Value() or 0
+        if bias ~= 0 and self.HitChance ~= HITCHANCE_COLLISION then
+            self.HitChance = math_max(HITCHANCE_LOW, math_min(self.HitChance + bias, HITCHANCE_IMMOBILE))
+        end
+    end
+end
+
+function SpellPred:GetPrediction(target, source)
+    if not IsValidTarget(target) then return self end
+    ComputeCastPosition(self, target, source or myHero)
+    return self
+end
+
+-- Core functions (public API)
+local DP = {}
+DP.__index = DP
+
+function DP:SpellPrediction(data)
+    return SpellPred:New(data or {})
+end
+
+-- Overload-friendly static access too
+local function SpellPredictionStatic(_, data) return SpellPred:New(data or {}) end
+
+local function GetPredictionFunc(target, source, speed, delay, radius)
+    if not IsValidTarget(target) then return nil,nil,-1 end
+    local srcPos = SafePos(source) or (myHero and myHero.pos) or target.pos
+    speed = speed or math_huge
+    delay = delay or 0
+    radius = radius or 50
+    local temp = SpellPred:New({Type = SPELLTYPE_LINE, Speed = speed, Range = 2500, Delay = delay, Radius = radius, Collision=false})
+    temp:GetPrediction(target, srcPos)
+    return temp.UnitPosition, temp.CastPosition, temp.TimeToHit
+end
+
+-- Collision helper (currently only minion line collision)
+local function GetCollision(source, castPos, speed, delay, radius, collisionTypes, skipID)
+    local src = SafePos(source)
+    local cp = SafePos(castPos)
+    if not src or not cp then return false, {}, 0 end
+    local width = radius or 50
+    local count = CountLineMinionCollision(src, cp, width, nil)
+    if count == 0 then return false, {}, 0 end
+    return true, {count = count}, count
+end
+
+_G.DepressivePrediction = setmetatable({
+    -- Constants
+    HITCHANCE_IMPOSSIBLE=HITCHANCE_IMPOSSIBLE,
+    HITCHANCE_COLLISION=HITCHANCE_COLLISION,
+    HITCHANCE_LOW=HITCHANCE_LOW,
+    HITCHANCE_NORMAL=HITCHANCE_NORMAL,
+    HITCHANCE_HIGH=HITCHANCE_HIGH,
+    HITCHANCE_VERYHIGH=HITCHANCE_VERYHIGH,
+    HITCHANCE_IMMOBILE=HITCHANCE_IMMOBILE,
+    SPELLTYPE_LINE=SPELLTYPE_LINE,
+    SPELLTYPE_CIRCLE=SPELLTYPE_CIRCLE,
+    SPELLTYPE_CONE=SPELLTYPE_CONE,
+    COLLISION_MINION=COLLISION_MINION,
+    COLLISION_ALLYHERO=COLLISION_ALLYHERO,
+    COLLISION_ENEMYHERO=COLLISION_ENEMYHERO,
+    COLLISION_YASUOWALL=COLLISION_YASUOWALL,
+    COLLISION_NEUTRAL=COLLISION_NEUTRAL,
+    COLLISION_ALLYMINION=COLLISION_ALLYMINION,
+    COLLISION_ENEMYMINION=COLLISION_ENEMYMINION,
+    -- Methods
+    SpellPrediction = SpellPredictionStatic,
+    GetPrediction = GetPredictionFunc,
+    GetCollision = GetCollision,
+    Version = Version,
+    Menu = Menu,
+}, DP)
+
+print("DepressivePrediction v"..Version.." (mechanical) loaded")
+
+-- Profile application logic
+-- Runtime scaffolding (ensure required utility tables / helpers exist before usage)
+local Math = _G.DepressivePredictionMath or {}
+_G.DepressivePredictionMath = Math
+local table_insert = table.insert
+local math_min, math_max = math.min, math.max
+
+-- Basic sanitization helper (no-op if already present later)
+if not Math.SanitizePosition then
+    function Math:SanitizePosition(pos) return pos end
+end
+
+-- Map bounds fallback (loose; will be overridden if later defined)
+if not Math.GetMapBounds then
+    function Math:GetMapBounds()
+        return {minX = -2000, maxX = 16000, minZ = -2000, maxZ = 16000, maxDistance = 18000}
+    end
+end
+
+-- Safeguard menu helper methods (added only if absent)
+if Menu then
+    if not Menu.GetLatency then
+        function Menu:GetLatency()
+            local ok, lat = pcall(function() return (Game and Game.Latency and Game.Latency() or 0) end)
+            return (ok and lat or 0) * 0.001
+        end
+    end
+    if not Menu.GetExtraDelay then
+        function Menu:GetExtraDelay()
+            return (self.ExtraDelay and (self.ExtraDelay:Value() or 0) or 0) / 1000
+        end
+    end
+    if not Menu.GetLeadFactor then
+        function Menu:GetLeadFactor()
+            return (self.LeadFactor and (self.LeadFactor:Value() or 100) or 100)/100
+        end
+    end
+    if not Menu.GetMaxRange then
+        function Menu:GetMaxRange()
+            return (self.MaxRange and (self.MaxRange:Value() or 100) or 100)/100
+        end
+    end
+    if not Menu.GetReactionTime then
+        function Menu:GetReactionTime()
+            -- default reaction time (seconds) used in some hitchance logic
+            return 0.15
+        end
+    end
+    -- Add missing toggle entries if they were referenced later
+    if Menu.Root then
+        if not Menu.DashPrediction then Menu.DashPrediction = Menu.Root:MenuElement({id="DashPrediction", name="Dash Prediction", value = true}) end
+        if not Menu.ZhonyaDetection then Menu.ZhonyaDetection = Menu.Root:MenuElement({id="ZhonyaDetection", name="Detect Stasis (Zhonya / GA)", value = true}) end
+        if not Menu.YasuoWallDetection then Menu.YasuoWallDetection = Menu.Root:MenuElement({id="YasuoWallDetection", name="Check Yasuo Wall", value = true}) end
+        if not Menu.ShowVisuals then Menu.ShowVisuals = Menu.Root:MenuElement({id="ShowVisuals", name="Show Tracking Visuals", value = false}) end
+    end
+end
+
+-- Neutral name identifier fallback (simple heuristic) if missing
+if not IdentifyNeutralByNameLower then
+    function IdentifyNeutralByNameLower(name)
+        if not name or name == "" then return false end
+        local patterns = {
+            {"dragon", "epic", 9}, {"baron", "epic", 10}, {"herald", "epic", 8},
+            {"rift", "epic", 8}, {"scuttle", "neutral", 5}, {"crab", "neutral", 5},
+            {"gromp", "camp", 4}, {"krug", "camp", 4}, {"murkwolf", "camp", 4}, {"razorbeak", "camp", 4},
+            {"blue", "buff", 6}, {"red", "buff", 6}, {"buff", "buff", 6}, {"sru_", "camp", 4}
+        }
+        for _, p in ipairs(patterns) do
+            if name:find(p[1]) then return true, p[2], p[3] end
+        end
+        return false
+    end
+end
+
+-- Ally / enemy helpers fallback if absent
+if not IsEnemyUnit then
+    function IsEnemyUnit(u) return u and u.valid and u.isEnemy end
+end
+if not IsAllyUnit then
+    function IsAllyUnit(u) return u and u.valid and u.isAlly end
+end
+
+local lastProfileIndex = Menu and Menu.Profile and Menu.Profile:Value() or 5
+local applyingProfile = false
+local function ApplyProfile(idx)
+    if not Menu or applyingProfile then return end
+    if idx == 5 then return end -- Custom
+    applyingProfile = true
+    -- Presets
+    if idx == 1 then -- Long Range
+        Menu.MaxRange:Value(95)
+        Menu.ExtraDelay:Value(0)
+        Menu.LeadFactor:Value(105) -- slightly more lead
+        Menu.Collision:Value(true)
+    if Menu.HCBias then Menu.HCBias:Value(1) end
+        Menu.EdgeOnly:Value(true)
+        Menu.EdgePercent:Value(92)
+    elseif idx == 2 then -- All In
+        Menu.MaxRange:Value(92)
+        Menu.ExtraDelay:Value(0)
+        Menu.LeadFactor:Value(90)
+        Menu.Collision:Value(true)
+    if Menu.HCBias then Menu.HCBias:Value(0) end
+        Menu.EdgeOnly:Value(false)
+        Menu.EdgePercent:Value(90)
+    elseif idx == 3 then -- Melee (short skillshots / follow)
+        Menu.MaxRange:Value(85)
+        Menu.ExtraDelay:Value(0)
+        Menu.LeadFactor:Value(80)
+        Menu.Collision:Value(true)
+    if Menu.HCBias then Menu.HCBias:Value(1) end
+        Menu.EdgeOnly:Value(false)
+        Menu.EdgePercent:Value(85)
+    elseif idx == 4 then -- Semi-Melee (bruiser / mid range)
+        Menu.MaxRange:Value(90)
+        Menu.ExtraDelay:Value(0)
+        Menu.LeadFactor:Value(88)
+        Menu.Collision:Value(true)
+    if Menu.HCBias then Menu.HCBias:Value(0) end
+        Menu.EdgeOnly:Value(false)
+        Menu.EdgePercent:Value(88)
+    end
+    applyingProfile = false
+end
+
+if Callback and Menu and Menu.Profile then
+    Callback.Add("Tick", function()
+        if not Menu.Enable or not Menu.Enable:Value() then return end
+        local current = Menu.Profile:Value()
+        if current ~= lastProfileIndex then
+            ApplyProfile(current)
+            lastProfileIndex = current
+        end
+    end)
+end
+
+-- Draw status
+if Menu and Menu.DrawStatus then
+    Callback.Add("Draw", function()
+        if not Menu.Enable:Value() or not Menu.DrawStatus:Value() then return end
+        local txt = string.format("DepressivePrediction v%.1f | Delay+%.0fms | Lead %d%%", Version, (Menu.ExtraDelay:Value() or 0), (Menu.LeadFactor:Value() or 100))
+        if _G.Draw and Draw.Text then
+            Draw.Text(txt, 14, 40, 420, _G.Draw.Color(255,255,255,0))
+        elseif Draw and Draw.Text then
+            Draw.Text(txt, 14, 40, 420, 0xFFFFFFFF)
+        end
+    end)
 end
 
 function Math:Get2D(p)
