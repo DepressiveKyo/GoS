@@ -47,21 +47,12 @@ local GameCanUseSpell = Game.CanUseSpell
 local GameTimer = Game.Timer
 local TableInsert = table.insert
 
--- Spell Keys
-local HK_Q = 0x51
-local HK_W = 0x57  
-local HK_E = 0x45
-local HK_R = 0x52
+
 local HK_U = 0x55  -- U key for manual gold card selection
 local HK_I = 0x49  -- I key for manual red card selection
 local HK_MB4 = 0x05  -- MB4 (Mouse Button 4 - Side button)
 local HK_MB5 = 0x06  -- MB5 (Mouse Button 5 - Side button)
 
--- Spell Slots
-local _Q = 0
-local _W = 1
-local _E = 2
-local _R = 3
 
 local lastMove = 0
 local lastQCast = 0
