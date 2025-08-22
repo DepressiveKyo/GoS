@@ -2,7 +2,7 @@
 if _G.__DEPRESSIVE_NEXT_YASUO_LOADED then return end
 _G.__DEPRESSIVE_NEXT_YASUO_LOADED = true
 
-local Version = 3.0
+local Version = 3.1
 local Name = "DepressiveYasuo2"
 
 -- Hero validation
@@ -3032,3 +3032,4 @@ if not _G.DepressiveYasuo2Instance then
         _G.DepressiveAIONextLoadedChampion = true
     end
 end
+
