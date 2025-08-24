@@ -1,7 +1,7 @@
 if _G.__AATROX_CHAMPION_LOADED then return end
 _G.__AATROX_CHAMPION_LOADED = true
 _G.__AATROX_DEPRESSIVE_LOADED = true -- inform standalone script
-local VERSION = "0.14"
+local VERSION = "0.15"
 -- ===================== BASIC UTILITIES ===================== --
 local insert = table.insert
 
@@ -182,9 +182,10 @@ function LoadScript()
 	Menu.Combo:MenuElement({id = "QEPhase", name = "Q->E Phases", value = 7, drop = {"Only Q1","Only Q2","Only Q3","Q1+Q2","Q2+Q3","Q1+Q3","All"}})
 	Menu.Combo:MenuElement({id = "QEDelay", name = "Q->E Delay (ms)", value = 40, min = 0, max = 150, step = 5})
 	Menu.Combo:MenuElement({id = "QEMargin", name = "Distance margin for adjust", value = 35, min = 10, max = 120, step = 5})
-	Menu.Combo:MenuElement({id = "UseR", name = "Use R", value = true})
-	Menu.Combo:MenuElement({id = "RHp", name = "R if HP% <", value = 50, min = 0, max = 100, identifier = "%"})
-	Menu.Combo:MenuElement({id = "RCount", name = "R if X enemies in 600", value = 2, min = 1, max = 5})
+	-- R functionality disabled due to game disconnection issues
+	-- Menu.Combo:MenuElement({id = "UseR", name = "Use R", value = true})
+	-- Menu.Combo:MenuElement({id = "RHp", name = "R if HP% <", value = 50, min = 0, max = 100, identifier = "%"})
+	-- Menu.Combo:MenuElement({id = "RCount", name = "R if X enemies in 600", value = 2, min = 1, max = 5})
 
 	-- Lane Clear
 	Menu:MenuElement({type = MENU, id = "Clear", name = "LaneClear"})
@@ -476,14 +477,14 @@ local function Combo()
 		end
 	end
 
-	-- R conditions
-	if Menu.Combo.UseR:Value() and Ready(_R) then
-		if myHero.health / myHero.maxHealth <= Menu.Combo.RHp:Value() / 100 then
-			Control.CastSpell(HK_R)
-		elseif EnemiesInRange(600, myHero.pos) >= Menu.Combo.RCount:Value() then
-			Control.CastSpell(HK_R)
-		end
-	end
+	-- R conditions - DISABLED due to game disconnection issues
+	-- if Menu.Combo.UseR:Value() and Ready(_R) then
+	-- 	if myHero.health / myHero.maxHealth <= Menu.Combo.RHp:Value() / 100 then
+	-- 		Control.CastSpell(HK_R)
+	-- 	elseif EnemiesInRange(600, myHero.pos) >= Menu.Combo.RCount:Value() then
+	-- 		Control.CastSpell(HK_R)
+	-- 	end
+	-- end
 end
 
 -- ===================== CLEAR / JUNGLE (simplified) ===================== --
