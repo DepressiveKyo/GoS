@@ -14,10 +14,12 @@ Data = {
     Elise = { Version = 1.25, Changelog = "Elise" },
     Lillia = { Version = 0.01, Changelog = "Lillia" },
     TwistedFate = { Version = 0.02, Changelog = "TwistedFate" },
+    Fiora = { Version = 1.0, Changelog = "Fiora" },
     Yasuo = { Version = 3.1, Changelog = "Yasuo" },
     Zed = { Version = 1.0, Changelog = "Zed" },
     }
 }
+
 
 
 
