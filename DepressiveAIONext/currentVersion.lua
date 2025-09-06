@@ -10,6 +10,7 @@ Data = {
     Aatrox = { Version = 0.15, Changelog = "Aatrox" },
     Ahri = { Version = 0.22, Changelog = "Ahri" },
     Akali = { Version = 0.47, Changelog = "Akali" },
+    Aphelios = { Version = 1.0, Changelog = "Aphelios" },
     Cassiopeia = { Version = 0.01, Changelog = "Cassiopeia" },
     Elise = { Version = 1.25, Changelog = "Elise" },
     Fiora = { Version = 1.0, Changelog = "Fiora" },
@@ -19,6 +20,7 @@ Data = {
     Zed = { Version = 1.0, Changelog = "Zed" },
     }
 }
+
 
 
 
