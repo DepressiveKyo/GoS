@@ -7,7 +7,7 @@ Data = {
         Version = 0.01,
     },
     Champions = {
-    Aatrox = { Version = 0.15, Changelog = "Aatrox" },
+    Aatrox = { Version = 0.16, Changelog = "Aatrox" },
     Ahri = { Version = 0.22, Changelog = "Ahri" },
     Akali = { Version = 0.47, Changelog = "Akali" },
     Aphelios = { Version = 1.0, Changelog = "Aphelios" },
@@ -20,6 +20,7 @@ Data = {
     Zed = { Version = 1.0, Changelog = "Zed" },
     }
 }
+
 
 
 
