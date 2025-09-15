@@ -1,7 +1,7 @@
 if _G.__AATROX_CHAMPION_LOADED then return end
 _G.__AATROX_CHAMPION_LOADED = true
 _G.__AATROX_DEPRESSIVE_LOADED = true -- inform standalone script
-local VERSION = "0.15"
+local VERSION = "0.16"
 -- ===================== BASIC UTILITIES ===================== --
 local insert = table.insert
 
@@ -373,11 +373,11 @@ local function CastQSmart(target)
 	local inRange = false
 	if phase == 1 then inRange = dist <= Q1_RANGE
 	elseif phase == 2 then inRange = dist <= 500 -- small extra margin for reposition
-	elseif phase == 3 then inRange = dist <= 640 end
+	elseif phase == 3 then inRange = dist <= Q3_RANGE end
 
 	-- Q->E logic: never use E before Q
 	-- Allow Q if already in range or if we can gapclose with post-Q E
-	local phaseRange = (phase == 1 and Q1_RANGE) or (phase == 2 and 500) or 640
+	local phaseRange = (phase == 1 and Q1_RANGE) or (phase == 2 and 500) or Q3_RANGE
 	local canAttempt = inRange or (dist <= phaseRange + E_RANGE and Menu.Combo.QEHelper:Value() and Ready(_E))
 	if not canAttempt then return end
 
