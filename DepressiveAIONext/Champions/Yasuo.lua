@@ -2,7 +2,7 @@
 if _G.__DEPRESSIVE_NEXT_YASUO_LOADED then return end
 _G.__DEPRESSIVE_NEXT_YASUO_LOADED = true
 
-local Version = 3.1
+local Version = 3.2
 local Name = "DepressiveYasuo2"
 
 -- Hero validation
@@ -39,6 +39,18 @@ local KEY_DOWN = KEY_DOWN or 0x0100
 local KEY_UP = KEY_UP or 0x0101
 local HK_CTRL = HK_CTRL or 0x11 -- VK_CONTROL fallback for Ctrl key
 
+-- Spell slot constants
+local _Q = 0
+local _W = 1
+local _E = 2
+local _R = 3
+
+-- Hotkey constants for abilities
+local HK_Q = HK_Q or _Q
+local HK_W = HK_W or _W
+local HK_E = HK_E or _E
+local HK_R = HK_R or _R
+
 -- Constants
 local SPELL_RANGE = {
     Q = 475,
@@ -65,6 +77,406 @@ local SPELL_RADIUS = {
     Q3 = 90,
     E = 100
 }
+
+-- Blockable Spells Database (from Yasuo3.lua)
+local BlockableSpells = {
+    -- AATROX
+    ["AatroxW"] = {charName = "Aatrox", displayName = "Infernal Chains", slot = 1, type = "linear", speed = 1800, range = 825, delay = 0.25, radius = 80, collision = true},
+    
+    -- AHRI
+    ["AhriQ"] = {charName = "Ahri", displayName = "Orb of Deception", slot = 0, type = "linear", speed = 2500, range = 880, delay = 0.25, radius = 100, collision = false},
+    ["AhriE"] = {charName = "Ahri", displayName = "Charm", slot = 2, type = "linear", speed = 1500, range = 975, delay = 0.25, radius = 60, collision = true},
+    
+    -- AKALI
+    ["AkaliQ"] = {charName = "Akali", displayName = "Five Point Strike", slot = 0, type = "conic", speed = 3200, range = 550, delay = 0.25, radius = 60, angle = 45, collision = false},
+    ["AkaliE"] = {charName = "Akali", displayName = "Shuriken Flip", slot = 2, type = "linear", speed = 1800, range = 825, delay = 0.25, radius = 70, collision = true},
+    
+    -- AMUMU
+    ["BandageToss"] = {charName = "Amumu", displayName = "Bandage Toss", slot = 0, type = "linear", speed = 2000, range = 1100, delay = 0.25, radius = 80, collision = true},
+    
+    -- ANIVIA
+    ["FlashFrostSpell"] = {charName = "Anivia", displayName = "Flash Frost", slot = 0, type = "linear", speed = 950, range = 1100, delay = 0.25, radius = 110, collision = false},
+    
+    -- APHELIOS
+    ["ApheliosCalibrumQ"] = {charName = "Aphelios", displayName = "Moonshot", slot = 0, type = "linear", speed = 1850, range = 1450, delay = 0.35, radius = 60, collision = true},
+    ["ApheliosInfernumQ"] = {charName = "Aphelios", displayName = "Duskwave", slot = 0, type = "conic", speed = 1500, range = 850, delay = 0.25, radius = 65, angle = 45, collision = false},
+    ["ApheliosR"] = {charName = "Aphelios", displayName = "Moonlight Vigil", slot = 3, type = "linear", speed = 2050, range = 1600, delay = 0.5, radius = 125, collision = false},
+    
+    -- ASHE
+    ["Volley"] = {charName = "Ashe", displayName = "Volley", slot = 1, type = "conic", speed = 2000, range = 1200, delay = 0.25, radius = 20, angle = 40, collision = true},
+    ["EnchantedCrystalArrow"] = {charName = "Ashe", displayName = "Enchanted Crystal Arrow", slot = 3, type = "linear", speed = 1600, range = 12500, delay = 0.25, radius = 130, collision = false},
+    
+    -- AURELION SOL
+    ["AurelionSolQ"] = {charName = "AurelionSol", displayName = "Starsurge", slot = 0, type = "linear", speed = 850, range = 1075, delay = 0, radius = 110, collision = false},
+    
+    -- BARD
+    ["BardQ"] = {charName = "Bard", displayName = "Cosmic Binding", slot = 0, type = "linear", speed = 1500, range = 950, delay = 0.25, radius = 60, collision = true},
+    
+    -- BLITZCRANK
+    ["RocketGrab"] = {charName = "Blitzcrank", displayName = "Rocket Grab", slot = 0, type = "linear", speed = 1800, range = 1150, delay = 0.25, radius = 70, collision = true},
+    
+    -- BRAND
+    ["BrandQ"] = {charName = "Brand", displayName = "Sear", slot = 0, type = "linear", speed = 1600, range = 1050, delay = 0.25, radius = 60, collision = true},
+    
+    -- BRAUM
+    ["BraumQ"] = {charName = "Braum", displayName = "Winter's Bite", slot = 0, type = "linear", speed = 1700, range = 1000, delay = 0.25, radius = 70, collision = true},
+    ["BraumR"] = {charName = "Braum", displayName = "Glacial Fissure", slot = 3, type = "linear", speed = 1400, range = 1250, delay = 0.5, radius = 115, collision = false},
+    
+    -- CAITLYN
+    ["CaitlynPiltoverPeacemaker"] = {charName = "Caitlyn", displayName = "Piltover Peacemaker", slot = 0, type = "linear", speed = 2200, range = 1250, delay = 0.625, radius = 90, collision = false},
+    ["CaitlynEntrapment"] = {charName = "Caitlyn", displayName = "Entrapment", slot = 2, type = "linear", speed = 1600, range = 750, delay = 0.15, radius = 70, collision = true},
+    
+    -- CAMILLE
+    ["CamilleE"] = {charName = "Camille", displayName = "Hookshot [First]", slot = 2, type = "linear", speed = 1900, range = 800, delay = 0, radius = 60, collision = false},
+    ["CamilleEDash2"] = {charName = "Camille", displayName = "Hookshot [Second]", slot = 2, type = "linear", speed = 1900, range = 400, delay = 0, radius = 60, collision = false},
+    
+    -- CASSIOPEIA
+    ["CassiopeiaW"] = {charName = "Cassiopeia", displayName = "Miasma", slot = 1, type = "circular", speed = 2500, range = 800, delay = 0.75, radius = 160, collision = false},
+    
+    -- CORKI
+    ["PhosphorusBomb"] = {charName = "Corki", displayName = "Phosphorus Bomb", slot = 0, type = "circular", speed = 1000, range = 825, delay = 0.25, radius = 250, collision = false},
+    ["MissileBarrageMissile"] = {charName = "Corki", displayName = "Missile Barrage [Standard]", slot = 3, type = "linear", speed = 2000, range = 1300, delay = 0.175, radius = 40, collision = true},
+    ["MissileBarrageMissile2"] = {charName = "Corki", displayName = "Missile Barrage [Big]", slot = 3, type = "linear", speed = 2000, range = 1500, delay = 0.175, radius = 40, collision = true},
+    
+    -- DIANA
+    ["DianaQ"] = {charName = "Diana", displayName = "Crescent Strike", slot = 0, type = "circular", speed = 1900, range = 900, delay = 0.25, radius = 185, collision = true},
+    
+    -- DRAVEN
+    ["DravenDoubleShot"] = {charName = "Draven", displayName = "Double Shot", slot = 2, type = "linear", speed = 1600, range = 1050, delay = 0.25, radius = 130, collision = false},
+    ["DravenRCast"] = {charName = "Draven", displayName = "Whirling Death", slot = 3, type = "linear", speed = 2000, range = 12500, delay = 0.25, radius = 160, collision = false},
+    
+    -- DR MUNDO
+    ["DrMundoQ"] = {charName = "DrMundo", displayName = "Infected Bonesaw", slot = 0, type = "linear", speed = 2000, range = 990, delay = 0.25, radius = 120, collision = true},
+    
+    -- EKKO
+    ["EkkoQ"] = {charName = "Ekko", displayName = "Timewinder", slot = 0, type = "linear", speed = 1650, range = 1175, delay = 0.25, radius = 60, collision = false},
+    
+    -- ELISE
+    ["EliseHumanE"] = {charName = "Elise", displayName = "Cocoon", slot = 2, type = "linear", speed = 1600, range = 1075, delay = 0.25, radius = 55, collision = true},
+    
+    -- EVELYNN
+    ["EvelynnQ"] = {charName = "Evelynn", displayName = "Hate Spike", slot = 0, type = "linear", speed = 2400, range = 800, delay = 0.25, radius = 60, collision = true},
+    
+    -- EZREAL
+    ["EzrealQ"] = {charName = "Ezreal", displayName = "Mystic Shot", slot = 0, type = "linear", speed = 2000, range = 1150, delay = 0.25, radius = 60, collision = true},
+    ["EzrealW"] = {charName = "Ezreal", displayName = "Essence Flux", slot = 1, type = "linear", speed = 2000, range = 1150, delay = 0.25, radius = 60, collision = false},
+    ["EzrealR"] = {charName = "Ezreal", displayName = "Trueshot Barrage", slot = 3, type = "linear", speed = 2000, range = 12500, delay = 1, radius = 160, collision = false},
+    
+    -- FIORA
+    ["FioraW"] = {charName = "Fiora", displayName = "Riposte", slot = 1, type = "linear", speed = 3200, range = 750, delay = 0.75, radius = 70, collision = false},
+    
+    -- FIZZ
+    ["FizzR"] = {charName = "Fizz", displayName = "Chum the Waters", slot = 3, type = "linear", speed = 1300, range = 1300, delay = 0.25, radius = 150, collision = false},
+    
+    -- GALIO
+    ["GalioQ"] = {charName = "Galio", displayName = "Winds of War", slot = 0, type = "circular", speed = 1150, range = 825, delay = 0.25, radius = 235, collision = false},
+    
+    -- GNAR
+    ["GnarQMissile"] = {charName = "Gnar", displayName = "Boomerang Throw", slot = 0, type = "linear", speed = 2500, range = 1125, delay = 0.25, radius = 55, collision = false},
+    ["GnarBigQMissile"] = {charName = "Gnar", displayName = "Boulder Toss", slot = 0, type = "linear", speed = 2100, range = 1125, delay = 0.5, radius = 90, collision = true},
+    
+    -- GRAGAS
+    ["GragasQ"] = {charName = "Gragas", displayName = "Barrel Roll", slot = 0, type = "circular", speed = 1000, range = 850, delay = 0.25, radius = 275, collision = false},
+    ["GragasR"] = {charName = "Gragas", displayName = "Explosive Cask", slot = 3, type = "circular", speed = 1800, range = 1000, delay = 0.25, radius = 400, collision = false},
+    
+    -- GRAVES
+    ["GravesQLineSpell"] = {charName = "Graves", displayName = "End of the Line", slot = 0, type = "linear", speed = math.huge, range = 800, delay = 1.4, radius = 20, collision = false},
+    ["GravesSmokeGrenade"] = {charName = "Graves", displayName = "Smoke Grenade", slot = 1, type = "circular", speed = 1500, range = 950, delay = 0.15, radius = 250, collision = false},
+    ["GravesChargeShot"] = {charName = "Graves", displayName = "Charge Shot", slot = 3, type = "linear", speed = 2100, range = 1000, delay = 0.25, radius = 100, collision = false},
+    
+    -- GWEN
+    ["GwenQ"] = {charName = "Gwen", displayName = "Snip Snip!", slot = 0, type = "circular", speed = 1500, range = 450, delay = 0, radius = 275, collision = false},
+    ["GwenR"] = {charName = "Gwen", displayName = "Needlework", slot = 3, type = "linear", speed = 1800, range = 1230, delay = 0.25, radius = 250, collision = false},
+    
+    -- HEIMERDINGER
+    ["HeimerdingerW"] = {charName = "Heimerdinger", displayName = "Hextech Micro-Rockets", slot = 1, type = "linear", speed = 2050, range = 1325, delay = 0.25, radius = 100, collision = false},
+    ["HeimerdingerE"] = {charName = "Heimerdinger", displayName = "CH-2 Electron Storm Grenade", slot = 2, type = "circular", speed = 1200, range = 970, delay = 0.25, radius = 250, collision = false},
+    ["HeimerdingerEUlt"] = {charName = "Heimerdinger", displayName = "CH-2 Electron Storm Grenade [Ult]", slot = 2, type = "circular", speed = 1200, range = 970, delay = 0.25, radius = 250, collision = false},
+    
+    -- ILLAOI
+    ["IllaoiE"] = {charName = "Illaoi", displayName = "Test of Spirit", slot = 2, type = "linear", speed = 1900, range = 900, delay = 0.25, radius = 50, collision = true},
+    
+    -- IRELIA
+    ["IreliaR"] = {charName = "Irelia", displayName = "Vanguard's Edge", slot = 3, type = "linear", speed = 2000, range = 950, delay = 0.4, radius = 160, collision = false},
+    
+    -- IVERN
+    ["IvernQ"] = {charName = "Ivern", displayName = "Rootcaller", slot = 0, type = "linear", speed = 1300, range = 1075, delay = 0.25, radius = 80, collision = true},
+    
+    -- JANNA
+    ["HowlingGaleSpell"] = {charName = "Janna", displayName = "Howling Gale", slot = 0, type = "linear", speed = 667, range = 1750, delay = 0, radius = 100, collision = false},
+    
+    -- JAYCE
+    ["JayceShockBlast"] = {charName = "Jayce", displayName = "Shock Blast [Standard]", slot = 0, type = "linear", speed = 1450, range = 1050, delay = 0.214, radius = 70, collision = true},
+    ["JayceShockBlastWallMis"] = {charName = "Jayce", displayName = "Shock Blast [Accelerated]", slot = 0, type = "linear", speed = 2350, range = 1600, delay = 0.152, radius = 115, collision = true},
+    
+    -- JHIN
+    ["JhinW"] = {charName = "Jhin", displayName = "Deadly Flourish", slot = 1, type = "linear", speed = 5000, range = 2550, delay = 0.75, radius = 40, collision = false},
+    ["JhinRShot"] = {charName = "Jhin", displayName = "Curtain Call", slot = 3, type = "linear", speed = 5000, range = 3500, delay = 0.25, radius = 80, collision = false},
+    
+    -- JINX
+    ["JinxWMissile"] = {charName = "Jinx", displayName = "Zap!", slot = 1, type = "linear", speed = 3300, range = 1450, delay = 0.6, radius = 60, collision = true},
+    ["JinxEHit"] = {charName = "Jinx", displayName = "Flame Chompers!", slot = 2, type = "linear", speed = 1100, range = 900, delay = 1.5, radius = 120, collision = false},
+    ["JinxR"] = {charName = "Jinx", displayName = "Super Mega Death Rocket!", slot = 3, type = "linear", speed = 1700, range = 12500, delay = 0.6, radius = 140, collision = false},
+    
+    -- KAISA
+    ["KaisaW"] = {charName = "Kaisa", displayName = "Void Seeker", slot = 1, type = "linear", speed = 1750, range = 3000, delay = 0.4, radius = 100, collision = true},
+    
+    -- KALISTA
+    ["KalistaMysticShot"] = {charName = "Kalista", displayName = "Pierce", slot = 0, type = "linear", speed = 2400, range = 1150, delay = 0.25, radius = 40, collision = true},
+    
+    -- KARMA
+    ["KarmaQ"] = {charName = "Karma", displayName = "Inner Flame", slot = 0, type = "linear", speed = 1700, range = 950, delay = 0.25, radius = 60, collision = true},
+    ["KarmaQMantra"] = {charName = "Karma", displayName = "Inner Flame [Mantra]", slot = 0, type = "linear", speed = 1700, range = 950, delay = 0.25, radius = 80, collision = true},
+    
+    -- KAYLE
+    ["KayleQ"] = {charName = "Kayle", displayName = "Radiant Blast", slot = 0, type = "linear", speed = 1600, range = 900, delay = 0.25, radius = 60, collision = false},
+    
+    -- KENNEN
+    ["KennenShurikenHurlMissile1"] = {charName = "Kennen", displayName = "Shuriken Hurl", slot = 0, type = "linear", speed = 1700, range = 1050, delay = 0.175, radius = 50, collision = true},
+    
+    -- KHAZIX
+    ["KhazixW"] = {charName = "Khazix", displayName = "Void Spike [Standard]", slot = 1, type = "linear", speed = 1700, range = 1000, delay = 0.25, radius = 70, collision = true},
+    ["KhazixWLong"] = {charName = "Khazix", displayName = "Void Spike [Threeway]", slot = 1, type = "linear", speed = 1700, range = 1000, delay = 0.25, radius = 70, collision = true},
+    
+    -- KLED
+    ["KledQ"] = {charName = "Kled", displayName = "Beartrap on a Rope", slot = 0, type = "linear", speed = 1600, range = 800, delay = 0.25, radius = 45, collision = false},
+    ["KledRiderQ"] = {charName = "Kled", displayName = "Pocket Pistol", slot = 0, type = "conic", speed = 3000, range = 700, delay = 0.25, radius = 0, angle = 25, collision = false},
+    
+    -- KOGMAW
+    ["KogMawQ"] = {charName = "KogMaw", displayName = "Caustic Spittle", slot = 0, type = "linear", speed = 1650, range = 1175, delay = 0.25, radius = 70, collision = true},
+    ["KogMawVoidOozeMissile"] = {charName = "KogMaw", displayName = "Void Ooze", slot = 2, type = "linear", speed = 1400, range = 1360, delay = 0.25, radius = 120, collision = false},
+    
+    -- KSANTE
+    ["KSanteQ3"] = {charName = "KSante", displayName = "KSante Q3", slot = 0, type = "linear", speed = 1100, range = 750, delay = 0.34, radius = 70, collision = false},
+    
+    -- LEBLANC
+    ["LeblancE"] = {charName = "Leblanc", displayName = "Ethereal Chains [Standard]", slot = 2, type = "linear", speed = 1750, range = 925, delay = 0.25, radius = 55, collision = true},
+    ["LeblancRE"] = {charName = "Leblanc", displayName = "Ethereal Chains [Ultimate]", slot = 2, type = "linear", speed = 1750, range = 925, delay = 0.25, radius = 55, collision = true},
+    
+    -- LEE SIN
+    ["BlindMonkQOne"] = {charName = "LeeSin", displayName = "Sonic Wave", slot = 0, type = "linear", speed = 1800, range = 1100, delay = 0.25, radius = 60, collision = true},
+    
+    -- LEONA
+    ["LeonaZenithBlade"] = {charName = "Leona", displayName = "Zenith Blade", slot = 2, type = "linear", speed = 2000, range = 875, delay = 0.25, radius = 70, collision = false},
+    
+    -- LISSANDRA
+    ["LissandraQMissile"] = {charName = "Lissandra", displayName = "Ice Shard", slot = 0, type = "linear", speed = 2200, range = 750, delay = 0.25, radius = 75, collision = false},
+    ["LissandraEMissile"] = {charName = "Lissandra", displayName = "Glacial Path", slot = 2, type = "linear", speed = 850, range = 1025, delay = 0.25, radius = 125, collision = false},
+    
+    -- LUCIAN
+    ["LucianW"] = {charName = "Lucian", displayName = "Ardent Blaze", slot = 1, type = "linear", speed = 1600, range = 900, delay = 0.25, radius = 80, collision = true},
+    
+    -- LULU
+    ["LuluQ"] = {charName = "Lulu", displayName = "Glitterlance", slot = 0, type = "linear", speed = 1450, range = 925, delay = 0.25, radius = 60, collision = false},
+    
+    -- LUX
+    ["LuxLightBinding"] = {charName = "Lux", displayName = "Light Binding", slot = 0, type = "linear", speed = 1200, range = 1175, delay = 0.25, radius = 70, collision = false},
+    ["LuxLightStrikeKugel"] = {charName = "Lux", displayName = "Light Strike Kugel", slot = 2, type = "circular", speed = 1200, range = 1100, delay = 0.25, radius = 300, collision = true},
+    
+    -- MAOKAI
+    ["MaokaiQ"] = {charName = "Maokai", displayName = "Bramble Smash", slot = 0, type = "linear", speed = 1600, range = 600, delay = 0.375, radius = 110, collision = false},
+    
+    -- MISS FORTUNE
+    ["MissFortuneBulletTime"] = {charName = "MissFortune", displayName = "Bullet Time", slot = 3, type = "conic", speed = 2000, range = 1400, delay = 0.25, radius = 100, angle = 34, collision = false},
+    
+    -- MILIO
+    ["MilioQ"] = {charName = "Milio", displayName = "Fire Kick", slot = 0, type = "linear", speed = 1200, range = 1000, delay = 0, radius = 60, collision = false},
+    
+    -- MORDEKAISER
+    ["MordekaiserE"] = {charName = "Mordekaiser", displayName = "Death's Grasp", slot = 2, type = "linear", speed = math.huge, range = 900, delay = 0.9, radius = 140, collision = false},
+    
+    -- MORGANA
+    ["MorganaQ"] = {charName = "Morgana", displayName = "Dark Binding", slot = 0, type = "linear", speed = 1200, range = 1250, delay = 0.25, radius = 70, collision = true},
+    
+    -- NAAFIRI
+    ["NaafiriQ"] = {charName = "Naafiri", displayName = "Naafiri", slot = 0, type = "linear", speed = 1200, range = 900, delay = 0.25, radius = 50, collision = false},
+    ["NaafiriQRecast"] = {charName = "Naafiri", displayName = "Naafiri Recast", slot = 0, type = "linear", speed = 1200, range = 900, delay = 0.25, radius = 50, collision = false},
+    
+    -- NAMI
+    ["NamiQ"] = {charName = "Nami", displayName = "Aqua Prison", slot = 0, type = "circular", speed = math.huge, range = 875, delay = 1, radius = 180, collision = false},
+    ["NamiRMissile"] = {charName = "Nami", displayName = "Tidal Wave", slot = 3, type = "linear", speed = 850, range = 2750, delay = 0.5, radius = 250, collision = false},
+    
+    -- NAUTILUS
+    ["NautilusAnchorDragMissile"] = {charName = "Nautilus", displayName = "Dredge Line", slot = 0, type = "linear", speed = 2000, range = 925, delay = 0.25, radius = 90, collision = true},
+    
+    -- NEEKO
+    ["NeekoQ"] = {charName = "Neeko", displayName = "Blooming Burst", slot = 0, type = "circular", speed = 1500, range = 800, delay = 0.25, radius = 200, collision = false},
+    ["NeekoE"] = {charName = "Neeko", displayName = "Tangle-Barbs", slot = 2, type = "linear", speed = 1300, range = 1000, delay = 0.25, radius = 70, collision = false},
+    
+    -- NIDALEE
+    ["JavelinToss"] = {charName = "Nidalee", displayName = "Javelin Toss", slot = 0, type = "linear", speed = 1300, range = 1500, delay = 0.25, radius = 40, collision = true},
+    
+    -- NOCTURNE
+    ["NocturneDuskbringer"] = {charName = "Nocturne", displayName = "Duskbringer", slot = 0, type = "linear", speed = 1600, range = 1200, delay = 0.25, radius = 60, collision = false},
+    
+    -- OLAF
+    ["OlafAxeThrowCast"] = {charName = "Olaf", displayName = "Undertow", slot = 0, type = "linear", speed = 1600, range = 1000, delay = 0.25, radius = 90, collision = false},
+    
+    -- ORNN
+    ["OrnnQ"] = {charName = "Ornn", displayName = "Volcanic Rupture", slot = 0, type = "linear", speed = 1800, range = 800, delay = 0.3, radius = 65, collision = false},
+    ["OrnnRCharge"] = {charName = "Ornn", displayName = "Call of the Forge God", slot = 3, type = "linear", speed = 1650, range = 2500, delay = 0.5, radius = 200, collision = false},
+    
+    -- PANTHEON
+    ["PantheonQMissile"] = {charName = "Pantheon", displayName = "Comet Spear [Range]", slot = 0, type = "linear", speed = 2700, range = 1200, delay = 0.25, radius = 60, collision = false},
+    ["PantheonR"] = {charName = "Pantheon", displayName = "Grand Starfall", slot = 3, type = "linear", speed = 2250, range = 1350, delay = 4, radius = 250, collision = false},
+    
+    -- POPPY
+    ["PoppyRSpell"] = {charName = "Poppy", displayName = "Keeper's Verdict", slot = 3, type = "linear", speed = 2000, range = 1200, delay = 0.33, radius = 100, collision = false},
+    
+    -- PYKE
+    ["PykeQRange"] = {charName = "Pyke", displayName = "Bone Skewer [Range]", slot = 0, type = "linear", speed = 2000, range = 1100, delay = 0.2, radius = 70, collision = true},
+    
+    -- QIYANA
+    ["QiyanaQ_Grass"] = {charName = "Qiyana", displayName = "Edge of Ixtal [Grass]", slot = 0, type = "linear", speed = 1600, range = 925, delay = 0.25, radius = 70, collision = false},
+    ["QiyanaQ_Rock"] = {charName = "Qiyana", displayName = "Edge of Ixtal [Rock]", slot = 0, type = "linear", speed = 1600, range = 925, delay = 0.25, radius = 70, collision = false},
+    ["QiyanaQ_Water"] = {charName = "Qiyana", displayName = "Edge of Ixtal [Water]", slot = 0, type = "linear", speed = 1600, range = 925, delay = 0.25, radius = 70, collision = false},
+    ["QiyanaR"] = {charName = "Qiyana", displayName = "Supreme Display of Talent", slot = 3, type = "linear", speed = 2000, range = 950, delay = 0.25, radius = 190, collision = false},
+    
+    -- QUINN
+    ["QuinnQ"] = {charName = "Quinn", displayName = "Blinding Assault", slot = 0, type = "linear", speed = 1550, range = 1025, delay = 0.25, radius = 60, collision = true},
+    
+    -- RAKAN
+    ["RakanQ"] = {charName = "Rakan", displayName = "Gleaming Quill", slot = 0, type = "linear", speed = 1850, range = 850, delay = 0.25, radius = 65, collision = true},
+    
+    -- REKSAI
+    ["RekSaiQBurrowed"] = {charName = "RekSai", displayName = "Prey Seeker", slot = 0, type = "linear", speed = 1950, range = 1625, delay = 0.125, radius = 65, collision = true},
+    
+    -- RENGAR
+    ["RengarE"] = {charName = "Rengar", displayName = "Bola Strike", slot = 2, type = "linear", speed = 1500, range = 1000, delay = 0.25, radius = 70, collision = true},
+    
+    -- RIVEN
+    ["RivenIzunaBlade"] = {charName = "Riven", displayName = "Wind Slash", slot = 3, type = "conic", speed = 1600, range = 900, delay = 0.25, radius = 0, angle = 75, collision = false},
+    
+    -- RUMBLE
+    ["RumbleGrenade"] = {charName = "Rumble", displayName = "Electro Harpoon", slot = 2, type = "linear", speed = 2000, range = 850, delay = 0.25, radius = 60, collision = true},
+    
+    -- RYZE
+    ["RyzeQ"] = {charName = "Ryze", displayName = "Overload", slot = 0, type = "linear", speed = 1700, range = 1000, delay = 0.25, radius = 55, collision = true},
+    
+    -- SAMIRA
+    ["SemiraQGun"] = {charName = "Samira", displayName = "Flair", slot = 0, type = "linear", speed = 2600, range = 1000, delay = 0.25, radius = 60, collision = true},
+    
+    -- SEJUANI
+    ["SejuaniR"] = {charName = "Sejuani", displayName = "Glacial Prison", slot = 3, type = "linear", speed = 1600, range = 1300, delay = 0.25, radius = 120, collision = false},
+    
+    -- SENNA
+    ["SennaW"] = {charName = "Senna", displayName = "Last Embrace", slot = 1, type = "linear", speed = 1150, range = 1300, delay = 0.25, radius = 60, collision = true},
+    ["SennaR"] = {charName = "Senna", displayName = "Dawning Shadow", slot = 3, type = "linear", speed = 20000, range = 12500, delay = 1, radius = 180, collision = false},
+    
+    -- SERAPHINE
+    ["SeraphineQCast"] = {charName = "Seraphine", displayName = "High Note", slot = 0, type = "circular", speed = 1200, range = 900, delay = 0.25, radius = 350, collision = false},
+    ["SeraphineECast"] = {charName = "Seraphine", displayName = "Beat Drop", slot = 2, type = "linear", speed = 1200, range = 1300, delay = 0.25, radius = 70, collision = false},
+    ["SeraphineR"] = {charName = "Seraphine", displayName = "Encore", slot = 3, type = "linear", speed = 1600, range = 1300, delay = 0.5, radius = 160, collision = false},
+    
+    -- SHYVANA
+    ["ShyvanaFireball"] = {charName = "Shyvana", displayName = "Flame Breath [Standard]", slot = 2, type = "linear", speed = 1575, range = 925, delay = 0.25, radius = 60, collision = false},
+    ["ShyvanaFireballDragon2"] = {charName = "Shyvana", displayName = "Flame Breath [Dragon]", slot = 2, type = "linear", speed = 1575, range = 975, delay = 0.333, radius = 60, collision = false},
+    
+    -- SION
+    ["SionE"] = {charName = "Sion", displayName = "Roar of the Slayer", slot = 2, type = "linear", speed = 1800, range = 800, delay = 0.25, radius = 80, collision = false},
+    
+    -- SIVIR
+    ["SivirQ"] = {charName = "Sivir", displayName = "Boomerang Blade", slot = 0, type = "linear", speed = 1350, range = 1250, delay = 0.25, radius = 90, collision = false},
+    
+    -- SKARNER
+    ["SkarnerFractureMissile"] = {charName = "Skarner", displayName = "Fracture", slot = 2, type = "linear", speed = 1500, range = 1000, delay = 0.25, radius = 70, collision = false},
+    
+    -- SONA
+    ["SonaR"] = {charName = "Sona", displayName = "Crescendo", slot = 3, type = "linear", speed = 2400, range = 1000, delay = 0.25, radius = 140, collision = false},
+    
+    -- SWAIN
+    ["SwainQ"] = {charName = "Swain", displayName = "Death's Hand", slot = 0, type = "conic", speed = 5000, range = 725, delay = 0.25, radius = 0, angle = 60, collision = false},
+    ["SwainE"] = {charName = "Swain", displayName = "Nevermove", slot = 2, type = "linear", speed = 1800, range = 850, delay = 0.25, radius = 85, collision = false},
+    
+    -- SYLAS
+    ["SylasE2"] = {charName = "Sylas", displayName = "Abduct", slot = 2, type = "linear", speed = 1600, range = 850, delay = 0.25, radius = 60, collision = true},
+    
+    -- SYNDRA
+    ["SyndraE"] = {charName = "Syndra", displayName = "Scatter the Weak [Standard]", slot = 2, type = "conic", speed = 1600, range = 700, delay = 0.25, radius = 0, angle = 40, collision = false},
+    ["SyndraESphereMissile"] = {charName = "Syndra", displayName = "Scatter the Weak [Sphere]", slot = 2, type = "linear", speed = 2000, range = 1250, delay = 0.25, radius = 100, collision = false},
+    
+    -- TAHM KENCH
+    ["TahmKenchQ"] = {charName = "TahmKench", displayName = "Tongue Lash", slot = 0, type = "linear", speed = 2800, range = 900, delay = 0.25, radius = 70, collision = true},
+    
+    -- TALIYAH
+    ["TaliyahQMis"] = {charName = "Taliyah", displayName = "Threaded Volley", slot = 0, type = "linear", speed = 3600, range = 1000, delay = 0, radius = 100, collision = true},
+    
+    -- TALON
+    ["TalonW"] = {charName = "Talon", displayName = "Rake", slot = 1, type = "conic", speed = 2500, range = 650, delay = 0.25, radius = 75, angle = 26, collision = false},
+    
+    -- THRESH
+    ["ThreshQ"] = {charName = "Thresh", displayName = "Death Sentence", slot = 0, type = "linear", speed = 1900, range = 1100, delay = 0.5, radius = 70, collision = true},
+    
+    -- TWISTED FATE
+    ["WildCards"] = {charName = "TwistedFate", displayName = "Wild Cards", slot = 0, type = "linear", speed = 1000, range = 1450, delay = 0.25, radius = 40, collision = false},
+    
+    -- URGOT
+    ["UrgotQ"] = {charName = "Urgot", displayName = "Corrosive Charge", slot = 0, type = "circular", speed = math.huge, range = 800, delay = 0.6, radius = 180, collision = false},
+    ["UrgotR"] = {charName = "Urgot", displayName = "Fear Beyond Death", slot = 3, type = "linear", speed = 3200, range = 1600, delay = 0.5, radius = 80, collision = false},
+    
+    -- VARUS
+    ["VarusQMissile"] = {charName = "Varus", displayName = "Piercing Arrow", slot = 0, type = "linear", speed = 1900, range = 1525, delay = 0, radius = 70, collision = false},
+    ["VarusE"] = {charName = "Varus", displayName = "Hail of Arrows", slot = 2, type = "circular", speed = 1500, range = 925, delay = 0.242, radius = 260, collision = false},
+    ["VarusR"] = {charName = "Varus", displayName = "Chain of Corruption", slot = 3, type = "linear", speed = 1500, range = 1200, delay = 0.25, radius = 120, collision = false},
+    
+    -- VEIGAR
+    ["VeigarBalefulStrike"] = {charName = "Veigar", displayName = "Baleful Strike", slot = 0, type = "linear", speed = 2200, range = 900, delay = 0.25, radius = 70, collision = false},
+    
+    -- VELKOZ
+    ["VelkozQMissileSplit"] = {charName = "Velkoz", displayName = "Plasma Fission [Split]", slot = 0, type = "linear", speed = 2100, range = 1100, delay = 0, radius = 45, collision = true},
+    ["VelkozQ"] = {charName = "Velkoz", displayName = "Plasma Fission", slot = 0, type = "linear", speed = 1300, range = 1050, delay = 0.25, radius = 50, collision = true},
+    ["VelkozW"] = {charName = "Velkoz", displayName = "Void Rift", slot = 1, type = "linear", speed = 1700, range = 1050, delay = 0.25, radius = 87.5, collision = false},
+    
+    -- VEX
+    ["VexQ"] = {charName = "Vex", displayName = "Vex Q Bolt", slot = 0, type = "linear", speed = 2200, range = 1200, delay = 0.15, radius = 80, collision = false},
+    
+    -- VIEGO
+    ["ViegoW"] = {charName = "Viego", displayName = "Spectral Maw", slot = 1, type = "linear", speed = 1300, range = 760, delay = 0, radius = 90, collision = true},
+    
+    -- VIKTOR
+    ["ViktorDeathRayMissile"] = {charName = "Viktor", displayName = "Death Ray", slot = 2, type = "linear", speed = 1050, range = 700, delay = 0, radius = 80, collision = false},
+    
+    -- XAYAH
+    ["XayahQ"] = {charName = "Xayah", displayName = "Double Daggers", slot = 0, type = "linear", speed = 2075, range = 1100, delay = 0.5, radius = 45, collision = false},
+    
+    -- XERATH
+    ["XerathMageSpear"] = {charName = "Xerath", displayName = "Mage Spear", slot = 2, type = "linear", speed = 1400, range = 1050, delay = 0.2, radius = 60, collision = true},
+    
+    -- YASUO
+    ["YasuoQ3"] = {charName = "Yasuo", displayName = "Gathering Storm", slot = 0, type = "linear", speed = 1200, range = 1100, delay = 0.03, radius = 90, collision = false},
+    
+    -- YONE
+    ["YoneQ3"] = {charName = "Yone", displayName = "Mortal Steel [Storm]", slot = 0, type = "linear", speed = 1500, range = 1050, delay = 0.25, radius = 80, collision = false},
+    
+    -- ZAC
+    ["ZacQ"] = {charName = "Zac", displayName = "Stretching Strikes", slot = 0, type = "linear", speed = 2800, range = 800, delay = 0.33, radius = 120, collision = false},
+    
+    -- ZED
+    ["ZedQ"] = {charName = "Zed", displayName = "Razor Shuriken", slot = 0, type = "linear", speed = 1700, range = 900, delay = 0.25, radius = 50, collision = false},
+    
+    -- ZERI
+    ["ZeriQ"] = {charName = "Zeri", displayName = "Burst Fire", slot = 0, type = "linear", speed = 1500, range = 840, delay = 0.25, radius = 80, collision = true},
+    
+    -- ZIGGS
+    ["ZiggsQ"] = {charName = "Ziggs", displayName = "Bouncing Bomb", slot = 0, type = "linear", speed = 1750, range = 850, delay = 0.25, radius = 150, collision = true},
+    ["ZiggsW"] = {charName = "Ziggs", displayName = "Satchel Charge", slot = 1, type = "circular", speed = 1750, range = 1000, delay = 0.25, radius = 240, collision = false},
+    ["ZiggsE"] = {charName = "Ziggs", displayName = "Hexplosive Minefield", slot = 2, type = "circular", speed = 1800, range = 900, delay = 0.25, radius = 250, collision = false},
+    
+    -- ZILEAN
+    ["ZileanQ"] = {charName = "Zilean", displayName = "Time Bomb", slot = 0, type = "circular", speed = math.huge, range = 900, delay = 0.8, radius = 150, collision = false},
+    
+    -- ZOE
+    ["ZoeQMissile"] = {charName = "Zoe", displayName = "Paddle Star [First]", slot = 0, type = "linear", speed = 1200, range = 800, delay = 0.25, radius = 50, collision = true},
+    ["ZoeQMis2"] = {charName = "Zoe", displayName = "Paddle Star [Second]", slot = 0, type = "linear", speed = 2500, range = 1600, delay = 0, radius = 70, collision = true},
+    ["ZoeE"] = {charName = "Zoe", displayName = "Sleepy Trouble Bubble", slot = 2, type = "linear", speed = 1700, range = 800, delay = 0.3, radius = 50, collision = true},
+    
+    -- ZYRA
+    ["ZyraE"] = {charName = "Zyra", displayName = "Grasping Roots", slot = 2, type = "linear", speed = 1150, range = 1100, delay = 0.25, radius = 70, collision = false},
+}
+
+-- Auto W system variables
+local DetectedSpells = {}
+local Units = {}
 
 -- Utility Functions - 2D Only
 local function GetDistance(p1, p2)
@@ -252,6 +664,24 @@ local function HasEBuff(target)
     return false
 end
 
+-- Check if Q is ready or will be ready after E dash
+-- E resets Q cooldown to 0.5s when hitting a target
+local function IsQReadyForEQ()
+    local qData = myHero:GetSpellData(_Q)
+    if not qData then return false end
+    
+    local qCooldown = qData.currentCd
+    
+    -- Q is ready now
+    if qCooldown == 0 then return true end
+    
+    -- Q will be ready after E (E resets Q cd to 0.5s or less)
+    -- So if Q cd is <= 0.5s, E will make it ready
+    if qCooldown <= 0.5 then return true end
+    
+    return false
+end
+
 -- Additional function from YasuoThePackGod for general buff checking
 local function HasBuff(unit, name)
     if not unit then return false end
@@ -430,6 +860,12 @@ function DepressiveYasuo2:__init()
     self.q3CancelLock = false
     self.lastQ3CastStartTime = nil -- track unique cast to avoid duplicate cancels
     
+    -- Auto W System
+    self.EnemyHeroes = {}
+    self.EnemySpells = {}
+    self.LastEnemyScan = 0
+    self.lastEnemyScanTime = 0
+    
     self:LoadMenu()
     self:LoadWalljumpSpots()
     
@@ -451,6 +887,8 @@ function DepressiveYasuo2:LoadMenu()
     self.Menu.combo:MenuElement({id = "minHitChance", name = "Min Hit Chance", value = 3, min = 1, max = 6, step = 1})
     self.Menu.combo:MenuElement({id = "eqCombo", name = "E-Q Combo", value = true})
     self.Menu.combo:MenuElement({id = "smartEChase", name = "Smart E Chase (chain minions)", value = true})
+    self.Menu.combo:MenuElement({id = "aggressiveMovement", name = "Aggressive Movement (More E-Q)", value = true})
+    self.Menu.combo:MenuElement({id = "movementStyle", name = "Movement Style", drop = {"Balanced", "Aggressive", "Very Aggressive"}, value = 2})
     
     -- Ultimate Settings (inspired by YasuoThePackGod)
     self.Menu:MenuElement({type = MENU, id = "ultimate", name = "Ultimate Settings"})
@@ -490,11 +928,13 @@ function DepressiveYasuo2:LoadMenu()
     self.Menu:MenuElement({type = MENU, id = "clear", name = "Lane Clear"})
     self.Menu.clear:MenuElement({id = "useQ", name = "Use Q", value = true})
     self.Menu.clear:MenuElement({id = "useE", name = "Use E", value = true})
+    self.Menu.clear:MenuElement({id = "fluidEQ", name = "Fluid E-Q Clear (more aggressive)", value = true})
     self.Menu.clear:MenuElement({id = "stackQ", name = "Stack Q on minions", value = true})
     self.Menu.clear:MenuElement({id = "allowEUnderTurret", name = "Allow E under Enemy Turret", value = false})
     self.Menu.clear:MenuElement({id = "smartEClear", name = "Smart E Clear (reposition with E)", value = true})
     self.Menu.clear:MenuElement({id = "qLasthit", name = "Use Q to last-hit (freeze-friendly)", value = true})
     self.Menu.clear:MenuElement({id = "avoidSmartENearEnemy", name = "Avoid Smart E if enemy hero within", value = 1200, min = 800, max = 2000, step = 100})
+    self.Menu.clear:MenuElement({id = "useQ3InClear", name = "Use Q3 in clear if 3+ minions", value = false})
     
     -- Drawing
     self.Menu:MenuElement({type = MENU, id = "drawing", name = "Drawing"})
@@ -518,6 +958,15 @@ function DepressiveYasuo2:LoadMenu()
     self.Menu.beyblade:MenuElement({id = "autoFlash", name = "Auto Flash after Q3", value = true})
     self.Menu.beyblade:MenuElement({id = "requireQ3", name = "Only use when Q3 ready", value = true})
     self.Menu.beyblade:MenuElement({id = "minHitChance", name = "Min Q3 Hit Chance", value = 3, min = 1, max = 6, step = 1})
+
+    -- Auto W (Wind Wall)
+    self.Menu:MenuElement({type = MENU, id = "autoW", name = "Auto W (Wind Wall)"})
+    self.Menu.autoW:MenuElement({id = "enabled", name = "Enable Auto W", value = true})
+    self.Menu.autoW:MenuElement({id = "blockSkillshots", name = "Block Skillshots", value = true})
+    self.Menu.autoW:MenuElement({id = "blockTargeted", name = "Block Targeted Spells", value = true})
+    self.Menu.autoW:MenuElement({id = "blockUltimates", name = "Block Ultimates", value = true})
+    self.Menu.autoW:MenuElement({id = "reactionTime", name = "Reaction Time (ms)", value = 250, min = 0, max = 500, step = 25})
+    self.Menu.autoW:MenuElement({id = "lowHPProtection", name = "Low HP Protection (<20%)", value = true})
 
     -- Performance
     self.Menu:MenuElement({type = MENU, id = "performance", name = "Performance"})
@@ -617,6 +1066,11 @@ end
 
 function DepressiveYasuo2:Tick()
     if myHero.dead or Game.IsChatOpen() then return end
+    
+    -- Auto W System - Simple and direct
+    if self.Menu.autoW and self.Menu.autoW.enabled and self.Menu.autoW.enabled:Value() and Ready(_W) then
+        self:AutoWindWall()
+    end
     
     -- Cancel walljump
     if self.Menu.walljump.cancelKey:Value() then
@@ -1221,7 +1675,7 @@ function DepressiveYasuo2:Combo()
     -- Check Q readiness and state
     local qSpellData = myHero:GetSpellData(_Q)
     local qReady = Ready(_Q)
-    local qWillBeReadyAfterE = qSpellData and qSpellData.currentCd <= 0.5 and qSpellData.currentCd > 0
+    local qWillBeReadyAfterE = IsQReadyForEQ() -- Use the new helper function
     local hasQ3 = HasQ3()
     
     -- Get positions and distances
@@ -1330,7 +1784,8 @@ function DepressiveYasuo2:Combo()
     end
     
     -- PRIORITY 4: Advanced E-Q Combo (standard combo) - SOLO si NO tienes Q3
-    if self.Menu.combo.useE:Value() and self.Menu.combo.useQ:Value() and Ready(_E) and isChasing and (qReady or qWillBeReadyAfterE) and not hasQ3 then
+    -- CRITICAL: Only use E if Q is ready or will be ready after E (cd <= 0.5s)
+    if self.Menu.combo.useE:Value() and self.Menu.combo.useQ:Value() and Ready(_E) and isChasing and qWillBeReadyAfterE and not hasQ3 then
         -- Direct E-Q on target
         if not HasEBuff(target) and distanceToTarget <= SPELL_RANGE.E and self:IsSafeToE(target) then
             Control.CastSpell(HK_E, target)
@@ -1346,8 +1801,8 @@ function DepressiveYasuo2:Combo()
             return
         end
         
-        -- E-Q through minions (improved logic)
-    if isChasing and distanceToTarget <= 700 then
+        -- E-Q through minions (improved logic) - ONLY if Q is ready or will be ready
+        if isChasing and distanceToTarget <= 700 then
             local bestMinion = self:GetBestMinionForEQ(target)
             if bestMinion and not HasEBuff(bestMinion) and self:IsSafeToE(bestMinion) then
                 Control.CastSpell(HK_E, bestMinion)
@@ -1630,293 +2085,247 @@ end
 function DepressiveYasuo2:Clear()
     if not self.Menu.clear.useQ:Value() and not self.Menu.clear.useE:Value() then return end
     
-    -- VERIFICACIÓN ESPECIAL: Si estamos bajo torre enemiga, SOLO usar Q, no E
-    local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
-    local isUnderTurret = IsUnderEnemyTurret(heroPos2D, self.Menu.safety.range:Value())
-    -- Cache para rendimiento dentro de un rango definido
-    local scanR = (self.Menu.performance and self.Menu.performance.scanRange:Value()) or 1500
-    local minions2D = GetEnemyMinions2D(scanR)
-    local qRange = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
-    local qWidth = HasQ3() and SPELL_RADIUS.Q3 or SPELL_RADIUS.Q
-    local now = Game.Timer()
-    self._nextHeavyClearEval = self._nextHeavyClearEval or 0
-    local heavyMs = (self.Menu.performance and self.Menu.performance.heavyInterval:Value() or 120)
-    local angleStep = (self.Menu.performance and self.Menu.performance.angleStep:Value() or 30)
-    local maxCandidates = (self.Menu.performance and self.Menu.performance.maxCandidates:Value() or 12)
-    local canDoHeavy = now >= self._nextHeavyClearEval
-    
-    if isUnderTurret and self.Menu.clear.useQ:Value() and Ready(_Q) then
-        -- Solo Q bajo torre - usar conteo lineal real para maximizar hits
-    local hitCount, dirx, dirz = BestQLineFromAngles(heroPos2D, qRange, qWidth, minions2D, angleStep)
-        if hitCount > 0 and dirx and dirz then
-            local aim = {x = heroPos2D.x + dirx * (qRange - 10), z = heroPos2D.z + dirz * (qRange - 10)}
-            Control.CastSpell(HK_Q, Vector(aim.x, myHero.pos.y, aim.z))
-            return
-        end
-    end
-    
-    -- Check Q readiness - either ready or will be ready after E (≤0.5s cd resets to 0 with E)
-    local qSpellData = myHero:GetSpellData(_Q)
+    -- Check Q state
     local qReady = Ready(_Q)
-    local qWillBeReadyAfterE = qSpellData and qSpellData.currentCd <= 0.5 and qSpellData.currentCd > 0
+    local eReady = Ready(_E)
+    local hasQ3 = HasQ3()
     
-    -- PRIORIDAD 0: Stack Q si hay minions con buff de E (YasuoE) para poder hacer EQ después
-    if self.Menu.clear.useQ:Value() and qReady and not HasQ3() then
-        -- Verificar si hay minions con buff de E que no podemos dashear
-        local hasMinionsWithEBuff = false
-        local minionsWithoutEBuff = 0
+    -- PRIORITY 1: E-Q Combo SOLO si hay 2+ minions para hitear (sin Q3)
+    -- Más eficiente: solo usa E-Q cuando vale la pena (múltiples minions)
+    if self.Menu.clear.fluidEQ:Value() and self.Menu.clear.useE:Value() and self.Menu.clear.useQ:Value() and eReady and qReady and not hasQ3 then
+        local scanR = (self.Menu.performance and self.Menu.performance.scanRange:Value()) or 1500
+        local minions2D = GetEnemyMinions2D(scanR)
+        local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+        local qRange = SPELL_RANGE.Q
         
-        for i = 1, Game.MinionCount() do
-            local minion = Game.Minion(i)
-            if minion and minion.team ~= myHero.team and not minion.dead then
-                local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
-                local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
-                
-                if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E then
-                    if HasEBuff(minion) then
-                        hasMinionsWithEBuff = true
-                    else
-                        minionsWithoutEBuff = minionsWithoutEBuff + 1
-                    end
-                end
-            end
-        end
+        local bestMinion = nil
+        local bestScore = 0
+        local bestMinionsInQ = 0
         
-        -- Si hay minions con E buff y pocos sin E buff, stackear Q
-        if hasMinionsWithEBuff and minionsWithoutEBuff <= 1 then
-            -- Buscar el mejor target para stackear Q (minions o jungle monsters)
-            local bestQTarget = nil
-            local qRange = SPELL_RANGE.Q
-            
-            -- Prioridad a minions sin E buff
-            for i = 1, Game.MinionCount() do
-                local minion = Game.Minion(i)
-                if minion and minion.team ~= myHero.team and not minion.dead and not HasEBuff(minion) then
-                    local minionPos2D = {x = minion.pos.x, z = minion.pos.z}
-                    local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
-                    
-                    if GetDistance2D(heroPos2D, minionPos2D) <= qRange then
-                        bestQTarget = minion
-                        break
-                    end
-                end
-            end
-            
-            -- Si no hay minions sin E buff, usar jungle monsters
-            if not bestQTarget then
-                for i = 1, Game.MinionCount() do
-                    local monster = Game.Minion(i)
-                    if monster and monster.team == 300 and not monster.dead then -- Jungle monsters
-                        local monsterPos2D = {x = monster.pos.x, z = monster.pos.z}
-                        local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
-                        
-                        if GetDistance2D(heroPos2D, monsterPos2D) <= qRange then
-                            bestQTarget = monster
-                            break
-                        end
-                    end
-                end
-            end
-            
-            -- Castear Q para stackear
-            if bestQTarget then
-                local pred, chance = GetPrediction(bestQTarget, "Q")
-                if pred and chance >= 2 then
-                    Control.CastSpell(HK_Q, Vector(pred.x, myHero.pos.y, pred.z))
-                else
-                    Control.CastSpell(HK_Q, bestQTarget.pos)
-                end
-                return
-            end
-        end
-    end
-    
-    -- PRIORIDAD 1: Lasthit con E (con mecánica de 0.5s Q)
-    if self.Menu.clear.useE:Value() and Ready(_E) then
-        local eDamage = GetEDamage()
-        local bestLasthitMinion = nil
-        local bestLasthitScore = 0
-        
+        -- Buscar el mejor minion para E que permita hitear 2+ minions con Q
         for i = 1, #minions2D do
             local minion = minions2D[i].obj
             if minion and not HasEBuff(minion) then
                 local minionPos2D = minions2D[i]
-                if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E then
-                    -- Verificar si puede ser killed con E
-                    if minion.health <= eDamage and minion.health > myHero.totalDamage * 0.7 then
-                        -- Priorizar minions con más vida (más oro)
-                        local score = minion.health
-                        
-                        -- Bonus si Q no está disponible pero está cerca (priorizar E lasthit)
-                        if not qReady and not qWillBeReadyAfterE then
-                            score = score + 200
-                        end
-                        
-                        -- Bonus si Q está listo o se reseteará con E (después del E podemos golpear más minions con Q)
-                        if qReady or qWillBeReadyAfterE then
-                            local futurePos2D = self:CalculateEPosition(minionPos2D)
-                            local minionsAfterE = 0
-                            for j = 1, #minions2D do
-                                if minions2D[j].obj ~= minion then
-                                    if GetDistance2D(futurePos2D, minions2D[j]) <= qRange then
-                                        minionsAfterE = minionsAfterE + 1
-                                    end
-                                end
+                local distance = GetDistance2D(heroPos2D, minionPos2D)
+                
+                if distance <= SPELL_RANGE.E then
+                    -- Calcular posición después de E
+                    local futurePos = self:CalculateEPosition(minionPos2D)
+                    
+                    -- Contar cuántos minions estarán en rango de Q después de E
+                    local minionsInQ = 0
+                    for j = 1, #minions2D do
+                        local otherMinion = minions2D[j].obj
+                        if otherMinion then
+                            local dist = GetDistance2D(futurePos, {x = otherMinion.pos.x, z = otherMinion.pos.z})
+                            if dist <= qRange then
+                                minionsInQ = minionsInQ + 1
                             end
-                            score = score + (minionsAfterE * 50)
                         end
+                    end
+                    
+                    -- SOLO usar E-Q si podemos hitear 2+ minions
+                    if minionsInQ >= 2 then
+                        local score = minionsInQ * 100
                         
-                        if score > bestLasthitScore then
-                            bestLasthitScore = score
-                            bestLasthitMinion = minion
+                        -- Bonus por estar más cerca
+                        score = score + (SPELL_RANGE.E - distance) / 10
+                        
+                        if score > bestScore then
+                            local isSafe = true
+                            if self.Menu.clear.eSafetyCheck and self.Menu.clear.eSafetyCheck:Value() then
+                                isSafe = self:IsPositionSafeFromEnemyAA(futurePos)
+                            end
+                            
+                            if isSafe then
+                                bestScore = score
+                                bestMinion = minion
+                                bestMinionsInQ = minionsInQ
+                            end
                         end
                     end
                 end
             end
         end
         
-        -- Ejecutar E lasthit si encontramos un minion válido y es seguro
-        if bestLasthitMinion and self:IsSafeToEInClear(bestLasthitMinion) then
-            Control.CastSpell(HK_E, bestLasthitMinion)
-            
-            -- Si Q está listo o se reseteará con E, usarlo después del E
-            if qReady or qWillBeReadyAfterE then
-                local qDelay = qReady and 0.15 or (qWillBeReadyAfterE and 0.2 or 0.3)
-                DelayAction(function()
-                    if Ready(_Q) then
-                        Control.CastSpell(HK_Q)
-                    end
-                end, qDelay)
-            end
-            return
-        end
-    end
-    
-    -- PRIORIDAD 2: Smart E Clear mejorado con conteo lineal y seguridad vs campeones
-    if self.Menu.clear.smartEClear:Value() and self.Menu.clear.useE:Value() and Ready(_E) then
-        if not canDoHeavy then goto skipSmartE end
-        local avoidRange = self.Menu.clear.avoidSmartENearEnemy:Value()
-        if avoidRange and avoidRange > 0 then
-            if AnyEnemyHeroesInRange2D(heroPos2D, avoidRange) then
-                -- Evitar reposicionamientos agresivos si hay enemigos cerca
-                goto skipSmartE
-            end
-        end
-    local bestMinion, bestScore = nil, 0
-    local considered = 0
-        for i = 1, #minions2D do
-            local m = minions2D[i].obj
-            if not HasEBuff(m) then
-                local m2D = minions2D[i]
-                if GetDistance2D(heroPos2D, m2D) <= SPELL_RANGE.E and self:IsSafeToEInClear(m) then
-                    considered = considered + 1
-                    local after = self:CalculateEPosition(m2D)
-                    local hits = select(1, BestQLineFromAngles(after, qRange, qWidth, minions2D, angleStep))
-                    if hits > bestScore and hits >= 2 then
-                        bestScore = hits
-                        bestMinion = m
-                    end
-                    if considered >= maxCandidates and bestScore >= 3 then
-                        break
-                    end
-                end
-            end
-        end
-        if bestMinion then
+        -- Si encontramos un minion que permite hitear 2+, usar E-Q
+        if bestMinion and bestMinionsInQ >= 2 then
             Control.CastSpell(HK_E, bestMinion)
-            -- Optional quick Q after reposition if ready
+            -- Usar Q inmediatamente después de E para hitear múltiples minions
             DelayAction(function()
-                if self.Menu.clear.useQ:Value() and Ready(_Q) then
-                    -- Fire Q along best line from new position
-                    local after = {x = myHero.pos.x, z = myHero.pos.z}
-                    local hits, dirx, dirz = BestQLineFromAngles(after, qRange, qWidth, minions2D, angleStep)
-                    if dirx and dirz then
-                        local aim = {x = after.x + dirx * (qRange - 10), z = after.z + dirz * (qRange - 10)}
-                        Control.CastSpell(HK_Q, Vector(aim.x, myHero.pos.y, aim.z))
-                    else
-                        Control.CastSpell(HK_Q)
+                if Ready(_Q) then
+                    local qPos = self:GetBestQPositionAfterE()
+                    if qPos then
+                        Control.CastSpell(HK_Q, qPos)
                     end
                 end
             end, 0.15)
             return
         end
-    -- mark heavy eval done even if no cast; prevents re-evaluating every tick
-    self._nextHeavyClearEval = now + (heavyMs/1000)
-        ::skipSmartE::
     end
-
-    -- PRIORIDAD 3: E-Q combo cuando ambos están disponibles, usando conteo lineal
-    if self.Menu.clear.useE:Value() and self.Menu.clear.useQ:Value() and Ready(_E) and (qReady or qWillBeReadyAfterE) then
-        if not canDoHeavy then goto skipEQ end
-        -- Buscar el mejor minion para E-Q combo
+    
+    -- PRIORITY 2: E SOLO para lasthit (si no hay oportunidad de E-Q múltiple)
+    -- Solo lasthitea con E cuando el minion va a morir
+    if self.Menu.clear.useE:Value() and eReady then
+        local eDamage = GetEDamage()
+        local scanR = (self.Menu.performance and self.Menu.performance.scanRange:Value()) or 1500
+        local minions2D = GetEnemyMinions2D(scanR)
+        local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+        
         local bestMinion = nil
         local bestScore = 0
-        local considered = 0
+        
         for i = 1, #minions2D do
             local minion = minions2D[i].obj
-            if not HasEBuff(minion) then
+            if minion and not HasEBuff(minion) then
                 local minionPos2D = minions2D[i]
-                -- Verificar que el minion esté en rango de E y sea seguro
-                if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E and self:IsSafeToEInClear(minion) then
-                    considered = considered + 1
-                    local futurePos2D = self:CalculateEPosition(minionPos2D)
-                    local hits = select(1, BestQLineFromAngles(futurePos2D, qRange, qWidth, minions2D, angleStep))
-                    local score = hits + ((HasQ3() and hits >= 2) and 5 or 0)
-                    if score > bestScore and hits >= 1 then
-                        bestScore = score
-                        bestMinion = minion
-                    end
-                    if considered >= maxCandidates and bestScore >= 2 then
-                        break
+                local distance = GetDistance2D(heroPos2D, minionPos2D)
+                
+                if distance <= SPELL_RANGE.E then
+                    -- SOLO usar E si el minion muere con el daño de E (lasthit)
+                    if minion.health <= eDamage then
+                        local score = 1000
+                        
+                        -- Bonus si es un cannon minion (más oro)
+                        if minion.charName:find("Siege") or minion.charName:find("Super") then
+                            score = score + 200
+                        end
+                        
+                        -- Preferir minions más cercanos
+                        score = score + (SPELL_RANGE.E - distance) / 10
+                        
+                        if score > bestScore then
+                            local finalPos = self:CalculateEPosition(minionPos2D)
+                            local isSafe = true
+                            
+                            if self.Menu.clear.eSafetyCheck and self.Menu.clear.eSafetyCheck:Value() then
+                                isSafe = self:IsPositionSafeFromEnemyAA(finalPos)
+                            end
+                            
+                            if isSafe then
+                                bestScore = score
+                                bestMinion = minion
+                            end
+                        end
                     end
                 end
             end
         end
         
-        -- Ejecutar E-Q combo si encontramos un minion válido
-        if bestMinion and bestScore > 0 then
+        if bestMinion then
             Control.CastSpell(HK_E, bestMinion)
-            
-            -- Queue Q después de E con delay apropiado - si Q se reseteará con E (≤0.5s), usar delay mínimo
-            local qDelay = qReady and 0.15 or (qWillBeReadyAfterE and 0.2 or 0.3)
-            DelayAction(function()
-                if Ready(_Q) then
-                    Control.CastSpell(HK_Q)
-                end
-            end, qDelay)
             return
         end
-    self._nextHeavyClearEval = now + (heavyMs/1000)
-    ::skipEQ::
     end
     
-    -- PRIORIDAD 4: Q solo para clear (cuando E no está disponible o no es seguro), usando conteo lineal
-    if self.Menu.clear.useQ:Value() and qReady then
-        local hero2D = heroPos2D
-        -- If freeze-friendly mode is on, prefer lasthits when possible
-        if self.Menu.clear.qLasthit:Value() then
-            local qDmg = GetQDamage()
-            local lhTarget = nil
-            for i = 1, #minions2D do
-                local m = minions2D[i].obj
-                if m and m.health <= qDmg and GetDistance2D(hero2D, minions2D[i]) <= qRange then
-                    lhTarget = m
-                    break
+    -- PRIORITY 3: Q3 para clear si está disponible
+    -- Usar Q3 en clear para pushear rápido la wave
+    if self.Menu.clear.useQ:Value() and qReady and hasQ3 then
+        local scanR = (self.Menu.performance and self.Menu.performance.scanRange:Value()) or 1500
+        local minions2D = GetEnemyMinions2D(scanR)
+        local bestPos = nil
+        local maxCount = 0
+        local qRange = SPELL_RANGE.Q3
+        
+        -- Buscar la mejor posición para hitear múltiples minions con Q3
+        for i = 1, #minions2D do
+            local minion = minions2D[i].obj
+            if minion then
+                local minionPos = minion.pos
+                local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
+                local minionPos2D = {x = minionPos.x, z = minionPos.z}
+                local distance = GetDistance2D(heroPos2D, minionPos2D)
+                
+                if distance <= qRange then
+                    local count = 0
+                    -- Contar minions en el radio de Q3
+                    for j = 1, #minions2D do
+                        local other = minions2D[j].obj
+                        if other then
+                            local dist = GetDistance(minionPos, other.pos)
+                            if dist <= SPELL_RADIUS.Q3 then
+                                count = count + 1
+                            end
+                        end
+                    end
+                    
+                    -- Usar Q3 si hay al menos 1 minion (siempre usar para clear)
+                    if count > maxCount then
+                        maxCount = count
+                        bestPos = Vector(minionPos.x, myHero.pos.y, minionPos.z)
+                    end
                 end
             end
-            if lhTarget then
-                Control.CastSpell(HK_Q, lhTarget.pos)
-                return
-            end
         end
-        -- Otherwise, push with best line
-    local count, dirx, dirz = BestQLineFromAngles(hero2D, qRange, qWidth, minions2D, angleStep)
-        if count > 0 and dirx and dirz then
-            local aim = {x = hero2D.x + dirx * (qRange - 10), z = hero2D.z + dirz * (qRange - 10)}
-            Control.CastSpell(HK_Q, Vector(aim.x, myHero.pos.y, aim.z))
+        
+        if bestPos then
+            Control.CastSpell(HK_Q, bestPos)
             return
         end
     end
+    
+    -- PRIORITY 4: Q normal para clear (si no tenemos Q3)
+    if self.Menu.clear.useQ:Value() and qReady and not hasQ3 then
+        local bestQPos = self:GetBestQPosition()
+        if bestQPos then
+            Control.CastSpell(HK_Q, bestQPos)
+            return
+        end
+    end
+end
+
+-- Get best Q target for clearing
+function DepressiveYasuo2:GetBestQTarget()
+    local qRange = SPELL_RANGE.Q
+    local bestTarget = nil
+    local bestScore = 0
+    
+    for i = 1, Game.MinionCount() do
+        local minion = Game.Minion(i)
+        if minion and minion.team ~= myHero.team and not minion.dead then
+            local distance = GetDistance2D(myHero.pos, minion.pos)
+            if distance <= qRange then
+                local score = 100
+                score = score + (qRange - distance) / 10
+                
+                -- Bonus for low health minion
+                if minion.health < minion.maxHealth * 0.5 then
+                    score = score + 20
+                end
+                
+                if score > bestScore then
+                    bestScore = score
+                    bestTarget = minion
+                end
+            end
+        end
+    end
+    
+    return bestTarget
+end
+
+-- Helper function: Check if position is safe from enemy basic attacks
+function DepressiveYasuo2:IsPositionSafeFromEnemyAA(position)
+    if not position then return true end
+    
+    local safetyMargin = 100 -- Extra safety margin
+    
+    for i = 1, Game.HeroCount() do
+        local enemy = Game.Hero(i)
+        if enemy and enemy.team ~= myHero.team and not enemy.dead and enemy.visible then
+            -- Get enemy's actual attack range
+            local enemyAARange = enemy.range or 550 -- Default to 550 if range not available
+            local totalRange = enemyAARange + safetyMargin
+            
+            local distance = GetDistance2D(position, enemy.pos)
+            if distance <= totalRange then
+                return false -- Position is within enemy AA range + safety margin
+            end
+        end
+    end
+    
+    return true -- Position is safe
 end
 
 function DepressiveYasuo2:LastHit()
@@ -2125,10 +2534,40 @@ function DepressiveYasuo2:GetBestMinionForEQ(target)
     local bestMinion = nil
     local bestScore = 0
     local qRange = HasQ3() and SPELL_RANGE.Q3 or SPELL_RANGE.Q
+    local qRadius = HasQ3() and SPELL_RADIUS.Q3 or SPELL_RADIUS.Q
     local heroPos2D = {x = myHero.pos.x, z = myHero.pos.z}
     local targetPos2D = {x = target.pos.x, z = target.pos.z}
     local scanR = (self.Menu.performance and self.Menu.performance.scanRange:Value()) or 1500
     local minions2D = GetEnemyMinions2D(scanR)
+    
+    -- CRITICAL: Check if Q is ready or will be ready after E dash
+    -- E resets Q cooldown to 0.5s, so if Q cd <= 0.5s, it will be ready after E
+    if not IsQReadyForEQ() then
+        return nil -- Q not ready, don't use E
+    end
+    
+    -- Get movement style from menu
+    local movementStyle = self.Menu.combo.movementStyle:Value()
+    local aggressiveMovement = self.Menu.combo.aggressiveMovement:Value()
+    
+    -- Multipliers based on movement style
+    local dashBonusMultiplier = 1.0
+    local flankBonusMultiplier = 1.0
+    local safetyPenaltyMultiplier = 1.0
+    
+    if movementStyle == 1 then -- Balanced
+        dashBonusMultiplier = 1.5
+        flankBonusMultiplier = 1.0
+        safetyPenaltyMultiplier = 1.5
+    elseif movementStyle == 2 then -- Aggressive
+        dashBonusMultiplier = 2.5
+        flankBonusMultiplier = 1.5
+        safetyPenaltyMultiplier = 1.0
+    elseif movementStyle == 3 then -- Very Aggressive
+        dashBonusMultiplier = 3.5
+        flankBonusMultiplier = 2.0
+        safetyPenaltyMultiplier = 0.5
+    end
     
     for i = 1, #minions2D do
         local minion = minions2D[i].obj
@@ -2137,32 +2576,106 @@ function DepressiveYasuo2:GetBestMinionForEQ(target)
             
             -- Check if minion is in E range
             if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E then
-                local minionToTarget = GetDistance2D(minionPos2D, targetPos2D)
+                -- Calculate position after E dash (250 units past minion)
+                local dashEndPos = self:CalculateEPosition(minionPos2D)
+                local dashEndPos2D = {x = dashEndPos.x, z = dashEndPos.z}
                 
-                -- Check if target will be in Q range after E
-                if minionToTarget <= qRange then
-                    local score = 1000 - minionToTarget -- Prefer closer minions to target
+                -- Calculate Q circle/area position after E
+                -- Q casts from dash end position
+                local distFromDashToTarget = GetDistance2D(dashEndPos2D, targetPos2D)
+                
+                -- Check if target is within Q range from dash end position
+                if distFromDashToTarget <= qRange then
+                    -- Calculate if target is within Q circle/radius
+                    -- For Q3 (tornado), it's a wider circle
+                    -- For Q1/Q2, it's a smaller circle around Yasuo
+                    local willHitTarget = false
                     
-                    -- Bonus for Q3 positioning (better damage and wider hit)
-                    if HasQ3() and minionToTarget <= SPELL_RANGE.Q3 * 0.8 then
-                        score = score + 200
+                    if HasQ3() then
+                        -- Q3 creates a circular AoE around the cast position
+                        -- Target needs to be within radius of the Q3 circle
+                        willHitTarget = distFromDashToTarget <= qRange
+                    else
+                        -- Q1/Q2 is a circle around Yasuo after dash
+                        -- Target needs to be within the circular slash range
+                        willHitTarget = distFromDashToTarget <= qRange
                     end
                     
-                    -- Bonus for good angle (minion between hero and target)
-                    local heroToTarget = GetDistance2D(heroPos2D, targetPos2D)
-                    local heroToMinion = GetDistance2D(heroPos2D, minionPos2D)
-                    if heroToMinion < heroToTarget then -- Minion is closer than target
-                        score = score + 100
-                    end
-                    
-                    -- Penalty for low HP minions (might die before combo)
-                    if minion.health < minion.maxHealth * 0.3 then
-                        score = score - 50
-                    end
-                    
-                    if score > bestScore then
-                        bestScore = score
-                        bestMinion = minion
+                    if willHitTarget then
+                        -- Score based on optimal positioning
+                        local score = 1000
+                        
+                        -- MOVEMENT BONUS: Prefer minions that create more movement/mobility
+                        local dashDistance = GetDistance2D(heroPos2D, dashEndPos2D)
+                        score = score + (dashDistance * 2 * dashBonusMultiplier) -- Reward longer dashes
+                        
+                        -- Prefer positions where we dash TOWARDS the target
+                        local heroToTargetDist = GetDistance2D(heroPos2D, targetPos2D)
+                        local dashEndToTargetDist = GetDistance2D(dashEndPos2D, targetPos2D)
+                        if dashEndToTargetDist < heroToTargetDist then
+                            score = score + (300 * dashBonusMultiplier) -- Big bonus for getting closer
+                        end
+                        
+                        -- OPTIMAL Q RANGE BONUS: Prefer hitting at optimal range
+                        local optimalRange = qRange * 0.6 -- Sweet spot at 60% of max range
+                        local rangeDiff = math.abs(distFromDashToTarget - optimalRange)
+                        score = score + (200 - rangeDiff) -- Bonus for being near optimal range
+                        
+                        -- Q3 positioning bonus (tornado is wider and better for hitting)
+                        if HasQ3() then
+                            score = score + 250
+                            -- Extra bonus if we can hit multiple enemies with Q3
+                            local enemiesInQ3Range = 0
+                            for j = 1, Game.HeroCount() do
+                                local enemy = Game.Hero(j)
+                                if enemy and enemy.isEnemy and not enemy.dead then
+                                    local enemyPos2D = {x = enemy.pos.x, z = enemy.pos.z}
+                                    if GetDistance2D(dashEndPos2D, enemyPos2D) <= qRange then
+                                        enemiesInQ3Range = enemiesInQ3Range + 1
+                                    end
+                                end
+                            end
+                            if enemiesInQ3Range >= 2 then
+                                score = score + 400 -- Big bonus for multi-target Q3
+                            end
+                        end
+                        
+                        -- ANGLE/DIRECTION BONUS: Prefer flanking/side angles
+                        local dx1 = targetPos2D.x - heroPos2D.x
+                        local dz1 = targetPos2D.z - heroPos2D.z
+                        local dx2 = dashEndPos2D.x - heroPos2D.x
+                        local dz2 = dashEndPos2D.z - heroPos2D.z
+                        local dotProduct = (dx1 * dx2 + dz1 * dz2) / (math.sqrt(dx1*dx1 + dz1*dz1) * math.sqrt(dx2*dx2 + dz2*dz2) + 0.001)
+                        
+                        -- Reward perpendicular/flanking angles (more unpredictable movement)
+                        if dotProduct > -0.3 and dotProduct < 0.7 then
+                            score = score + (150 * flankBonusMultiplier) -- Bonus for side angles
+                        end
+                        
+                        -- Bonus for circling/orbiting around target (very aggressive playstyle)
+                        if aggressiveMovement then
+                            -- Calculate if we're moving perpendicular to target (circling)
+                            if dotProduct > -0.2 and dotProduct < 0.2 then
+                                score = score + (200 * flankBonusMultiplier) -- Extra bonus for perpendicular movement
+                            end
+                        end
+                        
+                        -- Safety check: don't dash into dangerous areas
+                        if IsUnderEnemyTurret(dashEndPos) then
+                            score = score - (500 * safetyPenaltyMultiplier) -- Penalty for tower dives
+                        end
+                        
+                        -- Penalty for low HP minions (might die during E)
+                        if minion.health < GetEDamage() * 1.2 then
+                            score = score - 100
+                        end
+                        
+                        -- Final check: verify target is actually within the circular AoE
+                        -- This ensures the E-Q circle will definitely hit
+                        if score > bestScore then
+                            bestScore = score
+                            bestMinion = minion
+                        end
                     end
                 end
             end
@@ -2774,36 +3287,26 @@ function DepressiveYasuo2:AdvancedComboLogic(target)
     return "standard"
 end
 
--- Beyblade System (E-Q3-Flash Combo) Functions
+-- Beyblade System (E-Q3-Flash Combo) Functions - Enhanced with cursor targeting
+-- Now supports:
+-- 1. Cursor targeting: Selects champion under cursor when pressing T
+-- 2. Champion E targets: Can use enemy champions for E positioning
+-- 3. Smart fallback: Uses best target if no cursor target found
 function DepressiveYasuo2:HandleBeyblade()
     -- Check if Q3 is ready (essential for Beyblade)
-    if self.Menu.beyblade.requireQ3:Value() then
-        if not HasQ3() or not Ready(_Q) then
-            return
-        end
-    else
-        if not HasQ3() or not Ready(_Q) then
-            return
-        end
-    end
+    if not HasQ3() or not Ready(_Q) then return end
     
     -- Check if Flash is available
-    local flashSpell = self:GetFlashSpell()
-    if not flashSpell or not Ready(flashSpell) then
-        return
-    end
+    local flashSlot = self:GetFlashSlot()
+    if not flashSlot or not Ready(flashSlot) then return end
     
-    -- Find best target for Beyblade
-    local target = self:GetBestBeybladeTarget()
-    if not target then
-        return
-    end
+    -- Find best target for Beyblade (prioritize cursor target)
+    local target = self:GetBestBeybladeTargetWithCursor()
+    if not target then return end
     
-    -- Find best unit to E onto for optimal positioning
+    -- Find best unit to E onto for optimal positioning (including champions)
     local bestUnit = self:GetBestUnitForBeyblade(target)
-    if not bestUnit then
-        return
-    end
+    if not bestUnit then return end
     
     -- Start the Beyblade combo
     self.beybladeState = "executing_beyblade"
@@ -2818,55 +3321,54 @@ function DepressiveYasuo2:HandleBeyblade()
         -- Queue Q3 with small delay
         DelayAction(function()
             if Ready(_Q) and HasQ3() and self.beybladeState == "executing_beyblade" then
-                local prediction, hitChance = GetPrediction(self.beybladeTarget, "Q3")
-                local minHitChance = self.Menu.beyblade.minHitChance:Value()
+                local pred, chance = DepressivePrediction.GetPrediction(self.beybladeTarget, "Q3")
+                local minHitChance = self.Menu.beyblade and self.Menu.beyblade.minHitChance and self.Menu.beyblade.minHitChance:Value() or 2
                 
-                if prediction and hitChance >= minHitChance then
-                    local predPos = Vector(prediction.x, myHero.pos.y, prediction.z)
-                    Control.CastSpell(HK_Q, predPos)
+                if pred and chance >= minHitChance then
+                    Control.CastSpell(HK_Q, pred)
                 else
                     Control.CastSpell(HK_Q, self.beybladeTarget.pos)
                 end
                 
                 -- Queue Flash with delay after Q3
-                if self.Menu.beyblade.autoFlash:Value() then
-                    DelayAction(function()
-                        if self.beybladeState == "executing_beyblade" and 
-                           self.beybladeTarget and self.beybladeTarget.valid and not self.beybladeTarget.dead then
+                DelayAction(function()
+                    if self.beybladeState == "executing_beyblade" and 
+                       self.beybladeTarget and self.beybladeTarget.valid and not self.beybladeTarget.dead then
+                        
+                        local flashSlot = self:GetFlashSlot()
+                        if flashSlot and Ready(flashSlot) then
+                            local currentTarget = self.beybladeTarget
+                            local distance = GetDistance2D(myHero.pos, currentTarget.pos)
                             
-                            local flashSpell = self:GetFlashSpell()
-                            if flashSpell and Ready(flashSpell) then
-                                local currentTarget = self.beybladeTarget
-                                local flashPos = currentTarget.pos
-                                local distance = GetDistance(myHero.pos, currentTarget.pos)
-                                
-                                -- Calculate optimal flash position
-                                if distance > 200 then
-                                    local direction = (currentTarget.pos - myHero.pos):Normalized()
-                                    flashPos = myHero.pos + direction * math.min(self.Menu.beyblade.flashRange:Value(), distance - 150)
-                                end
-                                
-                                -- Execute Flash
-                                Control.SetCursorPos(flashPos)
-                                if flashSpell == SUMMONER_1 then
-                                    Control.KeyDown(HK_SUMMONER_1)
-                                    Control.KeyUp(HK_SUMMONER_1)
-                                else
-                                    Control.KeyDown(HK_SUMMONER_2)
-                                    Control.KeyUp(HK_SUMMONER_2)
-                                end
+                            -- Calculate optimal flash position (usar máxima distancia del flash)
+                            local flashRange = 450 -- Rango máximo del Flash
+                            local direction = (currentTarget.pos - myHero.pos):Normalized()
+                            
+                            -- Siempre flashear la máxima distancia posible hacia el objetivo
+                            local flashPos = myHero.pos + direction * flashRange
+                            
+                            -- Execute Flash
+                            Control.SetCursorPos(flashPos)
+                            if flashSlot == SUMMONER_1 then
+                                Control.KeyDown(HK_SUMMONER_1)
+                                Control.KeyUp(HK_SUMMONER_1)
+                            else
+                                Control.KeyDown(HK_SUMMONER_2)
+                                Control.KeyUp(HK_SUMMONER_2)
                             end
+                            
+                            -- Queue R after Flash if target is airborne and killable
+                            DelayAction(function()
+                                if Ready(_R) and self:IsTargetAirborne(currentTarget) and self:CanKillWithR(currentTarget) then
+                                    Control.CastSpell(HK_R, currentTarget)
+                                end
+                            end, 0.1)
                         end
                         
                         -- Reset combo state
                         self:ResetBeyblade()
-                    end, 0.2)
-                else
-                    -- Reset if auto flash is disabled
-                    DelayAction(function()
-                        self:ResetBeyblade()
-                    end, 0.3)
-                end
+                    end
+                end, 0.2)
             end
         end, 0.1)
     end
@@ -2883,6 +3385,86 @@ function DepressiveYasuo2:ExecuteBeybladeCombo()
     if not self.beybladeTarget or not self.beybladeTarget.valid or self.beybladeTarget.dead then
         self:ResetBeyblade()
     end
+end
+
+-- Get best target for Beyblade combo with cursor priority - Enhanced version
+function DepressiveYasuo2:GetBestBeybladeTargetWithCursor()
+    local bestTarget = nil
+    local bestScore = 0
+    local maxRange = self.Menu.beyblade and self.Menu.beyblade.maxRange and self.Menu.beyblade.maxRange:Value() or 2000
+    
+    -- Get mouse position for cursor targeting
+    local mousePos = Game.mousePos()
+    local mousePos2D = {x = mousePos.x, z = mousePos.z}
+    
+    -- PRIORITY 1: Check if cursor is over an enemy champion
+    local cursorTarget = nil
+    local cursorDistance = math.huge
+    local cursorRange = self.Menu.beyblade and self.Menu.beyblade.cursorRange and self.Menu.beyblade.cursorRange:Value() or 300
+    
+    for i = 1, Game.HeroCount() do
+        local hero = Game.Hero(i)
+        if IsValidTarget(hero, maxRange) then
+            local heroPos2D = {x = hero.pos.x, z = hero.pos.z}
+            local distanceToCursor = GetDistance2D(mousePos2D, heroPos2D)
+            
+            -- If cursor is close to this hero (within configured range), prioritize it
+            if distanceToCursor <= cursorRange then
+                if distanceToCursor < cursorDistance then
+                    cursorDistance = distanceToCursor
+                    cursorTarget = hero
+                end
+            end
+        end
+    end
+    
+    -- If we found a cursor target, use it with highest priority
+    if cursorTarget then
+        return cursorTarget
+    end
+    
+    -- PRIORITY 2: If no cursor target, use smart targeting
+    for i = 1, Game.HeroCount() do
+        local hero = Game.Hero(i)
+        if IsValidTarget(hero, maxRange) then
+            local distance = GetDistance2D(myHero.pos, hero.pos)
+            local healthPercent = hero.health / hero.maxHealth
+            
+            -- Score based on priority and health
+            local score = 1000
+            
+            -- Prioritize low health targets
+            if healthPercent < 0.5 then
+                score = score + 500
+            elseif healthPercent < 0.7 then
+                score = score + 200
+            end
+            
+            -- Prioritize closer targets
+            score = score + (maxRange - distance) / 10
+            
+            -- Prioritize fleeing targets
+            if self:IsEnemyFleeing(hero) then
+                score = score + 300
+            end
+            
+            -- Prioritize ADC and Mid laners
+            local charName = hero.charName:lower()
+            if string.find(charName, "jinx") or string.find(charName, "caitlyn") or 
+               string.find(charName, "ashe") or string.find(charName, "vayne") or
+               string.find(charName, "ahri") or string.find(charName, "zed") or
+               string.find(charName, "yasuo") then
+                score = score + 300
+            end
+            
+            if score > bestScore then
+                bestScore = score
+                bestTarget = hero
+            end
+        end
+    end
+    
+    return bestTarget
 end
 
 function DepressiveYasuo2:GetBestBeybladeTarget()
@@ -2927,35 +3509,40 @@ function DepressiveYasuo2:GetBestBeybladeTarget()
     return bestTarget
 end
 
+-- Get best unit for Beyblade combo (including champions) - Enhanced version
 function DepressiveYasuo2:GetBestUnitForBeyblade(target)
     if not target or not target.valid then return nil end
     
     local bestUnit = nil
     local bestScore = 0
-    local flashRange = self.Menu.beyblade.flashRange:Value()
+    local flashRange = 450 -- Flash range
+    local useChampions = self.Menu.beyblade and self.Menu.beyblade.useChampions and self.Menu.beyblade.useChampions:Value()
+    if useChampions == nil then useChampions = true end
     
-    -- Check enemy champions first (excluding our target)
-    for i = 1, Game.HeroCount() do
-        local hero = Game.Hero(i)
-        if hero and hero.isEnemy and hero ~= target and not hero.dead and hero.visible and 
-           not HasEBuff(hero) then
-            local distanceToHero = GetDistance(myHero.pos, hero.pos)
-            if distanceToHero <= SPELL_RANGE.E then
-                local distanceFromHeroToTarget = GetDistance(hero.pos, target.pos)
-                
-                -- Target must be within flash range after E
-                if distanceFromHeroToTarget <= flashRange then
-                    if distanceFromHeroToTarget >= 200 and distanceFromHeroToTarget <= 1000 then
-                        local optimalDistance = 600
-                        local distancePenalty = math.abs(distanceFromHeroToTarget - optimalDistance)
-                        local score = 3000 - distancePenalty
-                        
-                        -- Bonus for closer heroes
-                        score = score + (SPELL_RANGE.E - distanceToHero) / 5
-                        
-                        if score > bestScore then
-                            bestScore = score
-                            bestUnit = hero
+    -- Check enemy champions first (excluding our target) - HIGHEST PRIORITY
+    if useChampions then
+        for i = 1, Game.HeroCount() do
+            local hero = Game.Hero(i)
+            if hero and hero.isEnemy and hero ~= target and not hero.dead and hero.visible and 
+               not HasEBuff(hero) then
+                local distanceToHero = GetDistance2D(myHero.pos, hero.pos)
+                if distanceToHero <= SPELL_RANGE.E then
+                    local distanceFromHeroToTarget = GetDistance2D(hero.pos, target.pos)
+                    
+                    -- Target must be within flash range after E
+                    if distanceFromHeroToTarget <= flashRange then
+                        if distanceFromHeroToTarget >= 200 and distanceFromHeroToTarget <= 1000 then
+                            local optimalDistance = 600
+                            local distancePenalty = math.abs(distanceFromHeroToTarget - optimalDistance)
+                            local score = 3000 - distancePenalty -- HIGHEST SCORE FOR CHAMPIONS
+                            
+                            -- Bonus for closer heroes
+                            score = score + (SPELL_RANGE.E - distanceToHero) / 5
+                            
+                            if score > bestScore then
+                                bestScore = score
+                                bestUnit = hero
+                            end
                         end
                     end
                 end
@@ -2963,7 +3550,7 @@ function DepressiveYasuo2:GetBestUnitForBeyblade(target)
         end
     end
     
-    -- Check minions and jungle monsters
+    -- Check minions and jungle monsters (including red buff birds)
     for i = 1, Game.MinionCount() do
         local minion = Game.Minion(i)
         if minion and minion.alive and minion.visible and not HasEBuff(minion) then
@@ -2971,9 +3558,9 @@ function DepressiveYasuo2:GetBestUnitForBeyblade(target)
             local isEnemyMinion = minion.isEnemy
             
             if isJungleMonster or isEnemyMinion then
-                local distanceToMinion = GetDistance(myHero.pos, minion.pos)
+                local distanceToMinion = GetDistance2D(myHero.pos, minion.pos)
                 if distanceToMinion <= SPELL_RANGE.E then
-                    local distanceFromMinionToTarget = GetDistance(minion.pos, target.pos)
+                    local distanceFromMinionToTarget = GetDistance2D(minion.pos, target.pos)
                     
                     -- Target must be within flash range after E
                     if distanceFromMinionToTarget <= flashRange then
@@ -2986,9 +3573,14 @@ function DepressiveYasuo2:GetBestUnitForBeyblade(target)
                             -- Bonus for closer minions
                             score = score + (SPELL_RANGE.E - distanceToMinion) / 5
                             
-                            -- Bonus for large monsters
-                            if isJungleMonster and minion.maxHealth > 1000 then
+                            -- Bonus for jungle monsters (red buff birds, etc.)
+                            if isJungleMonster then
                                 score = score + 300
+                                
+                                -- Extra bonus for red buff birds
+                                if minion.charName:find("Red") or minion.charName:find("Raptor") then
+                                    score = score + 200
+                                end
                             end
                             
                             if score > bestScore then
@@ -3018,6 +3610,223 @@ function DepressiveYasuo2:GetFlashSpell()
     return nil
 end
 
+-- Alias for compatibility with Yasuo3.lua mega combo
+function DepressiveYasuo2:GetFlashSlot()
+    return self:GetFlashSpell()
+end
+
+-- Check if target is airborne (has airborne buff)
+function DepressiveYasuo2:IsTargetAirborne(target)
+    if not target then 
+        return false 
+    end
+    
+    -- Check for knockup/airborne buff types (type 30 and 31)
+    local buffCount = target.buffCount or 0
+    
+    for i = 0, buffCount - 1 do
+        local buff = target:GetBuff(i)
+        if buff and buff.count and buff.count > 0 then
+            local bType = buff.type
+            
+            -- Type 30 = Airborne, Type 31 = Knockup
+            if bType == 30 or bType == 31 then
+                return true
+            end
+        end
+    end
+    
+    return false
+end
+
+-- Check if enemy is fleeing
+function DepressiveYasuo2:IsEnemyFleeing(target)
+    if not target or not target.pathing then return false end
+    
+    -- Check if target is moving away from us
+    if target.pathing.hasMovePath and target.pathing.isDashing then
+        -- Target is dashing away
+        return true
+    elseif target.pathing.hasMovePath and target.pathing.moveDir then
+        -- Check movement direction
+        local moveDir = target.pathing.moveDir
+        if moveDir and moveDir.x and moveDir.z then
+            local heroToTarget = (target.pos - myHero.pos):Normalized()
+            
+            -- Calculate dot product to see if moving away
+            local dotProduct = moveDir.x * heroToTarget.x + moveDir.z * heroToTarget.z
+            
+            -- If dot product is positive, target is moving away from us
+            return dotProduct > 0.3
+        end
+    end
+    
+    return false
+end
+
+-- Check if target can be killed with R
+function DepressiveYasuo2:CanKillWithR(target)
+    if not target then return false end
+    
+    -- Get target's current HP percentage
+    local hpPercent = (target.health / target.maxHealth) * 100
+    local killThreshold = self.Menu and self.Menu.combo and self.Menu.combo.rKillThreshold and self.Menu.combo.rKillThreshold:Value() or 30
+    
+    -- Check if target HP is below kill threshold
+    if hpPercent <= killThreshold then
+        return true
+    end
+    
+    -- Advanced killable calculation (estimate R damage + follow-up damage)
+    local estimatedRDamage = self:GetRDamage()
+    local estimatedFollowUpDamage = self:CalculateFollowUpDamage(target)
+    local totalDamage = estimatedRDamage + estimatedFollowUpDamage
+    
+    -- Add safety margin (consider armor/MR reductions)
+    local effectiveDamage = totalDamage * 0.8 -- 20% safety margin
+    
+    return target.health <= effectiveDamage
+end
+
+-- Get R damage
+function DepressiveYasuo2:GetRDamage()
+    local level = myHero:GetSpellData(_R).level
+    if level == 0 then return 0 end
+    local baseDamage = {200, 300, 400}
+    local adRatio = 1.5
+    local totalAD = myHero.totalDamage
+    return baseDamage[level] + (totalAD * adRatio)
+end
+
+-- Get E damage
+function DepressiveYasuo2:GetEDamage()
+    local level = myHero:GetSpellData(_E).level
+    if level == 0 then return 0 end
+    local baseDamage = {60, 70, 80, 90, 100}
+    local apRatio = 0.6
+    local totalAP = myHero.ap
+    return baseDamage[level] + (totalAP * apRatio)
+end
+
+-- Get Q damage
+function DepressiveYasuo2:GetQDamage()
+    local level = myHero:GetSpellData(_Q).level
+    if level == 0 then return 0 end
+    local baseDamage = {20, 40, 60, 80, 100}
+    local adRatio = 1.05
+    local totalAD = myHero.totalDamage
+    return baseDamage[level] + (totalAD * adRatio)
+end
+
+-- Calculate follow-up damage after R (Q, E, auto attacks)
+function DepressiveYasuo2:CalculateFollowUpDamage(target)
+    if not target then return 0 end
+    
+    local totalDamage = 0
+    
+    -- Q damage if available
+    if Ready(_Q) then
+        totalDamage = totalDamage + self:GetQDamage() * 0.7 -- Consider armor
+    end
+    
+    -- E damage if available and target doesn't have E buff
+    if Ready(_E) and not HasEBuff(target) then
+        totalDamage = totalDamage + self:GetEDamage() * 0.7 -- Consider MR
+    end
+    
+    -- Auto attack damage (1-2 autos after R)
+    totalDamage = totalDamage + (myHero.totalDamage * 1.5 * 0.7) -- 1.5 autos with armor consideration
+    
+    return totalDamage
+end
+
+-- ============================================
+-- AUTO WIND WALL SYSTEM (Nuevo - Simple)
+-- ============================================
+
+function DepressiveYasuo2:AutoWindWall()
+    -- Scan all enemy heroes cada tick
+    for i = 1, Game.HeroCount() do
+        local enemy = Game.Hero(i)
+        if enemy and enemy.team ~= myHero.team and not enemy.dead then
+            local spell = enemy.activeSpell
+            
+            -- Check if enemy is casting a spell
+            if spell and spell.valid and spell.name then
+                -- Check if this spell is in our blockable list
+                local spellData = BlockableSpells[spell.name]
+                
+                if spellData then
+                    -- Get spell info
+                    local startPos = Vector(spell.startPos)
+                    local endPos = Vector(spell.placementPos)
+                    
+                    -- Only block spells coming toward us
+                    local distToMe = GetDistance2D(startPos, myHero.pos)
+                    if distToMe < spellData.range + 200 then
+                        
+                        -- Check if spell type is blockable
+                        if spellData.type == "linear" then
+                            -- Linear skillshot - check if it will hit us
+                            if self:WillLinearSpellHitMe(startPos, endPos, spellData.radius) then
+                                -- Cast W toward the spell
+                                Control.CastSpell(HK_W, startPos)
+                                return
+                            end
+                        elseif spellData.type == "targeted" then
+                            -- Targeted spell - check if we are the target
+                            if spell.target == myHero.handle then
+                                Control.CastSpell(HK_W, enemy.pos)
+                                return
+                            end
+                        elseif spellData.type == "circular" then
+                            -- Circular skillshot - check distance to center
+                            local distToCenter = GetDistance2D(myHero.pos, endPos)
+                            if distToCenter < spellData.radius + myHero.boundingRadius then
+                                Control.CastSpell(HK_W, startPos)
+                                return
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function DepressiveYasuo2:WillLinearSpellHitMe(startPos, endPos, radius)
+    -- Calculate the closest point on the spell line to Yasuo
+    local direction = (endPos - startPos):Normalized()
+    local yasPos = myHero.pos
+    
+    -- Vector from start to Yasuo
+    local toYasuo = Vector(yasPos.x - startPos.x, 0, yasPos.z - startPos.z)
+    
+    -- Project Yasuo's position onto the spell line
+    local dotProduct = toYasuo.x * direction.x + toYasuo.z * direction.z
+    
+    -- Clamp to the spell line segment
+    local spellLength = GetDistance2D(startPos, endPos)
+    if dotProduct < 0 then
+        dotProduct = 0
+    elseif dotProduct > spellLength then
+        dotProduct = spellLength
+    end
+    
+    -- Closest point on the line
+    local closestPoint = Vector(
+        startPos.x + direction.x * dotProduct,
+        myHero.pos.y,
+        startPos.z + direction.z * dotProduct
+    )
+    
+    -- Distance from Yasuo to the line
+    local distToLine = GetDistance2D(myHero.pos, closestPoint)
+    
+    -- Check if within radius (with some buffer for Yasuo's size)
+    return distToLine < (radius + myHero.boundingRadius + 50)
+end
+
 function DepressiveYasuo2:ResetBeyblade()
     self.beybladeState = "idle"
     self.beybladeTarget = nil
@@ -3025,6 +3834,7 @@ function DepressiveYasuo2:ResetBeyblade()
     self.beybladeTimer = 0
 end
 
+-- Auto W System Functions
 -- Initialize the script (AIONext compatible)
 if not _G.DepressiveYasuo2Instance then
     _G.DepressiveYasuo2Instance = DepressiveYasuo2()
