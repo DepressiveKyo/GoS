@@ -18,10 +18,12 @@ Data = {
     Lulu = { Version = 1.0, Changelog = "Lulu" },
     Mel = { Version = 1.0, Changelog = "Mel" },
     TwistedFate = { Version = 0.02, Changelog = "TwistedFate" },
-    Yasuo = { Version = 3.2, Changelog = "Yasuo" },
+    Riven = { Version = 3.2, Changelog = "Yasuo" },
+    Yasuo = { Version = 1.0, Changelog = "Riven" },
     Zed = { Version = 1.0, Changelog = "Zed" },
     }
 }
+
 
 
 
