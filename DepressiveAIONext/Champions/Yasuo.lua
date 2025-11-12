@@ -2,7 +2,7 @@
 if _G.__DEPRESSIVE_NEXT_YASUO_LOADED then return end
 _G.__DEPRESSIVE_NEXT_YASUO_LOADED = true
 
-local Version = 3.2
+local Version = 3.3
 local Name = "DepressiveYasuo2"
 
 -- Hero validation
@@ -105,10 +105,7 @@ local BlockableSpells = {
     -- ASHE
     ["Volley"] = {charName = "Ashe", displayName = "Volley", slot = 1, type = "conic", speed = 2000, range = 1200, delay = 0.25, radius = 20, angle = 40, collision = true},
     ["EnchantedCrystalArrow"] = {charName = "Ashe", displayName = "Enchanted Crystal Arrow", slot = 3, type = "linear", speed = 1600, range = 12500, delay = 0.25, radius = 130, collision = false},
-    
-    -- AURELION SOL
-    ["AurelionSolQ"] = {charName = "AurelionSol", displayName = "Starsurge", slot = 0, type = "linear", speed = 850, range = 1075, delay = 0, radius = 110, collision = false},
-    
+        
     -- BARD
     ["BardQ"] = {charName = "Bard", displayName = "Cosmic Binding", slot = 0, type = "linear", speed = 1500, range = 950, delay = 0.25, radius = 60, collision = true},
     
@@ -394,6 +391,7 @@ local BlockableSpells = {
     -- SYNDRA
     ["SyndraE"] = {charName = "Syndra", displayName = "Scatter the Weak [Standard]", slot = 2, type = "conic", speed = 1600, range = 700, delay = 0.25, radius = 0, angle = 40, collision = false},
     ["SyndraESphereMissile"] = {charName = "Syndra", displayName = "Scatter the Weak [Sphere]", slot = 2, type = "linear", speed = 2000, range = 1250, delay = 0.25, radius = 100, collision = false},
+    ["SyndraR"] = {charName = "Syndra", displayName = "Unleashed Power", slot = 3, type = "circular", speed = math.huge, range = 800, delay = 0.25, radius = 180, collision = false},
     
     -- TAHM KENCH
     ["TahmKenchQ"] = {charName = "TahmKench", displayName = "Tongue Lash", slot = 0, type = "linear", speed = 2800, range = 900, delay = 0.25, radius = 70, collision = true},
@@ -418,6 +416,7 @@ local BlockableSpells = {
     ["VarusQMissile"] = {charName = "Varus", displayName = "Piercing Arrow", slot = 0, type = "linear", speed = 1900, range = 1525, delay = 0, radius = 70, collision = false},
     ["VarusE"] = {charName = "Varus", displayName = "Hail of Arrows", slot = 2, type = "circular", speed = 1500, range = 925, delay = 0.242, radius = 260, collision = false},
     ["VarusR"] = {charName = "Varus", displayName = "Chain of Corruption", slot = 3, type = "linear", speed = 1500, range = 1200, delay = 0.25, radius = 120, collision = false},
+    ["VayneCondemn"] = {charName = "Vayne", displayName = "Condemn", slot = 2, type = "linear", speed = math.huge, range = 550, delay = 0, radius = 60, collision = false},
     
     -- VEIGAR
     ["VeigarBalefulStrike"] = {charName = "Veigar", displayName = "Baleful Strike", slot = 0, type = "linear", speed = 2200, range = 900, delay = 0.25, radius = 70, collision = false},
@@ -682,7 +681,6 @@ local function IsQReadyForEQ()
     return false
 end
 
--- Additional function from YasuoThePackGod for general buff checking
 local function HasBuff(unit, name)
     if not unit then return false end
     local count = unit.buffCount or 0
@@ -693,6 +691,69 @@ local function HasBuff(unit, name)
         end
     end
     return false
+end
+
+-- Helper: detect if an enemy is knocked up/airborne (name contains "knockup" or airborne types)
+local function IsKnockedUp(enemy)
+    if not enemy or enemy.dead then return false end
+    -- Direct buff check first
+    local hasYK = HasBuff(enemy, "YasuoKnockUp")
+    if hasYK then return true end
+
+    local count = enemy.buffCount or 0
+    for i = 0, count - 1 do
+        local buff = enemy:GetBuff(i)
+        if buff and buff.count and buff.count > 0 then
+            -- Yasuo-compatible airborne types
+            if buff.type == 30 or buff.type == 31 then
+                return true
+            end
+            -- Fallback by name pattern
+            if buff.name and type(buff.name) == "string" then
+                local n = buff.name:lower()
+                if n:find("knockup") or n:find("airborne") then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- Helper: find closest valid minion/jungle unit for E within range
+local function GetClosestMinion(originPos, range)
+    local best, bestDist = nil, math.huge
+    for i = 1, Game.MinionCount() do
+        local m = Game.Minion(i)
+        if m and not m.dead and m.visible and not HasEBuff(m) then
+            -- Enemy lane minions or neutral monsters
+            if m.team ~= myHero.team or m.team == 300 then
+                local d = GetDistance(originPos, m.pos)
+                if d <= range and d < bestDist then
+                    best, bestDist = m, d
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- Extended helper: choose closest champion (excluding main knocked-up target) or fallback minion
+local function GetClosestEDashUnit(knockedTarget, range)
+    local heroBest, heroDist = nil, math.huge
+    for i = 1, Game.HeroCount() do
+        local enemy = Game.Hero(i)
+        if enemy and enemy.team ~= myHero.team and not enemy.dead and enemy.visible and enemy ~= knockedTarget and not HasEBuff(enemy) then
+            local d = GetDistance(myHero.pos, enemy.pos)
+            if d <= range and d < heroDist then
+                heroBest, heroDist = enemy, d
+            end
+        end
+    end
+    -- If a champion found, prefer it
+    if heroBest then return heroBest end
+    -- Fallback to minion
+    return GetClosestMinion(myHero.pos, range)
 end
 
 local function IsUnderEnemyTurret(position, safetyRange)
@@ -847,6 +908,9 @@ function DepressiveYasuo2:__init()
         a = false,       -- 65 - Flee
         c = false        -- 67 - Harass
     }
+
+    -- Beyblade manual key state (mapped from menu key)
+    self.keysPressed.beyblade = false
     
     -- Beyblade (E-Q3-Flash) System
     self.beybladeState = "idle" -- idle, executing_beyblade
@@ -865,6 +929,9 @@ function DepressiveYasuo2:__init()
     self.EnemySpells = {}
     self.LastEnemyScan = 0
     self.lastEnemyScanTime = 0
+
+    -- Airblade state (simple throttle to avoid spam)
+    self.lastAirbladeTime = 0
     
     self:LoadMenu()
     self:LoadWalljumpSpots()
@@ -886,6 +953,8 @@ function DepressiveYasuo2:LoadMenu()
     self.Menu.combo:MenuElement({id = "useR", name = "Use R", value = true})
     self.Menu.combo:MenuElement({id = "minHitChance", name = "Min Hit Chance", value = 3, min = 1, max = 6, step = 1})
     self.Menu.combo:MenuElement({id = "eqCombo", name = "E-Q Combo", value = true})
+    self.Menu.combo:MenuElement({id = "Airblade", name = "Enable Airblade (EQ→R)", value = true})
+    self.Menu.combo:MenuElement({id = "AirbladeChampions", name = "Airblade: allow dash on champions", value = true})
     self.Menu.combo:MenuElement({id = "smartEChase", name = "Smart E Chase (chain minions)", value = true})
     self.Menu.combo:MenuElement({id = "aggressiveMovement", name = "Aggressive Movement (More E-Q)", value = true})
     self.Menu.combo:MenuElement({id = "movementStyle", name = "Movement Style", drop = {"Balanced", "Aggressive", "Very Aggressive"}, value = 2})
@@ -942,6 +1011,7 @@ function DepressiveYasuo2:LoadMenu()
     self.Menu.drawing:MenuElement({id = "ranges", name = "Draw Ranges", value = true})
     self.Menu.drawing:MenuElement({id = "prediction", name = "Draw Predictions", value = true})
     self.Menu.drawing:MenuElement({id = "status", name = "Draw Status", value = true})
+    self.Menu.drawing:MenuElement({id = "airbladeDebug", name = "Draw Airblade minions", value = false})
     
     -- Q3 Animation Cancel
     self.Menu:MenuElement({type = MENU, id = "q3cancel", name = "Q3 Animation Cancel"})
@@ -958,6 +1028,14 @@ function DepressiveYasuo2:LoadMenu()
     self.Menu.beyblade:MenuElement({id = "autoFlash", name = "Auto Flash after Q3", value = true})
     self.Menu.beyblade:MenuElement({id = "requireQ3", name = "Only use when Q3 ready", value = true})
     self.Menu.beyblade:MenuElement({id = "minHitChance", name = "Min Q3 Hit Chance", value = 3, min = 1, max = 6, step = 1})
+    self.Menu.beyblade:MenuElement({id = "flashStyle", name = "Flash style", drop = {"Toward target (capped)", "To cursor", "Behind target (overshoot)"}, value = 1})
+    self.Menu.beyblade:MenuElement({id = "overshoot", name = "Behind/offset distance", value = 75, min = 25, max = 150, step = 5})
+
+    -- Airblade manual trigger
+    self.Menu:MenuElement({type = MENU, id = "airblade", name = "Airblade (EQ→R)"})
+    self.Menu.airblade:MenuElement({id = "enabled", name = "Enable Manual Airblade", value = true})
+    self.Menu.airblade:MenuElement({id = "key", name = "Airblade Key", key = string.byte("G"), toggle = false})
+    self.Menu.airblade:MenuElement({id = "qDelay", name = "Q delay after E (ms)", value = 60, min = 0, max = 150, step = 5})
 
     -- Auto W (Wind Wall)
     self.Menu:MenuElement({type = MENU, id = "autoW", name = "Auto W (Wind Wall)"})
@@ -1088,9 +1166,14 @@ function DepressiveYasuo2:Tick()
         self:ExecuteWalljumpSequence()
     end
     
-    -- Beyblade System (E-Q3-Flash Combo)
-    if self.Menu.beyblade.enabled:Value() and self.Menu.beyblade.key:Value() then
-        self:HandleBeyblade()
+    -- Mega combo key: prefer Airblade (G-sequence) over instant R/beyblade
+    if self.Menu.beyblade.enabled:Value() and (self.keysPressed.beyblade or self.Menu.beyblade.key:Value()) then
+        self:ExecuteMegaCombo()
+    end
+
+    -- Manual Airblade key trigger
+    if self.Menu.airblade and self.Menu.airblade.enabled and self.Menu.airblade.enabled:Value() and self.Menu.airblade.key:Value() then
+        self:ManualAirblade()
     end
     
     -- Execute ongoing beyblade combo
@@ -1129,6 +1212,36 @@ function DepressiveYasuo2:Tick()
     self:DetectQ3ActiveSpell()
     -- 2) Fallback detection via Q state transition
     self:HandleQ3Cancel()
+end
+
+-- Prefer G-sequence (Airblade) when mega combo key is pressed; fallback to Beyblade otherwise
+function DepressiveYasuo2:ExecuteMegaCombo()
+    -- Check if Airblade conditions are met
+    local target = self:GetKnockedUpTarget()
+    local canAirblade = false
+    local dashUnit = nil
+
+    if target and IsKnockedUp(target) and Ready(_R) and Ready(_E) and Ready(_Q) and GetDistance(myHero.pos, target.pos) <= SPELL_RANGE.R then
+        local qCd = myHero:GetSpellData(_Q).currentCd or 0
+        if qCd <= 0.5 then
+            if self.Menu.combo and self.Menu.combo.AirbladeChampions and self.Menu.combo.AirbladeChampions:Value() then
+                dashUnit = GetClosestEDashUnit(target, SPELL_RANGE.E)
+            else
+                dashUnit = GetClosestMinion(myHero.pos, SPELL_RANGE.E)
+            end
+            if dashUnit and not HasEBuff(dashUnit) then
+                canAirblade = true
+            end
+        end
+    end
+
+    if canAirblade then
+        self:ManualAirblade()
+        return
+    end
+
+    -- Else run existing Beyblade logic
+    self:HandleBeyblade()
 end
 
 -- Poll-based Q3 cast detection using activeSpell
@@ -1227,6 +1340,33 @@ function DepressiveYasuo2:Draw()
         end
     end
     
+    -- Airblade debug: draw valid EQ minions when some enemy is knocked up
+    if self.Menu.drawing.airbladeDebug and self.Menu.drawing.airbladeDebug:Value() and 
+       self.Menu.combo and self.Menu.combo.Airblade and self.Menu.combo.Airblade:Value() then
+        local kuTarget = self:GetKnockedUpTarget()
+        if kuTarget then
+            for i = 1, Game.MinionCount() do
+                local m = Game.Minion(i)
+                if m and not m.dead and m.visible and not HasEBuff(m) and (m.team ~= myHero.team or m.team == 300) then
+                    if GetDistance(myHero.pos, m.pos) <= SPELL_RANGE.E then
+                        Draw.Circle(m.pos, 65, 2, Draw.Color(200, 0, 200, 255))
+                    end
+                end
+            end
+            -- Champion dash candidates (excluding the knocked-up target)
+            if self.Menu.combo.AirbladeChampions and self.Menu.combo.AirbladeChampions:Value() then
+                for i = 1, Game.HeroCount() do
+                    local enemy = Game.Hero(i)
+                    if enemy and enemy.team ~= myHero.team and enemy ~= kuTarget and not enemy.dead and enemy.visible and not HasEBuff(enemy) then
+                        if GetDistance(myHero.pos, enemy.pos) <= SPELL_RANGE.E then
+                            Draw.Circle(enemy.pos, 70, 2, Draw.Color(200, 255, 0, 150))
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     -- Predictions
     if self.Menu.drawing.prediction:Value() then
         local throttle = self.Menu.performance and self.Menu.performance.throttleDrawPred:Value()
@@ -1274,6 +1414,11 @@ function DepressiveYasuo2:OnWndMsg(msg, wParam)
         elseif wParam == 67 then -- C key
             self.keysPressed.c = true
         end
+
+        -- Also track the Beyblade (mega combo) key configured in the menu
+        if self.Menu and self.Menu.beyblade and self.Menu.beyblade.key and wParam == self.Menu.beyblade.key:Value() then
+            self.keysPressed.beyblade = true
+        end
     elseif msg == KEY_UP then
         if wParam == 32 then -- Space key
             self.keysPressed.space = false
@@ -1286,7 +1431,90 @@ function DepressiveYasuo2:OnWndMsg(msg, wParam)
         elseif wParam == 67 then -- C key
             self.keysPressed.c = false
         end
+
+        -- Also track Beyblade key release
+        if self.Menu and self.Menu.beyblade and self.Menu.beyblade.key and wParam == self.Menu.beyblade.key:Value() then
+            self.keysPressed.beyblade = false
+        end
     end
+end
+
+-- Manual Airblade execution (key-based mega combo variant)
+function DepressiveYasuo2:ManualAirblade()
+    if myHero.dead or Game.IsChatOpen() then return end
+    local target = self:GetKnockedUpTarget() or self:GetBestTarget()
+    if not target or not IsKnockedUp(target) then return end
+    if not Ready(_R) or not Ready(_E) or not Ready(_Q) then return end
+    local qCd = myHero:GetSpellData(_Q).currentCd or 0
+    if qCd > 0.5 then return end
+    if GetDistance(myHero.pos, target.pos) > SPELL_RANGE.R then return end
+
+    local dashUnit = nil
+    if self.Menu.combo and self.Menu.combo.AirbladeChampions and self.Menu.combo.AirbladeChampions:Value() then
+        dashUnit = GetClosestEDashUnit(target, SPELL_RANGE.E)
+    else
+        dashUnit = GetClosestMinion(myHero.pos, SPELL_RANGE.E)
+    end
+    if not dashUnit or GetDistance(myHero.pos, dashUnit.pos) > SPELL_RANGE.E then return end
+    if HasEBuff(dashUnit) then return end
+
+    local now = Game.Timer()
+    if now - (self.lastAirbladeTime or 0) < 0.3 then return end
+    self.lastAirbladeTime = now
+
+    Control.CastSpell(HK_E, dashUnit)
+    local qDelaySec = (self.Menu.airblade and self.Menu.airblade.qDelay and self.Menu.airblade.qDelay:Value() or 60) / 1000
+    DelayAction(function()
+        if Ready(_Q) then
+            Control.CastSpell(HK_Q, dashUnit.pos)
+        end
+    end, qDelaySec)
+    DelayAction(function()
+        if Ready(_Q) then
+            Control.CastSpell(HK_Q, dashUnit.pos)
+            -- Delay R 0.1s after Q
+            DelayAction(function()
+                if IsValidTarget(target, SPELL_RANGE.R) and IsKnockedUp(target) and Ready(_R) then
+                    Control.CastSpell(HK_R, target)
+                end
+            end, 0.1)
+        end
+    end, qDelaySec)
+end
+
+-- Automated Airblade for a specific target (used after Beyblade detection)
+function DepressiveYasuo2:AutoAirbladeOnTarget(target)
+    if not target or not target.valid or target.dead then return end
+    if not Ready(_R) then return end
+    if not Ready(_E) then return end
+    -- Q can be ready or will be ready after E (cd <= 0.5)
+    local qCd = myHero:GetSpellData(_Q).currentCd or 0
+    if qCd > 0.5 then return end
+
+    -- Find dash unit (champion or minion depending on settings)
+    local dashUnit = nil
+    if self.Menu.combo and self.Menu.combo.AirbladeChampions and self.Menu.combo.AirbladeChampions:Value() then
+        dashUnit = GetClosestEDashUnit(target, SPELL_RANGE.E)
+    else
+        dashUnit = GetClosestMinion(myHero.pos, SPELL_RANGE.E)
+    end
+
+    if not dashUnit or HasEBuff(dashUnit) then return end
+    if GetDistance(myHero.pos, dashUnit.pos) > SPELL_RANGE.E then return end
+
+    -- Execute E then Q after configurable delay, then R after fixed 0.1s
+    Control.CastSpell(HK_E, dashUnit)
+    local qDelaySec = (self.Menu.airblade and self.Menu.airblade.qDelay and self.Menu.airblade.qDelay:Value() or 60) / 1000
+    DelayAction(function()
+        if Ready(_Q) then
+            Control.CastSpell(HK_Q, dashUnit.pos)
+            DelayAction(function()
+                if Ready(_R) and target and target.valid and not target.dead and IsKnockedUp(target) then
+                    Control.CastSpell(HK_R, target)
+                end
+            end, 0.1)
+        end
+    end, qDelaySec)
 end
 
 function DepressiveYasuo2:ExecuteClosestWalljumpToMouse()
@@ -1687,6 +1915,45 @@ function DepressiveYasuo2:Combo()
     
     -- PRIORITY 1: Ultimate combo (advanced airborne detection)
     if self.Menu.combo.useR:Value() and Ready(_R) then
+        -- Airblade (EQ -> R) attempt BEFORE default R usage
+        if self.Menu.combo.Airblade and self.Menu.combo.Airblade:Value() then
+            if target and IsKnockedUp(target) and GetDistance(myHero.pos, target.pos) <= SPELL_RANGE.R then
+                if Ready(_E) and Ready(_Q) then
+                    local qCd = myHero:GetSpellData(_Q).currentCd or 0
+                    if qCd <= 0.5 then
+                        local dashUnit = nil
+                        if self.Menu.combo.AirbladeChampions and self.Menu.combo.AirbladeChampions:Value() then
+                            dashUnit = GetClosestEDashUnit(target, SPELL_RANGE.E)
+                        else
+                            dashUnit = GetClosestMinion(myHero.pos, SPELL_RANGE.E)
+                        end
+                        if dashUnit then
+                            local now = Game.Timer()
+                            if now - (self.lastAirbladeTime or 0) > 0.4 then
+                                self.lastAirbladeTime = now
+                                -- Cast E on unit
+                                Control.CastSpell(HK_E, dashUnit)
+                                -- Delay Q slightly to ensure dash packet begins, then immediately R
+                                local qDelaySec = (self.Menu.airblade and self.Menu.airblade.qDelay and self.Menu.airblade.qDelay:Value() or 60) / 1000
+                                DelayAction(function()
+                                    if Ready(_Q) then
+                                        Control.CastSpell(HK_Q, dashUnit.pos)
+                                        -- Delay R 0.1s after Q for better EQ damage carry
+                                        DelayAction(function()
+                                            if IsValidTarget(target, SPELL_RANGE.R) and Ready(_R) and IsKnockedUp(target) then
+                                                Control.CastSpell(HK_R, target)
+                                            end
+                                        end, 0.1)
+                                    end
+                                end, qDelaySec)
+                                return
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
         -- Check for knocked up enemies in range
         local knockedUpCount = self:CountKnockedUpEnemies(SPELL_RANGE.R, myHero.pos)
         local minEnemiesRequired = self.Menu.ultimate.minEnemiesR:Value()
@@ -3287,14 +3554,16 @@ function DepressiveYasuo2:AdvancedComboLogic(target)
     return "standard"
 end
 
--- Beyblade System (E-Q3-Flash Combo) Functions - Enhanced with cursor targeting
--- Now supports:
--- 1. Cursor targeting: Selects champion under cursor when pressing T
--- 2. Champion E targets: Can use enemy champions for E positioning
--- 3. Smart fallback: Uses best target if no cursor target found
 function DepressiveYasuo2:HandleBeyblade()
-    -- Check if Q3 is ready (essential for Beyblade)
-    if not HasQ3() or not Ready(_Q) then return end
+    -- Check Q availability. Respect menu option `requireQ3` so users can
+    -- choose to allow Beyblade even when Q3 isn't ready.
+    local requireQ3 = self.Menu.beyblade and self.Menu.beyblade.requireQ3 and self.Menu.beyblade.requireQ3:Value()
+    if requireQ3 then
+        if not HasQ3() or not Ready(_Q) then return end
+    else
+        -- If Q3 not required, still require Q to be ready for the combo
+        if not Ready(_Q) then return end
+    end
     
     -- Check if Flash is available
     local flashSlot = self:GetFlashSlot()
@@ -3338,14 +3607,8 @@ function DepressiveYasuo2:HandleBeyblade()
                         local flashSlot = self:GetFlashSlot()
                         if flashSlot and Ready(flashSlot) then
                             local currentTarget = self.beybladeTarget
-                            local distance = GetDistance2D(myHero.pos, currentTarget.pos)
-                            
-                            -- Calculate optimal flash position (usar máxima distancia del flash)
-                            local flashRange = 450 -- Rango máximo del Flash
-                            local direction = (currentTarget.pos - myHero.pos):Normalized()
-                            
-                            -- Siempre flashear la máxima distancia posible hacia el objetivo
-                            local flashPos = myHero.pos + direction * flashRange
+                            -- Compute robust flash position based on style and distances
+                            local flashPos = self:GetFlashPositionForBeyblade(currentTarget)
                             
                             -- Execute Flash
                             Control.SetCursorPos(flashPos)
@@ -3356,22 +3619,116 @@ function DepressiveYasuo2:HandleBeyblade()
                                 Control.KeyDown(HK_SUMMONER_2)
                                 Control.KeyUp(HK_SUMMONER_2)
                             end
-                            
-                            -- Queue R after Flash if target is airborne and killable
-                            DelayAction(function()
-                                if Ready(_R) and self:IsTargetAirborne(currentTarget) and self:CanKillWithR(currentTarget) then
-                                    Control.CastSpell(HK_R, currentTarget)
-                                end
-                            end, 0.1)
+                        
+                            -- Do NOT cast R here; wait for Airblade logic to handle R timing
                         end
                         
-                        -- Reset combo state
+                        -- Capture current target locally then reset combo state
+                        local capturedTarget = self.beybladeTarget
                         self:ResetBeyblade()
+
+                        local interval = 0.1
+                        local maxWait = 1.0
+                        local attempts = math.floor(maxWait / interval)
+                        local attempt = 0
+
+                        DelayAction(function()
+                            DelayAction(function()
+                                -- inner no-op to ensure DelayAction scheduling works in this environment
+                            end, 0)
+                        end, 0)
+
+                        -- Start polling loop
+                        DelayAction(function()
+                            local function poll()
+                                attempt = attempt + 1
+                                if not capturedTarget or not capturedTarget.valid or capturedTarget.dead then
+                                    return -- stop polling
+                                end
+
+                                -- Must be knocked up to use R
+                                if not IsKnockedUp(capturedTarget) then
+                                    if attempt >= attempts then return end
+                                    DelayAction(poll, interval)
+                                    return
+                                end
+
+                                -- Spell readiness: need E and R, and Q ready or will be ready after E (<=0.5s)
+                                local eReady = Ready(_E)
+                                local rReady = Ready(_R)
+                                local qCd = myHero:GetSpellData(_Q).currentCd or 0
+
+                                if eReady and rReady and qCd <= 0.5 then
+                                    -- Execute automated Airblade and stop polling
+                                    self:AutoAirbladeOnTarget(capturedTarget)
+                                    return
+                                end
+
+                                if attempt >= attempts then
+                                    return -- give up after timeout
+                                end
+
+                                -- Retry after interval
+                                DelayAction(poll, interval)
+                            end
+
+                            -- Kick off the first poll after a tiny delay to allow server-side state to update
+                            DelayAction(poll, 0.03)
+                        end, 0.06)
                     end
                 end, 0.2)
             end
         end, 0.1)
     end
+end
+
+-- Helper: compute flash landing position for Beyblade styles
+function DepressiveYasuo2:GetFlashPositionForBeyblade(target)
+    if not target then return myHero.pos end
+    local style = self.Menu.beyblade.flashStyle:Value() -- 1 toward, 2 cursor, 3 behind
+    local flashRange = (self.Menu.beyblade.flashRange and self.Menu.beyblade.flashRange:Value()) or 450
+    local overshoot = (self.Menu.beyblade.overshoot and self.Menu.beyblade.overshoot:Value()) or 75
+
+    local heroPos = myHero.pos
+    local tPos = target.pos
+
+    if style == 2 then
+        -- To cursor (clamped to flash range from hero)
+        local cursor = Game.mousePos()
+        local dir = (cursor - heroPos):Normalized()
+        local dist = math.min(flashRange, GetDistance(heroPos, cursor))
+        return heroPos + dir * dist
+    end
+
+    local dirToTarget = (tPos - heroPos):Normalized()
+    if style == 3 then
+        -- Behind target relative to its movement or facing (use target pathing if available)
+        local moveDir = dirToTarget
+        if target.pathing and target.pathing.hasMovePath and target.pathing.moveDir then
+            local md = target.pathing.moveDir
+            if md.x ~= 0 or md.z ~= 0 then
+                moveDir = Vector(md.x, 0, md.z):Normalized()
+            end
+        end
+        -- Place behind target (opposite of movement) with overshoot
+        local behindDir = (tPos - heroPos):Normalized() -- default
+        if moveDir then
+            behindDir = moveDir
+        end
+        -- We want to appear slightly behind the target: target position - behindDir * overshoot (clamped by flash range)
+        local desired = tPos - behindDir * overshoot
+        local distToDesired = GetDistance(heroPos, desired)
+        if distToDesired > flashRange then
+            desired = heroPos + (desired - heroPos):Normalized() * flashRange
+        end
+        return desired
+    end
+
+    -- Default: toward target capped at flash range but stop slightly before (avoid overshooting walls)
+    local distanceToTarget = GetDistance(heroPos, tPos)
+    local useDist = math.min(flashRange, distanceToTarget - 25) -- keep small gap
+    if useDist < 50 then useDist = math.min(flashRange, distanceToTarget) end
+    return heroPos + dirToTarget * useDist
 end
 
 function DepressiveYasuo2:ExecuteBeybladeCombo()
