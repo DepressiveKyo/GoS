@@ -1,5 +1,5 @@
 local __name__ = "DepressiveOrbwalker"
-local __version__ = 1.0
+local __version__ = 1.1
 
 if _G.DepressiveOrbUpdate then
 	return
@@ -6405,3 +6405,4 @@ Callback.Add("Load", function()
 		_G.Orbwalker.Drawings.Enabled:Value(false)
 	end
 end)
+
