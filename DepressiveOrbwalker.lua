@@ -35,13 +35,23 @@ local function AutoUpdate()
 		print("DepressiveOrbwalker.lua - downloaded! Please 2xF6!")
 		-- Cleanup temporary file
 		if FileExist(tmpPath) then
-			os.remove(tmpPath)
+			if os and os.remove then
+				os.remove(tmpPath)
+			else
+				local ok, err = pcall(function()
+					os.remove(tmpPath)
+				end)
+			end
 		end
 		return true
 	end
 	-- Cleanup temporary file if no update
 	if FileExist(tmpPath) then
-		os.remove(tmpPath)
+		if os and os.remove then
+			os.remove(tmpPath)
+		else
+			pcall(function() os.remove(tmpPath) end)
+		end
 	end
 	return false
 end
