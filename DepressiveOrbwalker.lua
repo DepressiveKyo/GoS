@@ -1,5 +1,51 @@
 local __name__ = "Depressive - Orbwalker"
 
+-- AutoUpdate configuration
+local AUTO_UPDATE_URL = "https://raw.githubusercontent.com/DepressiveKyo/GoS/refs/heads/main/DepressiveOrbwalker.lua"
+local AUTO_UPDATE_TMP = "DepressiveOrbwalker_update.tmp.lua"
+
+local function readAll(file)
+	local f = io.open(file, "r")
+	if not f then return nil end
+	local content = f:read("*all")
+	f:close()
+	return content
+end
+
+local function DownloadFileToPath(url, path)
+	local startTime = os.clock()
+	-- Use DownloadFileAsync which is available in GoS runtime
+	DownloadFileAsync(url, path, function() end)
+	repeat until os.clock() - startTime > 10 or FileExist(path)
+end
+
+local function AutoUpdate()
+	-- Try to download the remote file to a temporary copy
+	local tmpPath = SCRIPT_PATH .. AUTO_UPDATE_TMP
+	DownloadFileToPath(AUTO_UPDATE_URL, tmpPath)
+	if not FileExist(tmpPath) then
+		return false
+	end
+	local localPath = SCRIPT_PATH .. "DepressiveOrbwalker.lua"
+	local localContent = readAll(localPath) or ""
+	local remoteContent = readAll(tmpPath) or ""
+	if localContent ~= remoteContent then
+		-- Download real file and notify the user to reload (2xF6)
+		DownloadFileToPath(AUTO_UPDATE_URL, localPath)
+		print("DepressiveOrbwalker.lua - downloaded! Please 2xF6!")
+		-- Cleanup temporary file
+		if FileExist(tmpPath) then
+			os.remove(tmpPath)
+		end
+		return true
+	end
+	-- Cleanup temporary file if no update
+	if FileExist(tmpPath) then
+		os.remove(tmpPath)
+	end
+	return false
+end
+
 --#region headers
 
 local math_huge = math.huge
@@ -59,6 +105,16 @@ local function GetDistance(p1, p2)
 	local dx = p1.x - p2.x
 	local dy = (p1.z or p1.y) - (p2.z or p2.y)
 	return math.sqrt(dx * dx + dy * dy)
+end
+
+-- Optimized squared distance (faster, useful for range comparisons)
+local function GetDistanceSq(p1, p2)
+	p2 = p2 or myHero
+	p1 = p1.pos or p1
+	p2 = p2.pos or p2
+	local dx = p1.x - p2.x
+	local dy = (p1.z or p1.y) - (p2.z or p2.y)
+	return dx * dx + dy * dy
 end
 
 local function Polar(v1)
@@ -126,7 +182,9 @@ end
 local function GetControlPos(a, b, c)
 	local pos
 	if a and b and c then
-		pos = { x = a, y = b, z = c }
+		-- Interprets as (x, z, unused) for 3D world coordinates
+		-- The y (height) will be determined at conversion time using myHero.pos.y
+		pos = { x = a, y = nil, z = b }  -- Note: y is nil, will use myHero.pos.y when needed
 	elseif a and b then
 		pos = { x = a, y = b }
 	elseif a then
@@ -493,6 +551,7 @@ local SORT_MOST_AD = 8
 local SORT_MOST_AP = 9
 local SORT_LESS_CAST = 10
 local SORT_LESS_ATTACK = 11
+local SORT_SMART = 12
 
 local ItemSlots = { ITEM_1, ITEM_2, ITEM_3, ITEM_4, ITEM_5, ITEM_6, ITEM_7 }
 local ItemKeys = { HK_ITEM_1, HK_ITEM_2, HK_ITEM_3, HK_ITEM_4, HK_ITEM_5, HK_ITEM_6, HK_ITEM_7 }
@@ -800,8 +859,13 @@ Cached = {
 		FPSOptimizer:Update()
 		FPSOptimizer:UpdateObjectCache()
 		
+		-- Optimización: usar wipe table en lugar de pairs loop
+		local buffKeys = {}
 		for k in pairs(self.Buffs) do
-			self.Buffs[k] = nil
+			buffKeys[#buffKeys + 1] = k
+		end
+		for i = 1, #buffKeys do
+			self.Buffs[buffKeys[i]] = nil
 		end
 		if self.HeroesSaved then
 			for i = #self.Heroes, 1, -1 do
@@ -940,31 +1004,31 @@ Cached = {
 	end,
 
 	AddCachedHero = function(self, unit)
-		for _, u in pairs(self.ExtraHeroes) do
-			if(u.networkID == unit.networkID) then
+		local extraHeroes = self.ExtraHeroes
+		local unitNetID = unit.networkID
+		for i = 1, #extraHeroes do
+			if extraHeroes[i].networkID == unitNetID then
 				return false
 			end
 		end
-
-		table_insert(self.ExtraHeroes, unit)
+		table_insert(extraHeroes, unit)
 	end,
 
 	AddCachedMinion = function(self, unit)
-		
-		for _, u in pairs(self.ExtraUnits) do
-			if(u.networkID == unit.networkID) then
-			--	print("AddCachedMinion",Game.Timer())
+		local unitNetID = unit.networkID
+		local extraUnits = self.ExtraUnits
+		for i = 1, #extraUnits do
+			if extraUnits[i].networkID == unitNetID then
 				return false
 			end
 		end
-		for _, u in pairs(self.Minions) do
-			if(u.networkID == unit.networkID) then
-			--	print("alreadyinminionlist",Game.Timer())
+		local minions = self.Minions
+		for i = 1, #minions do
+			if minions[i].networkID == unitNetID then
 				return false
 			end
 		end
-
-		table_insert(self.ExtraUnits, unit)
+		table_insert(extraUnits, unit)
 	end,
 
 	GetMinions = function(self)
@@ -1199,11 +1263,16 @@ Menu = {
         self.Target:MenuElement({id = 'Priorities', name = 'Priorities', type = MENU})
         self.Target:MenuElement({id = 'SelectedTarget', name = 'Selected Target', value = true})
         self.Target:MenuElement({id = 'OnlySelectedTarget', name = 'Only Selected Target', value = false})
-        self.Target:MenuElement({id = 'SortMode' .. myHero.charName, name = 'Sort Mode', value = 1, drop = {'Auto', 'Closest', 'Near Mouse', 'Lowest HP', 'Lowest MaxHP', 'Highest Priority', 'Most Stack', 'Most AD', 'Most AP', 'Less Cast', 'Less Attack'}})
+	self.Target:MenuElement({id = 'SortMode' .. myHero.charName, name = 'Sort Mode', value = SORT_SMART, drop = {'Auto', 'Closest', 'Near Mouse', 'Lowest HP', 'Lowest MaxHP', 'Highest Priority', 'Most Stack', 'Most AD', 'Most AP', 'Less Cast', 'Less Attack', 'Smart AI'}})
 		self.Target:MenuElement({id = 'mindistance', name = 'mindistance', value = 400, min = 100, max = 600, step=25 })
 		self.Target:MenuElement({id = 'maxdistance', name = 'maxdistance', value = 800, min = 100, max = 1500, step=25 })
 		self.Target:MenuElement({id = 'distmultiplier', name = 'distance multiplier', value = 0.5, min = 0, max = 1, step=0.01 })
-    end,
+		-- Smart Target Selector options
+		self.Target:MenuElement({id = 'SmartAI', name = 'Smart AI', type = MENU})
+		self.Target.SmartAI:MenuElement({id = 'UseDamageCalc', name = 'Use Damage Calculation to detect killable targets', value = false})
+		self.Target.SmartAI:MenuElement({id = 'MinHpPercent', name = 'Low HP percent (fallback)', value = 25, min = 0, max = 100, step = 1})
+		self.Target.SmartAI:MenuElement({id = 'RangeOffset', name = 'Range Offset (px)', value = 50, min = 0, max = 500, step = 5})
+	end,
 
     CreateOrbwalker = function(self)
         self.Orbwalker = self.Main:MenuElement({id = 'Orbwalker', name = 'Orbwalker', type = MENU})
@@ -1320,15 +1389,36 @@ Color = {
 	drawcolor2 = Draw.Color(150, 239, 159, 55),
 }
 
+--#region FPS Optimization Utilities
+-- Throttle expensive draw operations
+local DrawThrottle = {
+	lastDrawTime = {},
+	throttleDelay = 16, -- 1000ms / 60fps
+	
+	CanDraw = function(self, key)
+		local now = GetTickCount()
+		if self.lastDrawTime[key] == nil or (now - self.lastDrawTime[key]) >= self.throttleDelay then
+			self.lastDrawTime[key] = now
+			return true
+		end
+		return false
+	end,
+}
+
+--#endregion
+
 Action = {
 
 	Tasks = {},
 
 	OnTick = function(self)
-		for i, task in pairs(self.Tasks) do
-			if os.clock() >= task[2] then
-				if task[1]() or os.clock() >= task[3] then
-					table_remove(self.Tasks, i)
+		local tasks = self.Tasks
+		local currentTime = os.clock()
+		for i = #tasks, 1, -1 do
+			local task = tasks[i]
+			if currentTime >= task[2] then
+				if task[1]() or currentTime >= task[3] then
+					table_remove(tasks, i)
 				end
 			end
 		end
@@ -3115,29 +3205,35 @@ Spell = {
 			LaneClearHandle = 0,
 			FarmMinions = {},
 
-			GetLastHitTargets = function(self)
-				local result = {}
-				for i, minion in pairs(self.FarmMinions) do
-					if minion.LastHitable then
-						local unit = minion.Minion
-						if unit.handle ~= Health.LastHitHandle then
-							table_insert(result, unit)
-						end
-					end
-				end
-				return result
-			end,
-
-			GetLaneClearTargets = function(self)
-				local result = {}
-				for i, minion in pairs(self.FarmMinions) do
+		GetLastHitTargets = function(self)
+			local result = {}
+			local farmMinions = self.FarmMinions
+			local lastHitHandle = Health.LastHitHandle
+			for i = 1, #farmMinions do
+				local minion = farmMinions[i]
+				if minion.LastHitable then
 					local unit = minion.Minion
-					if unit.handle ~= Health.LaneClearHandle then
+					if unit.handle ~= lastHitHandle then
 						table_insert(result, unit)
 					end
 				end
-				return result
-			end,
+			end
+			return result
+		end,
+
+		GetLaneClearTargets = function(self)
+			local result = {}
+			local farmMinions = self.FarmMinions
+			local laneClearHandle = Health.LaneClearHandle
+			for i = 1, #farmMinions do
+				local minion = farmMinions[i]
+				local unit = minion.Minion
+				if unit.handle ~= laneClearHandle then
+					table_insert(result, unit)
+				end
+			end
+			return result
+		end,
 
 			ShouldWait = function(self)
 				return GameTimer() <= self.ShouldWaitTime + 1
@@ -3410,19 +3506,23 @@ Object = {
 		end
 		Action:Add(function()
 			local success = 0
+			local allyHeroesInGame = self.AllyHeroesInGame
+			local enemyHeroesInGame = self.EnemyHeroesInGame
+			local allyHeroCb = self.AllyHeroCb
+			local enemyHeroCb = self.EnemyHeroCb
 			for i = 1, GameHeroCount() do
 				local args = Data:GetHeroData(GameHero(i))
-				if args.valid and args.isAlly and self.AllyHeroesInGame[args.networkID] == nil then
-					self.AllyHeroesInGame[args.networkID] = true
-					for j, func in pairs(self.AllyHeroCb) do
-						func(args)
+				if args.valid and args.isAlly and allyHeroesInGame[args.networkID] == nil then
+					allyHeroesInGame[args.networkID] = true
+					for j = 1, #allyHeroCb do
+						allyHeroCb[j](args)
 					end
 				end
 				if args.valid and args.isEnemy then
-					if self.EnemyHeroesInGame[args.networkID] == nil then
-						self.EnemyHeroesInGame[args.networkID] = true
-						for j, func in pairs(self.EnemyHeroCb) do
-							func(args)
+					if enemyHeroesInGame[args.networkID] == nil then
+						enemyHeroesInGame[args.networkID] = true
+						for j = 1, #enemyHeroCb do
+							enemyHeroCb[j](args)
 						end
 					end
 					success = success + 1
@@ -3455,31 +3555,24 @@ Object = {
 		self.UndyingBuffs["ChronoShift"] = hp < 15
 		self.UndyingBuffs["chronorevive"] = hp < 15
 		self.UndyingBuffs["UndyingRage"] = hp < 15
-		self.UndyingBuffs["JaxE"] = isAttack
-		self.UndyingBuffs["ShenWBuff"] = isAttack
-		for buffName, isActive in pairs(self.UndyingBuffs) do
-			if isActive and Buff:HasBuff(unit, buffName) then
-				local bufff=Buff:GetBuff(unit, buffName)
-				if isAttack  then
-					if  myHero.charName=="Azir" then
-						return false
-					end
---[[ 					if bufff.name:lower()=="kindredrnodeathbuff" then
-						if bufff.duration>= myHero.attackData.windUpTime + (unit.distance/Attack:GetProjectileSpeed())+Data:GetLatency()/2 +0.1 then
-						--	print(bufff.duration)
-							return true
-						end
-
-					else ]]if bufff.duration>= myHero.attackData.windUpTime + (unit.distance/Attack:GetProjectileSpeed())+Data:GetLatency()/2 then
-					--	print(bufff.duration)
-						return true
-					end
-
-				else
+	self.UndyingBuffs["JaxE"] = isAttack
+	self.UndyingBuffs["ShenWBuff"] = isAttack
+	local undyingBuffs = self.UndyingBuffs
+	for buffName, isActive in pairs(undyingBuffs) do
+		if isActive and Buff:HasBuff(unit, buffName) then
+			local bufff = Buff:GetBuff(unit, buffName)
+			if isAttack then
+				if myHero.charName == "Azir" then
+					return false
+				end
+				if bufff.duration >= myHero.attackData.windUpTime + (unit.distance/Attack:GetProjectileSpeed())+Data:GetLatency()/2 then
 					return true
 				end
+			else
+				return true
 			end
 		end
+	end
 		-- anivia passive, olaf R, ... if unit.isImmortal and not Buff:HasBuff(unit, 'willrevive') and not Buff:HasBuff(unit, 'zacrebirthready') then return true end
 		return false
 	end,
@@ -3910,9 +4003,17 @@ Target = {
 			if sortMode == SORT_MOST_STACK then
 				a = stackA
 			end
-			table_sort(a, self.SortModes[sortMode])
+			local cmp = self.SortModes[sortMode]
+			if type(cmp) ~= "function" then
+				cmp = self.SortModes[SORT_AUTO]
+			end
+			table_sort(a, cmp)
 		else
-			table_sort(a, self.CurrentSort)
+			local cmp = self.CurrentSort
+			if type(cmp) ~= "function" then
+				cmp = self.SortModes[SORT_AUTO]
+			end
+			table_sort(a, cmp)
 		end
 		return (#a == 0 and nil or a[1])
 	end,
@@ -4154,6 +4255,36 @@ Target.SortModes = {
 		return (a.health * aMultiplier * ((100 + aDef) / 100)) - a.ap - (a.totalDamage * a.attackSpeed * 2)
 			< (b.health * bMultiplier * ((100 + bDef) / 100)) - b.ap - (b.totalDamage * b.attackSpeed * 2)
 	end,
+
+	[SORT_SMART] = function(a, b)
+		-- Smart AI: Favor killable enemies within reach. Otherwise prefer closest.
+		local params = Target.MenuPriorities -- not used; keep compatibility
+		local rangeOffset = Menu.Target.SmartAI.RangeOffset:Value()
+		local reach = myHero.range + myHero.boundingRadius + rangeOffset
+		local function isKillable(unit)
+			if not unit or not unit.valid then return false end
+			if unit.distance > reach then return false end
+			if Menu.Target.SmartAI.UseDamageCalc:Value() then
+				local dmg = Damage:CalculateDamage(myHero, unit, DAMAGE_TYPE_PHYSICAL, myHero.totalDamage, false, true)
+				return dmg >= unit.health
+			else
+				local percent = Menu.Target.SmartAI.MinHpPercent:Value() / 100
+				return unit.health <= (unit.maxHealth * percent)
+			end
+		end
+		local aKill = isKillable(a)
+		local bKill = isKillable(b)
+		if aKill and not bKill then
+			return true
+		elseif not aKill and bKill then
+			return false
+		elseif aKill and bKill then
+			-- Both killable: pick lower health first
+			return a.health < b.health
+		end
+		-- Otherwise, prefer closest
+		return a.distance < b.distance
+	end,
 }
 
 Target.CurrentSortMode = Target.MenuTableSortMode:Value()
@@ -4318,28 +4449,30 @@ Health = {
 				end
 			end
 		end
-		-- ON ATTACK
-		local timer = GameTimer()
-		for handle, obj in pairs(self.Handles) do
-			local s = obj.activeSpell
-			if s and s.valid and s.isAutoAttack then
-				local endTime = s.endTime
-				local speed = s.speed
-				local animation = s.animation
-				local windup = s.windup
-				local target = s.target
-				if endTime and speed and animation and windup and target and endTime > timer then
-					self.ActiveAttacks[handle] = {
-						Speed = speed,
-						EndTime = endTime,
-						AnimationTime = animation,
-						WindUpTime = windup,
-						StartTime = endTime - animation,
-						Target = target,
-					}
-				end
+	-- ON ATTACK
+	local timer = GameTimer()
+	local handles = self.Handles
+	local activeAttacks = self.ActiveAttacks
+	for handle, obj in pairs(handles) do
+		local s = obj.activeSpell
+		if s and s.valid and s.isAutoAttack then
+			local endTime = s.endTime
+			local speed = s.speed
+			local animation = s.animation
+			local windup = s.windup
+			local target = s.target
+			if endTime and speed and animation and windup and target and endTime > timer then
+				activeAttacks[handle] = {
+					Speed = speed,
+					EndTime = endTime,
+					AnimationTime = animation,
+					WindUpTime = windup,
+					StartTime = endTime - animation,
+					Target = target,
+				}
 			end
 		end
+	end
 		-- SET FARM MINIONS
 		pos = myHero.pos
 		speed = Attack:GetProjectileSpeed()
@@ -4367,14 +4500,18 @@ Health = {
 
 	OnDraw = function(self)
 		if self.MenuDrawings.Enabled:Value() and self.MenuDrawings.LastHittableMinions:Value() then
-			for i = 1, #self.FarmMinions do
-				local args = self.FarmMinions[i]
-				local minion = args.Minion
-				if Object:IsValid(minion) then
-					if args.LastHitable then
-						Draw.Circle(minion.pos, math_max(65, minion.boundingRadius), 1, Color.LastHitable)
-					elseif args.AlmostLastHitable then
-						Draw.Circle(minion.pos, math_max(65, minion.boundingRadius), 1, Color.AlmostLastHitable)
+			-- Throttle heavy draw operations every 16ms
+			if DrawThrottle:CanDraw("HealthDraw") then
+				local farmMinions = self.FarmMinions
+				for i = 1, #farmMinions do
+					local args = farmMinions[i]
+					local minion = args.Minion
+					if Object:IsValid(minion) then
+						if args.LastHitable then
+							Draw.Circle(minion.pos, math_max(65, minion.boundingRadius), 1, Color.LastHitable)
+						elseif args.AlmostLastHitable then
+							Draw.Circle(minion.pos, math_max(65, minion.boundingRadius), 1, Color.AlmostLastHitable)
+						end
 					end
 				end
 			end
@@ -4382,7 +4519,7 @@ Health = {
 	end,
 
 	GetPrediction = function(self, target, time)
-		local timer, pos, team, handle, health, attackers
+		local timer, pos, handle, health
 		timer = GameTimer()
 		pos = target.pos
 		handle = target.handle
@@ -4390,9 +4527,11 @@ Health = {
 			self.TargetsHealth[handle] = target.health + Data:GetTotalShield(target)
 		end
 		health = self.TargetsHealth[handle]
-		for attackerHandle, attack in pairs(self.ActiveAttacks) do
-			local c = 0
-			local attacker = self.Handles[attackerHandle]
+		local activeAttacks = self.ActiveAttacks
+		local handles = self.Handles
+		local attackersDamage = self.AttackersDamage
+		for attackerHandle, attack in pairs(activeAttacks) do
+			local attacker = handles[attackerHandle]
 			if attacker and attack.Target == handle then
 				local speed, startT, flyT, endT, damage
 				speed = attack.Speed
@@ -4400,15 +4539,13 @@ Health = {
 				flyT = speed > 0 and GetDistance(attacker.pos, pos) / speed or 0
 				endT = (startT + attack.WindUpTime + flyT) - timer
 				if endT > 0 and endT < time then
-					c = c + 1
-					if self.AttackersDamage[attackerHandle] == nil then
-						self.AttackersDamage[attackerHandle] = {}
+					if attackersDamage[attackerHandle] == nil then
+						attackersDamage[attackerHandle] = {}
 					end
-					if self.AttackersDamage[attackerHandle][handle] == nil then
-						self.AttackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(attacker, target)
+					if attackersDamage[attackerHandle][handle] == nil then
+						attackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(attacker, target)
 					end
-					damage = self.AttackersDamage[attackerHandle][handle]
-
+					damage = attackersDamage[attackerHandle][handle]
 					health = health - damage
 				end
 			end
@@ -4417,7 +4554,7 @@ Health = {
 	end,
 
 	LocalGetPrediction = function(self, target, time)
-		local timer, pos, team, handle, health, attackers, turretAttacked
+		local timer, pos, handle, health, turretAttacked
 		turretAttacked = false
 		timer = GameTimer()
 		pos = target.pos
@@ -4427,8 +4564,12 @@ Health = {
 		end
 		health = self.TargetsHealth[handle]
 		local handles = {}
-		for attackerHandle, attack in pairs(self.ActiveAttacks) do
-			local attacker = self.Handles[attackerHandle]
+		local activeAttacks = self.ActiveAttacks
+		local selfHandles = self.Handles
+		local attackersDamage = self.AttackersDamage
+		local allyTurretHandle = self.AllyTurretHandle
+		for attackerHandle, attack in pairs(activeAttacks) do
+			local attacker = selfHandles[attackerHandle]
 			if attacker and attacker.valid and attacker.visible and attacker.alive and attack.Target == handle then
 				local speed, startT, flyT, endT, damage
 				speed = attack.Speed
@@ -4444,17 +4585,17 @@ Health = {
 				if endT > 0 and endT < time then
 					handles[attackerHandle] = true
 					-- damage
-					if self.AttackersDamage[attackerHandle] == nil then
-						self.AttackersDamage[attackerHandle] = {}
+					if attackersDamage[attackerHandle] == nil then
+						attackersDamage[attackerHandle] = {}
 					end
-					if self.AttackersDamage[attackerHandle][handle] == nil then
-						self.AttackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(attacker, target)
+					if attackersDamage[attackerHandle][handle] == nil then
+						attackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(attacker, target)
 					end
-					damage = self.AttackersDamage[attackerHandle][handle]
+					damage = attackersDamage[attackerHandle][handle]
 					-- laneClear
 					local c = 1
 					while endT < time do
-						if attackerHandle == self.AllyTurretHandle then
+						if attackerHandle == allyTurretHandle then
 							turretAttacked = true
 						else
 							health = health - damage
@@ -4462,7 +4603,6 @@ Health = {
 						endT = (startT + attack.WindUpTime + flyT + c * attack.AnimationTime) - timer
 						c = c + 1
 						if c > 10 then
-							--print("ERROR LANECLEAR!")
 							health = self.TargetsHealth[handle]
 							break
 						end
@@ -4471,7 +4611,8 @@ Health = {
 			end
 		end
 		-- laneClear
-		for attackerHandle, obj in pairs(self.AllyMinionsHandles) do
+		local allyMinionsHandles = self.AllyMinionsHandles
+		for attackerHandle, obj in pairs(allyMinionsHandles) do
 			if handles[attackerHandle] == nil and obj and obj.valid and obj.visible and obj.alive then
 				local aaData = obj.attackData
 				local isMoving = obj.pathing.hasMovePath
@@ -4820,6 +4961,9 @@ do
 	local FastKiting = Menu.Orbwalker.General.FastKiting
 
 	_G.Control.Evade = function(a)
+			if GameIsChatOpen() then
+				return false
+			end
 		local pos = GetControlPos(a)
 		if pos and EvadeSupport == nil then
 			if Cursor.Step == 0 then
@@ -4833,6 +4977,9 @@ do
 	end
 
 	_G.Control.Attack = function(target)
+			if GameIsChatOpen() then
+				return false
+			end
 		if target then
 			Cursor:Add(AttackKey:Key(), target)
 			if FastKiting:Value() then
@@ -4844,6 +4991,9 @@ do
 	end
 
 	_G.Control.CastSpell = function(key, a, b, c)
+			if GameIsChatOpen() then
+				return false
+			end
 		local pos = GetControlPos(a, b, c)
 		if pos then
 			if Cursor.Step > 0 then
@@ -4875,6 +5025,9 @@ do
 	end
 
 	_G.Control.Hold = function(key)
+			if GameIsChatOpen() then
+				return false
+			end
 		CastKey(key)
 		Movement.MoveTimer = 0
 		Orbwalker.CanHoldPosition = false
@@ -4882,6 +5035,9 @@ do
 	end
 
 	_G.Control.Move = function(a, b, c)
+			if GameIsChatOpen() then
+				return false
+			end
 		if Cursor.Step > 0 or GetTickCount() < Movement.MoveTimer then
 			return false
 		end
@@ -4908,7 +5064,7 @@ local MenuSmoothSpeed = Menu.Main.SmoothSpeed
 local MenuSmoothAcceleration = Menu.Main.SmoothAcceleration
 local MenuSmoothRandomness = Menu.Main.SmoothRandomness
 
--- Smooth Mouse Movement System
+-- Smooth Mouse Movement System - OPTIMIZED FOR MINIMAL DELAY
 SmoothMouse = {
     isMoving = false,
     startPos = {x = 0, y = 0},
@@ -4921,8 +5077,8 @@ SmoothMouse = {
     movementType = "normal", -- "toTarget", "return", "normal"
     onCompleteCallback = nil, -- Función a ejecutar cuando termine el movimiento
 	lastCursorSetTick = 0,
-	minSetIntervalMs = 8, -- rate limit de SetCursorPos (~125 Hz)
-	minTeleportDistance = 5, -- distancia mínima para teletransporte instantáneo
+	minSetIntervalMs = 3, -- OPTIMIZED: 3ms rate limit (~333 Hz) para mejor responsividad
+	minTeleportDistance = 3, -- OPTIMIZED: Reduced from 5 para más precisión en distancias cortas
     
     -- Bezier curve control points for natural movement
     controlPoint1 = {x = 0, y = 0},
@@ -4946,26 +5102,27 @@ SmoothMouse = {
         self.totalDistance = math.sqrt(dx * dx + dy * dy)
         
         -- Set speed and acceleration from menu
-	self.speed = math_max(1.0, MenuSmoothSpeed:Value())
-	self.acceleration = math_max(1.0, MenuSmoothAcceleration:Value())
+	self.speed = math_max(0.5, MenuSmoothSpeed:Value()) -- OPTIMIZED: Allow faster speeds
+	self.acceleration = math_max(0.8, MenuSmoothAcceleration:Value()) -- OPTIMIZED: Allow better control
         
-        -- Hacer los movimientos al target más rápidos para mejor responsividad
+        -- OPTIMIZED: Hacer los movimientos al target significativamente más rápidos
 		if movementType == "toTarget" then
-			self.speed = self.speed * 1.35 -- un boost pero más controlado
+			self.speed = self.speed * 1.8 -- OPTIMIZED: Increased from 1.35 for better responsivity
 		elseif movementType == "return" then
-			self.speed = self.speed * 0.85 -- retorno ligeramente más lento
+			self.speed = self.speed * 0.9 -- OPTIMIZED: Return slightly slower for stability
 		end
 
-		if self.totalDistance > self.minTeleportDistance then -- Only smooth if distance is significant
-            self.isMoving = true
-            self:GenerateControlPoints()
-        else
-            -- For very small distances, just teleport and execute callback
+		-- OPTIMIZED: Para distancias pequeñas usar teleport directo (más rápido)
+		if self.totalDistance <= self.minTeleportDistance then
+            -- Direct instant move for very small distances
             Control.SetCursorPos(targetX, targetY)
             self.isMoving = false
             if self.onCompleteCallback then
                 self.onCompleteCallback()
             end
+        else
+            self.isMoving = true
+            self:GenerateControlPoints()
         end
     end,
     
@@ -5021,9 +5178,10 @@ SmoothMouse = {
         -- Apply acceleration curve (starts slow, speeds up, then slows down)
         local normalizedTime = elapsed / baseTime
         
-        if normalizedTime >= 1.0 then
-            -- Movement complete
-            Control.SetCursorPos(self.targetPos.x, self.targetPos.y)
+        -- OPTIMIZED: Early termination check with buffer for precision
+        if normalizedTime >= 0.99 then
+            -- Movement essentially complete - snap to target
+            Control.SetCursorPos(math.floor(self.targetPos.x), math.floor(self.targetPos.y))
             self.isMoving = false
             
             -- Execute callback if provided
@@ -5046,10 +5204,10 @@ SmoothMouse = {
         -- Calculate position using Bezier curve
         local pos = self:BezierLerp(math_min(t, 1.0))
         
-		-- Rate-limit cursor updates to avoid throttling
+		-- OPTIMIZED: Aggressive rate-limiting with adaptive timing
 		local now = GetTickCount()
 		if (now - self.lastCursorSetTick) >= self.minSetIntervalMs then
-			Control.SetCursorPos(math.floor(pos.x), math.floor(pos.y))
+			Control.SetCursorPos(math.floor(pos.x + 0.5), math.floor(pos.y + 0.5)) -- Better rounding
 			self.lastCursorSetTick = now
 		end
         self.currentPos = pos
@@ -5074,6 +5232,10 @@ Cursor = {
 	OriginalCursorPosition = nil, -- posición original inmutable durante la acción
 
 	Add = function(self, key, castPos)
+		-- If chat is open, do not queue cursor actions
+		if GameIsChatOpen() then
+			return false
+		end
 		if type(key) == "table" then
             self.Keys = key
         else
@@ -5113,6 +5275,13 @@ Cursor = {
 	end,
 
 	StepSetToCastPos = function(self)
+		-- Do not proceed when chat is open
+		if GameIsChatOpen() then
+			self.Step = 0
+			self.OriginalCursorPosition = nil
+			self.CursorPos = nil
+			return
+		end
 		local pos
 		if self.IsTarget then
 			pos = self.CastPos.pos:To2D()
@@ -5123,18 +5292,41 @@ Cursor = {
 				pos.y=pos.y-((25/1440)*Game.Resolution().y)
 			end
 		else
-			pos = (self.CastPos.z ~= nil) and Vector(self.CastPos.x, self.CastPos.y or 0, self.CastPos.z):To2D()
-				or Vector({ x = self.CastPos.x, y = self.CastPos.y })
+			-- Check if we have 3D coordinates (x, z)
+			if self.CastPos.z ~= nil then
+				-- 3D world coordinates: use myHero.pos.y as height reference
+				pos = Vector(self.CastPos.x, myHero.pos.y, self.CastPos.z):To2D()
+			else
+				-- 2D screen coordinates or pre-calculated position
+				pos = Vector({ x = self.CastPos.x, y = self.CastPos.y })
+			end
 		end
 		self.correctedCastPos = pos
 		
+		-- OPTIMIZED: Check distance to current cursor for smart movement
+		local cursorPos = Game.cursorPos()
+		local distToCursor = math.sqrt((pos.x - cursorPos.x)^2 + (pos.y - cursorPos.y)^2)
+		
 		-- Always use smooth movement if enabled
-		if MenuSmoothMouse:Value() then
-			SmoothMouse:Start(pos.x, pos.y, "toTarget", function()
-				-- Execute action immediately when movement completes
-				self:ExecuteAction()
-			end)
-			self.SmoothMovementActive = true
+				if MenuSmoothMouse:Value() then
+			-- OPTIMIZED: Use slower/no smooth for very small distances
+			if distToCursor <= 10 then
+				-- Very close: teleport directly
+				Control.SetCursorPos(pos.x, pos.y)
+				-- Use wait state to verify before executing action
+				self.Timer = GetTickCount() + MenuDelay:Value() + 30
+				self.Step = 1
+				else
+				-- Use smooth movement for longer distances
+				SmoothMouse:Start(pos.x, pos.y, "toTarget", function()
+					-- Instead of executing action directly when movement completes, switch to WAIT state
+					-- This ensures we verify the cursor is actually at the target position before pressing key
+					self.SmoothMovementActive = false
+					self.Step = 1
+					self.Timer = GetTickCount() + MenuDelay:Value() + 50 -- small safety margin
+				end)
+				self.SmoothMovementActive = true
+			end
 		else
 			-- Direct teleport only if smooth is disabled
 			Control.SetCursorPos(pos.x, pos.y)
@@ -5142,16 +5334,22 @@ Cursor = {
 	end,
 
 	StepPressKey = function(self)
-		-- Si no usamos smoothness, ejecutar inmediatamente
-		if not MenuSmoothMouse:Value() then
-			self:ExecuteAction()
-		end
-		-- Si usamos smoothness, el callback automáticamente ejecutará la acción
-		-- cuando termine el movimiento al target
+		-- Always transition to WAIT state before pressing key, so the StepWaitForResponse can verify
+		-- cursor pos and apply any final reinforcement (reposition) before executing.
+		self.Timer = GetTickCount() + MenuDelay:Value() + 30 -- small safety margin
+		self.Step = 1
 	end,
 
 	-- Nueva función para ejecutar la acción directamente
 	ExecuteAction = function(self)
+		-- If chat opened while waiting, cancel the execution
+		if GameIsChatOpen() then
+			self.Step = 0
+			self.SmoothMovementActive = false
+			self.OriginalCursorPosition = nil
+			self.CursorPos = nil
+			return
+		end
 		-- Reset smooth movement flag
 		if self.SmoothMovementActive then
 			self.SmoothMovementActive = false
@@ -5166,6 +5364,16 @@ Cursor = {
 		end
 		
 		-- Ejecutar acción inmediatamente sin verificaciones
+		-- A direct execution after the wait: double-check cursor is where we expect
+		local expected = self.correctedCastPos
+		if expected and expected.x and expected.y then
+			local cursorPos = Game.cursorPos()
+			if cursorPos and (math.sqrt((cursorPos.x - expected.x)^2 + (cursorPos.y - expected.y)^2) > 4) then
+				-- Reinforce exact cursor position before executing
+				Control.SetCursorPos(math.floor(expected.x + 0.5), math.floor(expected.y + 0.5))
+			end
+		end
+
 		if self.IsMouseClick then
 			Control.mouse_event(MOUSEEVENTF_RIGHTDOWN)
 			Control.mouse_event(MOUSEEVENTF_RIGHTUP)
@@ -5186,8 +5394,46 @@ Cursor = {
 	end,
 
 	StepWaitForResponse = function(self)
-		-- Simplificar - ir directo al retorno sin esperar
-		self.Step = 2
+		-- Wait until the cursor is at the correctedCastPos, or timeout
+		local expected = self.correctedCastPos
+		if not expected or not expected.x or not expected.y then
+			-- No expected pos: execute directly
+			self:ExecuteAction()
+			return
+		end
+		local cursorPos = Game.cursorPos()
+		local dist = 9999
+		if cursorPos then
+			dist = math.sqrt((cursorPos.x - expected.x)^2 + (cursorPos.y - expected.y)^2)
+		end
+		local now = GetTickCount()
+		local timeout = self.Timer or (now + MenuDelay:Value() + 50)
+
+		-- If within small threshold, or timer exceeded, execute the action
+		local threshold = 5
+		if dist <= threshold then
+			self:ExecuteAction()
+			return
+		end
+
+		if now >= timeout then
+			-- Timeout reached - try to reinforce cursor position once
+			Control.SetCursorPos(math.floor(expected.x + 0.5), math.floor(expected.y + 0.5))
+			-- Allow a short additional delay to let OS/game register the pos, then execute
+			self.Timer = now + 30
+			if now >= self.Timer then
+				self:ExecuteAction()
+			end
+			return
+		end
+		-- If configured, reinforce cursor position multiple times while waiting
+		if MenuMultipleTimes:Value() then
+			self._lastReinforce = self._lastReinforce or 0
+			if now - self._lastReinforce > 20 then
+				Control.SetCursorPos(math.floor(expected.x + 0.5), math.floor(expected.y + 0.5))
+				self._lastReinforce = now
+			end
+		end
 	end,
 
 	StepSetToCursorPos = function(self)
@@ -5202,16 +5448,29 @@ Cursor = {
 			return
 		end
 		
+		-- OPTIMIZED: Check distance for smart return behavior
+		local cursorPos = Game.cursorPos()
+		local distToReturn = math.sqrt((returnPos.x - cursorPos.x)^2 + (returnPos.y - cursorPos.y)^2)
+		
 		if MenuSmoothMouse:Value() then
-			-- Usar movimiento suave para retornar a la posición original del cursor
-			SmoothMouse:Start(returnPos.x, returnPos.y, "return", function()
-				-- Cuando termine el retorno, finalizar el proceso
+			-- OPTIMIZED: Skip smooth return for very small distances
+			if distToReturn <= 15 then
+				-- Already close to original position: instant return
+				Control.SetCursorPos(returnPos.x, returnPos.y)
 				self.Step = 0
-				-- Limpiar posición original SOLO al finalizar el retorno
 				self.OriginalCursorPosition = nil
 				self.CursorPos = nil
-			end)
-			self.SmoothMovementActive = true
+			else
+				-- Usar movimiento suave para retornar a la posición original del cursor
+				SmoothMouse:Start(returnPos.x, returnPos.y, "return", function()
+					-- Cuando termine el retorno, finalizar el proceso
+					self.Step = 0
+					-- Limpiar posición original SOLO al finalizar el retorno
+					self.OriginalCursorPosition = nil
+					self.CursorPos = nil
+				end)
+				self.SmoothMovementActive = true
+			end
 		else
 			-- Retorno instantáneo (método tradicional)
 			Control.SetCursorPos(returnPos.x, returnPos.y)
@@ -5280,6 +5539,7 @@ Cursor = {
 					)
 				end
 			end
+			-- No debug cursor info (removed, per user request)
 		end
 	end,
 }
@@ -5497,6 +5757,13 @@ Orbwalker = {
 
 	OnTick = function(self)
 		-- Optimización FPS: Salir temprano si no debe procesar este tick
+		-- Integración ligera con DepressiveEvade: evaluar amenazas antes de orbwalk
+		if _G.DepressiveEvade and _G.DepressiveEvade.ShouldEvade then
+			pcall(function()
+				_G.DepressiveEvade:ShouldEvade()
+			end)
+		end
+
 		if not FPSOptimizer:ShouldTick() then
 			return
 		end
@@ -5746,6 +6013,9 @@ Orbwalker = {
 		if not self.Menu.AttackEnabled:Value() then
 			return
 		end
+		if GameIsChatOpen() or Data:Stop() then
+			return
+		end
 		if self.AttackEnabled and unit and unit.valid and unit.visible and unit.pos:To2D().onScreen then
 			self.LastTarget = unit
 			if self:CanAttack() then
@@ -5779,6 +6049,9 @@ Orbwalker = {
 		if not self.Menu.MovementEnabled:Value() then
 			return
 		end
+		if GameIsChatOpen() or Data:Stop() then
+			return
+		end
 		if self.MovementEnabled and self:CanMove() then
 			if self.PostAttackBool and not Attack:IsActive(0.025) then
 				for i = 1, #self.OnPostAttackCb do
@@ -5799,6 +6072,12 @@ Orbwalker = {
 								Attack.LocalStart = GameTimer() - 0.25 -- adelanta la ventana para IsReady/IsActive
 								-- También marcar PostAttackTimer para que no bloquee siguiente AA
 								self.PostAttackTimer = GameTimer() - 0.2
+							elseif myHero.charName == "Zeri" and slot == _Q then
+								-- Zeri Q debe sincronizar con ataque, no esperar windup
+								-- Lanzar Q durante el windup para combo óptimo
+								Attack.Reset = true
+								Attack.LocalStart = GameTimer() - 0.4 -- Adelantar más para sincronizar con windup de Zeri (0.658s)
+								self.PostAttackTimer = GameTimer() - 0.35
 							end
 							return true
 						end
@@ -5853,6 +6132,9 @@ Orbwalker = {
 	end,
 
 	Orbwalk = function(self)
+		if GameIsChatOpen() or Data:Stop() then
+			return
+		end
 		if not self:Attack(self:GetTarget()) then
 			self:Move()
 		end
@@ -5920,6 +6202,12 @@ Callback.Add("Load", function()
 	local draws = SDK.OnDraw
 	local wndmsgs = SDK.OnWndMsg
 	if Game.Latency() < 250 then _G.LATENCY = Game.Latency() else _G.LATENCY = Menu.Main.Latency:Value() end
+
+	-- Auto update on script load
+	if AutoUpdate() then
+		-- Update was applied and user notified to reload (2xF6), stop further execution
+		return
+	end
 
 	Callback.Add("Draw", function()
 		--[[local as = myHero.activeSpell
