@@ -1,59 +1,133 @@
-local __name__ = "Depressive - Orbwalker"
+local __name__ = "DepressiveOrbwalker"
+local __version__ = 1.0
 
--- AutoUpdate configuration
-local AUTO_UPDATE_URL = "https://raw.githubusercontent.com/DepressiveKyo/GoS/refs/heads/main/DepressiveOrbwalker.lua"
-local AUTO_UPDATE_TMP = "DepressiveOrbwalker_update.tmp.lua"
-
-local function readAll(file)
-	local f = io.open(file, "r")
-	if not f then return nil end
-	local content = f:read("*all")
-	f:close()
-	return content
+if _G.DepressiveOrbUpdate then
+	return
 end
-
-local function DownloadFileToPath(url, path)
-	local startTime = os.clock()
-	-- Use DownloadFileAsync which is available in GoS runtime
-	DownloadFileAsync(url, path, function() end)
-	repeat until os.clock() - startTime > 10 or FileExist(path)
-end
-
-local function AutoUpdate()
-	-- Try to download the remote file to a temporary copy
-	local tmpPath = SCRIPT_PATH .. AUTO_UPDATE_TMP
-	DownloadFileToPath(AUTO_UPDATE_URL, tmpPath)
-	if not FileExist(tmpPath) then
-		return false
+_G.DepressiveOrbUpdate = {}
+do
+	function DepressiveOrbUpdate:__init()
+		self.Callbacks = {}
 	end
-	local localPath = SCRIPT_PATH .. "DepressiveOrbwalker.lua"
-	local localContent = readAll(localPath) or ""
-	local remoteContent = readAll(tmpPath) or ""
-	if localContent ~= remoteContent then
-		-- Download real file and notify the user to reload (2xF6)
-		DownloadFileToPath(AUTO_UPDATE_URL, localPath)
-		print("DepressiveOrbwalker.lua - downloaded! Please 2xF6!")
-		-- Cleanup temporary file
-		if FileExist(tmpPath) then
-			if os and os.remove then
-				os.remove(tmpPath)
-			else
-				local ok, err = pcall(function()
-					os.remove(tmpPath)
-				end)
+
+	function DepressiveOrbUpdate:DownloadFile(url, path)
+		DownloadFileAsync(url, path, function() end)
+	end
+
+	function DepressiveOrbUpdate:Trim(s)
+		local from = s:match("^%s*()")
+		return from > #s and "" or s:match(".*%S", from)
+	end
+
+	function DepressiveOrbUpdate:ReadFile(path)
+		local result = {}
+		local file = io.open(path, "r")
+		if file then
+			for line in file:lines() do
+				local str = self:Trim(line)
+				if #str > 0 then
+					table.insert(result, str)
+				end
+			end
+			file:close()
+		end
+		return result
+	end
+
+	function DepressiveOrbUpdate:New(args)
+		local updater = {}
+		function updater:__init()
+			self.Step = 1
+			self.Version = type(args.version) == "number" and args.version or tonumber(args.version)
+			self.VersionUrl = args.versionUrl
+			self.VersionPath = args.versionPath
+			self.ScriptUrl = args.scriptUrl
+			self.ScriptPath = args.scriptPath
+			self.ScriptName = args.scriptName
+			self.VersionTimer = GetTickCount()
+			self:DownloadVersion()
+		end
+		function updater:DownloadVersion()
+			if not FileExist(self.ScriptPath) then
+				self.Step = 4
+				DepressiveOrbUpdate:DownloadFile(self.ScriptUrl, self.ScriptPath)
+				self.ScriptTimer = GetTickCount()
+				return
+			end
+			DepressiveOrbUpdate:DownloadFile(self.VersionUrl, self.VersionPath)
+		end
+		function updater:OnTick()
+			if self.Step == 0 then
+				return
+			end
+			if self.Step == 1 then
+				if GetTickCount() > self.VersionTimer + 1000 then
+					local response = DepressiveOrbUpdate:ReadFile(self.VersionPath)
+					if #response > 0 and tonumber(response[1]) > self.Version then
+						self.Step = 2
+						self.NewVersion = response[1]
+						DepressiveOrbUpdate:DownloadFile(self.ScriptUrl, self.ScriptPath)
+						self.ScriptTimer = GetTickCount()
+					else
+						self.Step = 3
+					end
+				end
+			end
+			if self.Step == 2 then
+				if GetTickCount() > self.ScriptTimer + 1000 then
+					self.Step = 0
+					print(
+						self.ScriptName
+							.. " - new update found! ["
+							.. tostring(self.Version)
+							.. " -> "
+							.. self.NewVersion
+							.. "] Please 2xf6!"
+					)
+				end
+				return
+			end
+			if self.Step == 3 then
+				self.Step = 0
+				return
+			end
+			if self.Step == 4 then
+				if GetTickCount() > self.ScriptTimer + 1000 then
+					self.Step = 0
+					print(self.ScriptName .. " - downloaded! Please 2xf6!")
+				end
 			end
 		end
-		return true
+		function updater:CanUpdate()
+			local response = DepressiveOrbUpdate:ReadFile(self.VersionPath)
+			return #response > 0 and tonumber(response[1]) > self.Version
+		end
+		updater:__init()
+		table.insert(self.Callbacks, updater)
+		return updater
 	end
-	-- Cleanup temporary file if no update
-	if FileExist(tmpPath) then
-		if os and os.remove then
-			os.remove(tmpPath)
-		else
-			pcall(function() os.remove(tmpPath) end)
+	DepressiveOrbUpdate:__init()
+end
+
+Callback.Add("Tick", function()
+	for _, updater in ipairs(DepressiveOrbUpdate.Callbacks) do
+		if updater.Step > 0 then
+			updater:OnTick()
 		end
 	end
-	return false
+end)
+
+if
+	DepressiveOrbUpdate:New({
+		version = __version__,
+		scriptName = __name__,
+		scriptPath = SCRIPT_PATH .. "DepressiveOrbwalker.lua",
+		scriptUrl = "https://raw.githubusercontent.com/DepressiveKyo/GoS/master/DepressiveOrbwalker.lua",
+		versionPath = SCRIPT_PATH .. "DepressiveOrbwalker.version",
+		versionUrl = "https://raw.githubusercontent.com/DepressiveKyo/GoS/master/DepressiveOrbwalker.version",
+	}):CanUpdate()
+then
+	return
 end
 
 --#region headers
@@ -6212,12 +6286,6 @@ Callback.Add("Load", function()
 	local draws = SDK.OnDraw
 	local wndmsgs = SDK.OnWndMsg
 	if Game.Latency() < 250 then _G.LATENCY = Game.Latency() else _G.LATENCY = Menu.Main.Latency:Value() end
-
-	-- Auto update on script load
-	if AutoUpdate() then
-		-- Update was applied and user notified to reload (2xF6), stop further execution
-		return
-	end
 
 	Callback.Add("Draw", function()
 		--[[local as = myHero.activeSpell
