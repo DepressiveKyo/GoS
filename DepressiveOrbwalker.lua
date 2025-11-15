@@ -1,5 +1,5 @@
 local __name__ = "DepressiveOrbwalker"
-local __version__ = 1.1
+local __version__ = 1.2
 
 if _G.DepressiveOrbUpdate then
 	return
@@ -5065,7 +5065,14 @@ do
 				return false
 			end
 		if target then
-			Cursor:Add(AttackKey:Key(), target)
+				-- Prefer the user-configured AttackTKey; fallback to right-click if not set
+				local k = nil
+				if AttackKey and type(AttackKey.Key) == 'function' then
+					local ok, v = pcall(function() return AttackKey:Key() end)
+					if ok and v and v ~= 0 then k = v end
+				end
+				if not k or k == 0 then k = MOUSEEVENTF_RIGHTDOWN end
+				Cursor:Add(k, target)
 			if FastKiting:Value() then
 				Movement.MoveTimer = 0
 			end
