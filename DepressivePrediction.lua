@@ -1,6 +1,137 @@
--- DepressivePrediction - Mechanical, stable, simplified prediction
--- Rewritten for reliability: deterministic, guarded, collision-aware
 local Version = 3.0
+local __name__ = "DepressivePrediction"
+local __version__ = Version
+
+-- Autoupdate block (adapted from DepressiveOrbwalker.lua)
+if _G.DepressivePredictionUpdate then
+    return
+end
+_G.DepressivePredictionUpdate = {}
+do
+    function DepressivePredictionUpdate:__init()
+        self.Callbacks = {}
+    end
+
+    function DepressivePredictionUpdate:DownloadFile(url, path)
+        DownloadFileAsync(url, path, function() end)
+    end
+
+    function DepressivePredictionUpdate:Trim(s)
+        local from = s:match("^%s*()")
+        return from > #s and "" or s:match(".*%S", from)
+    end
+
+    function DepressivePredictionUpdate:ReadFile(path)
+        local result = {}
+        local file = io.open(path, "r")
+        if file then
+            for line in file:lines() do
+                local str = self:Trim(line)
+                if #str > 0 then
+                    table.insert(result, str)
+                end
+            end
+            file:close()
+        end
+        return result
+    end
+
+    function DepressivePredictionUpdate:New(args)
+        local updater = {}
+        function updater:__init()
+            self.Step = 1
+            self.Version = type(args.version) == "number" and args.version or tonumber(args.version)
+            self.VersionUrl = args.versionUrl
+            self.VersionPath = args.versionPath
+            self.ScriptUrl = args.scriptUrl
+            self.ScriptPath = args.scriptPath
+            self.ScriptName = args.scriptName
+            self.VersionTimer = GetTickCount()
+            self:DownloadVersion()
+        end
+        function updater:DownloadVersion()
+            if not FileExist(self.ScriptPath) then
+                self.Step = 4
+                DepressivePredictionUpdate:DownloadFile(self.ScriptUrl, self.ScriptPath)
+                self.ScriptTimer = GetTickCount()
+                return
+            end
+            DepressivePredictionUpdate:DownloadFile(self.VersionUrl, self.VersionPath)
+        end
+        function updater:OnTick()
+            if self.Step == 0 then
+                return
+            end
+            if self.Step == 1 then
+                if GetTickCount() > self.VersionTimer + 1000 then
+                    local response = DepressivePredictionUpdate:ReadFile(self.VersionPath)
+                    if #response > 0 and tonumber(response[1]) > self.Version then
+                        self.Step = 2
+                        self.NewVersion = response[1]
+                        DepressivePredictionUpdate:DownloadFile(self.ScriptUrl, self.ScriptPath)
+                        self.ScriptTimer = GetTickCount()
+                    else
+                        self.Step = 3
+                    end
+                end
+            end
+            if self.Step == 2 then
+                if GetTickCount() > self.ScriptTimer + 1000 then
+                    self.Step = 0
+                    print(
+                        self.ScriptName
+                            .. " - new update found! ["
+                            .. tostring(self.Version)
+                            .. " -> "
+                            .. self.NewVersion
+                            .. "] Please 2xf6!"
+                    )
+                end
+                return
+            end
+            if self.Step == 3 then
+                self.Step = 0
+                return
+            end
+            if self.Step == 4 then
+                if GetTickCount() > self.ScriptTimer + 1000 then
+                    self.Step = 0
+                    print(self.ScriptName .. " - downloaded! Please 2xf6!")
+                end
+            end
+        end
+        function updater:CanUpdate()
+            local response = DepressivePredictionUpdate:ReadFile(self.VersionPath)
+            return #response > 0 and tonumber(response[1]) > self.Version
+        end
+        updater:__init()
+        table.insert(self.Callbacks, updater)
+        return updater
+    end
+    DepressivePredictionUpdate:__init()
+end
+
+Callback.Add("Tick", function()
+    for _, updater in ipairs(DepressivePredictionUpdate.Callbacks) do
+        if updater.Step > 0 then
+            updater:OnTick()
+        end
+    end
+end)
+
+if
+    DepressivePredictionUpdate:New({
+        version = __version__,
+        scriptName = __name__,
+        scriptPath = COMMON_PATH .. "DepressivePrediction.lua",
+    scriptUrl = "https://raw.githubusercontent.com/DepressiveKyo/GoS/refs/heads/main/DepressivePrediction.lua",
+        versionPath = COMMON_PATH .. "DepressivePrediction.version",
+    versionUrl = "https://raw.githubusercontent.com/DepressiveKyo/GoS/refs/heads/main/DepressivePrediction.version",
+    }):CanUpdate()
+then
+    return
+end
+
 if _G.DepressivePrediction then return end
 
 local Game = _G.Game
@@ -47,7 +178,6 @@ local CC_TYPES = {
     [39]=true, -- Knockup (alt)
 }
 
--- Menu (reintroducido)
 local Menu = nil
 do
     local ok, err = pcall(function()
@@ -56,26 +186,23 @@ do
             Menu = {
                 Root = root,
                 Enable = root:MenuElement({id = "Enable", name = "Enable Prediction", value = true}),
-                MaxRange = root:MenuElement({id = "MaxRange", name = "Max Range %", value = 100, min = 60, max = 100, step = 5}),
-                ExtraDelay = root:MenuElement({id = "ExtraDelay", name = "Extra Delay (ms)", value = 0, min = 0, max = 200, step = 10}),
+                MaxRange = root:MenuElement({id = "MaxRange", name = "Max Range %", value = 100, min = 70, max = 100, step = 1}),
+                Latency = root:MenuElement({id = "Latency", name = "Ping/Latency (ms) [0=Auto]", value = 0, min = 0, max = 200, step = 5}),
+                ExtraDelay = root:MenuElement({id = "ExtraDelay", name = "Extra Delay (ms)", value = 60, min = 0, max = 200, step = 5}),
                 LeadFactor = root:MenuElement({id = "LeadFactor", name = "Lead Factor %", value = 100, min = 25, max = 120, step = 5}),
                 Collision = root:MenuElement({id = "Collision", name = "Check Minion Collision", value = true}),
-                HitchanceBias = root:MenuElement({id = "HCBias", name = "Hitchance Bias (-1 low/+1 high)", value = 0, min = -1, max = 1, step = 1}),
+                HitchanceBias = root:MenuElement({id = "HitchanceBias", name = "Hitchance Bias (-1/+1)", value = 0, min = -1, max = 1, step = 1}),
                 DrawStatus = root:MenuElement({id = "DrawStatus", name = "Draw Status", value = true}),
+                DashPrediction = root:MenuElement({id = "DashPrediction", name = "Dash Prediction", value = true}),
+                ZhonyaDetection = root:MenuElement({id = "ZhonyaDetection", name = "Detect Stasis (Zhonya / GA)", value = true}),
+                YasuoWallDetection = root:MenuElement({id = "YasuoWallDetection", name = "Check Yasuo Wall", value = true}),
+                ShowVisuals = root:MenuElement({id = "ShowVisuals", name = "Show Tracking Visuals", value = false}),
                 EdgeOnly = root:MenuElement({id = "EdgeOnly", name = "Require target near max range", value = false}),
                 EdgePercent = root:MenuElement({id = "EdgePercent", name = "Edge range % threshold", value = 90, min = 70, max = 100, step = 1}),
-                Profile = root:MenuElement({id = "Profile", name = "Profile", value = 5, drop = {"Long Range","All In","Melee","Semi-Melee","Custom"}}),
-                ProfileNote = root:MenuElement({id = "ProfileNote", name = "Profiles overwrite settings unless Custom", type = _G.SPACE}),
-                InfoHeader = root:MenuElement({id = "InfoHeader", name = "--- Champion Examples ---", type = _G.SPACE}),
-                InfoAhri = root:MenuElement({id = "InfoAhri", name = "Ahri: Long Range (Q/E poke) -> Profile: Long Range", type = _G.SPACE}),
-                InfoYasuo = root:MenuElement({id = "InfoYasuo", name = "Yasuo: Short Q trades -> Profile: Melee", type = _G.SPACE}),
-                InfoAatrox = root:MenuElement({id = "InfoAatrox", name = "Aatrox: Q1/Q2 zone -> Profile: Semi-Melee", type = _G.SPACE}),
-                InfoCass = root:MenuElement({id = "InfoCass", name = "Cassiopeia: Sustained DPS -> Profile: All In", type = _G.SPACE}),
-                InfoElise = root:MenuElement({id = "InfoElise", name = "Elise: Human E pick -> Long Range / Spider burst -> All In", type = _G.SPACE}),
-                InfoLillia = root:MenuElement({id = "InfoLillia", name = "Lillia: Q spam + E snipe -> Semi-Melee (lane) / Long Range (E)", type = _G.SPACE}),
-                InfoTF = root:MenuElement({id = "InfoTF", name = "Twisted Fate: Gold Card setup -> All In / Blue poke -> Long Range", type = _G.SPACE})
+                VersionA = root:MenuElement({name = '', type = _G.SPACE, id = 'VersionSpaceA'}),
+                VersionB = root:MenuElement({name = 'Version  ' .. Version, type = _G.SPACE, id = 'VersionSpaceB'}),
             }
-            -- Alias to avoid key mismatch (HitchanceBias vs HCBias)
+            -- Alias for names used in code
             Menu.HCBias = Menu.HitchanceBias
         end
     end)
@@ -249,7 +376,17 @@ local function ComputeCastPosition(self, target, source)
 
     -- Clamp to range
     local range = self.Range
-    if Menu and Menu.MaxRange then range = range * (Menu.MaxRange:Value()/100) end
+    -- ÉNFASIS MEJORADO: Aplicar rango del menú con validación robusta
+    if Menu and Menu.MaxRange then 
+        local menuRangeFactor = Menu:GetMaxRange()
+        range = range * menuRangeFactor
+        
+        -- Debug: mostrar cuando se aplica el rango del menú
+        if Menu.DrawStatus and Menu.DrawStatus:Value() then
+            -- Solo mostrar en debug si está habilitado
+        end
+    end
+    
     if Distance(sourcePos, castPos) > range then
         -- Bring inside range along line
         local sx,sz = sourcePos.x, sourcePos.z
@@ -279,7 +416,8 @@ local function ComputeCastPosition(self, target, source)
     if Menu and Menu.EdgeOnly and Menu.EdgeOnly:Value() then
         local pctNeeded = (Menu.EdgePercent and Menu.EdgePercent:Value() or 90) / 100
         local dist = Distance(sourcePos, {x = tpos.x, z = tpos.z})
-        local effRange = self.Range * (Menu.MaxRange and (Menu.MaxRange:Value()/100) or 1)
+        -- ÉNFASIS MEJORADO: Usar la función GetMaxRange para consistencia
+        local effRange = self.Range * (Menu and Menu:GetMaxRange() or 1)
         if dist < effRange * pctNeeded then
             hitchance = HITCHANCE_LOW -- se verá como no casteable para lógicas que pidan >= normal
         end
@@ -399,6 +537,11 @@ end
 if Menu then
     if not Menu.GetLatency then
         function Menu:GetLatency()
+            -- Prefer manual latency if > 0, else fallback to Game.Latency
+            local manual = self.Latency and self.Latency.Value and (self.Latency:Value() or 0) or 0
+            if manual and manual > 0 then
+                return manual * 0.001
+            end
             local ok, lat = pcall(function() return (Game and Game.Latency and Game.Latency() or 0) end)
             return (ok and lat or 0) * 0.001
         end
@@ -415,9 +558,37 @@ if Menu then
     end
     if not Menu.GetMaxRange then
         function Menu:GetMaxRange()
-            return (self.MaxRange and (self.MaxRange:Value() or 100) or 100)/100
+            -- ÉNFASIS MEJORADO: Asegurar que el rango del menú se lea correctamente
+            local rangeValue = 100 -- valor por defecto
+            if self.MaxRange and self.MaxRange.Value then
+                rangeValue = self.MaxRange:Value() or 100
+            elseif self.MaxRange then
+                rangeValue = self.MaxRange or 100
+            end
+            
+            -- Validar que el valor esté en el rango correcto
+            rangeValue = math_max(60, math_min(100, rangeValue))
+            
+            -- Convertir a decimal (ej: 95% -> 0.95)
+            return rangeValue / 100
         end
     end
+    
+    -- NUEVA FUNCIÓN: Obtener rango efectivo incluyendo bounding radius
+    if not Menu.GetEffectiveRange then
+        function Menu:GetEffectiveRange(baseRange, target, useBoundingRadius)
+            local maxRangeFactor = self:GetMaxRange()
+            local effectiveRange = baseRange * maxRangeFactor
+            
+            -- Agregar bounding radius si se especifica
+            if useBoundingRadius and target and target.boundingRadius then
+                effectiveRange = effectiveRange + target.boundingRadius
+            end
+            
+            return effectiveRange
+        end
+    end
+    
     if not Menu.GetReactionTime then
         function Menu:GetReactionTime()
             -- default reaction time (seconds) used in some hitchance logic
@@ -516,7 +687,14 @@ end
 if Menu and Menu.DrawStatus then
     Callback.Add("Draw", function()
         if not Menu.Enable:Value() or not Menu.DrawStatus:Value() then return end
-        local txt = string.format("DepressivePrediction v%.1f | Delay+%.0fms | Lead %d%%", Version, (Menu.ExtraDelay:Value() or 0), (Menu.LeadFactor:Value() or 100))
+        -- ÉNFASIS MEJORADO: Mostrar información del rango del menú
+        local rangeInfo = ""
+        if Menu.MaxRange then
+            local rangeValue = Menu.MaxRange:Value() or 100
+            rangeInfo = string.format(" | Range: %d%%", rangeValue)
+        end
+        local txt = string.format("DepressivePrediction v%.1f | Delay+%.0fms | Lead %d%%%s", 
+            Version, (Menu.ExtraDelay:Value() or 0), (Menu.LeadFactor:Value() or 100), rangeInfo)
         if _G.Draw and Draw.Text then
             Draw.Text(txt, 14, 40, 420, _G.Draw.Color(255,255,255,0))
         elseif Draw and Draw.Text then
@@ -856,6 +1034,11 @@ function UnitTracker:UpdateUnit(unit)
             timestamps = {},
             lastUpdate = currentTime,
             isVisible = unit.visible,
+            wasVisible = unit.visible,
+            lastVisibleTime = unit.visible and currentTime or 0,
+            lastInvisibleTime = (not unit.visible) and currentTime or 0,
+            lastMoveStartTime = unit.pathing and unit.pathing.hasMovePath and currentTime or 0,
+            lastStopTime = (not (unit.pathing and unit.pathing.hasMovePath)) and currentTime or 0,
             movementPattern = nil,
             lastAnalysisTime = 0
         }
@@ -891,6 +1074,28 @@ function UnitTracker:UpdateUnit(unit)
         end
     end
     
+    -- Visibilidad: trackear cambios de estado con timestamps
+    if unitData.wasVisible ~= unit.visible then
+        if unit.visible then
+            unitData.lastVisibleTime = currentTime
+        else
+            unitData.lastInvisibleTime = currentTime
+        end
+        unitData.wasVisible = unit.visible
+    end
+
+    -- Movimiento: detectar inicios y paradas
+    local hasMovePath = unit.pathing and unit.pathing.hasMovePath or false
+    if unitData._lastHasMovePath == nil then unitData._lastHasMovePath = hasMovePath end
+    if unitData._lastHasMovePath ~= hasMovePath then
+        if hasMovePath then
+            unitData.lastMoveStartTime = currentTime
+        else
+            unitData.lastStopTime = currentTime
+        end
+        unitData._lastHasMovePath = hasMovePath
+    end
+
     unitData.lastUpdate = currentTime
     unitData.isVisible = unit.visible
 end
@@ -1197,12 +1402,24 @@ function CollisionSystem:GetCollision(source, castPos, speed, delay, radius, col
     end
     
     local objects = self:GetCollisionObjects(collisionTypes, skipID)
+    local segLen = Math:GetDistance(source2D, castPos2D)
     
     for _, object in pairs(objects) do
+        -- Pre-filtro rápido por distancia para rendimiento
+        local objPos = object.pos and Math:Get2D(object.pos) or nil
+        if objPos then
+            local distSrc = Math:GetDistance(source2D, objPos)
+            local padding = (radius or 50) + (object.boundingRadius or 65) + 300
+            if distSrc > segLen + padding then
+                goto continue_object
+            end
+        end
+
         if self:WillCollide(source2D, castPos2D, object, speed, delay, radius) then
             table_insert(collisionObjects, object)
             collisionCount = collisionCount + 1
         end
+        ::continue_object::
     end
     
     -- Evitar ordenamiento para ahorrar CPU; no es necesario para lógica de colisión
@@ -1502,7 +1719,7 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
     
     -- Para habilidades instantáneas, usar predicción 2D
     if speed == math_huge then
-    local predictedPos = UnitTracker:GetPredictedPosition(target, totalDelay)
+        local predictedPos = UnitTracker:GetPredictedPosition(target, totalDelay)
         
         -- Ser más permisivo con predicciones instantáneas
         if not predictedPos then
@@ -1535,6 +1752,17 @@ function PredictionCore:GetPrediction(target, source, speed, delay, radius, useA
             predictedPos = currentPos
         end
         
+        -- Compensación ligera por radio (evita sobretiro en skills instantáneas)
+        if radius and radius > 0 then
+            local path = UnitTracker:GetUnitPath(target)
+            if #path > 1 then
+                local dir = Math:Normalized(predictedPos, path[1])
+                if dir then
+                    local back = math_min(radius, 100)
+                    predictedPos = Math:Extended(predictedPos, {x = -dir.x, z = -dir.z}, back)
+                end
+            end
+        end
         return predictedPos, predictedPos, totalDelay
     end
     
@@ -1796,11 +2024,13 @@ function PredictionCore:SpellPrediction(args)
     end
     
     function spell:GetPrediction(target, source)
+        local _startClock = os.clock()
         local hitChance = HITCHANCE_IMPOSSIBLE
         local castPosition = nil
         local unitPosition = nil
         local timeToHit = 0
         local collisionObjects = {}
+        local initialPosTo = nil
         
         -- VALIDACIÓN CRÍTICA: Asegurar que tenemos un objetivo válido
         if not target or not target.valid or not target.pos or not target.pos.x then
@@ -1813,8 +2043,12 @@ function PredictionCore:SpellPrediction(args)
             }
         end
         
-        -- Trabajar en 2D primero para mejor rendimiento
+    -- Trabajar en 2D primero para mejor rendimiento
         local source2D = Math:Get2D(source)
+        -- Capturar posTo inicial para verificar cambios de destino de path
+        pcall(function()
+            initialPosTo = Math:Get2D(target.posTo)
+        end)
         
         -- CRÍTICO: Obtener la posición actual real del objetivo
         local currentTargetPos = Math:Get2D(target.pos)
@@ -1832,7 +2066,9 @@ function PredictionCore:SpellPrediction(args)
         local maxRange = self.Range ~= math_huge and (self.Range * Menu:GetMaxRange()) or math_huge
         if maxRange ~= math_huge then
             local distSqr = Math:GetDistanceSqr(source2D, currentTargetPos)
-            if distSqr > (maxRange + 1200) * (maxRange + 1200) then -- hard cap
+            -- ÉNFASIS MEJORADO: Aplicar rango del menú más estrictamente
+            local effectiveRange = maxRange + (self.UseBoundingRadius and (target.boundingRadius or 0) or 0)
+            if distSqr > (effectiveRange + 1200) * (effectiveRange + 1200) then -- hard cap con rango efectivo
                 return {
                     HitChance = HITCHANCE_IMPOSSIBLE,
                     CastPosition = nil,
@@ -1885,21 +2121,34 @@ function PredictionCore:SpellPrediction(args)
         -- Clamp a rango de lanzamiento si corresponde
         if maxRange ~= math_huge then
             local distFromMe = Math:GetDistance(source2D, castPosition)
-            if distFromMe > maxRange then
+            -- ÉNFASIS MEJORADO: Aplicar rango del menú más precisamente
+            local effectiveRange = maxRange + (self.UseBoundingRadius and (target.boundingRadius or 0) or 0)
+            if distFromMe > effectiveRange then
                 local dir = Math:Normalized(castPosition, source2D)
                 if dir then
-                    castPosition = Math:Extended(source2D, dir, maxRange)
+                    castPosition = Math:Extended(source2D, dir, effectiveRange)
                 end
             end
         end
         
         -- Calcular hit chance usando posiciones 2D
         hitChance = self:CalculateHitChance(target, castPosition, timeToHit)
+
+        -- Verificación posTo: si el destino cambió significativamente durante el cálculo, degradar
+        do
+            local currentPosTo = nil
+            pcall(function() currentPosTo = Math:Get2D(target.posTo) end)
+            if initialPosTo and currentPosTo and not Math:VectorsEqual(initialPosTo, currentPosTo, 50) then
+                hitChance = HITCHANCE_LOW
+            end
+        end
         
         -- Verificar rango en 2D (después de clamp)
         if maxRange ~= math_huge then
             local myPos2D = Math:Get2D(myHero.pos)
-            if not Math:IsInRange(myPos2D, castPosition, maxRange + (self.UseBoundingRadius and (target.boundingRadius or 0) or 0)) then
+            -- ÉNFASIS MEJORADO: Usar rango efectivo consistente
+            local effectiveRange = maxRange + (self.UseBoundingRadius and (target.boundingRadius or 0) or 0)
+            if not Math:IsInRange(myPos2D, castPosition, effectiveRange) then
                 hitChance = HITCHANCE_IMPOSSIBLE
             end
         end
@@ -1994,7 +2243,13 @@ function PredictionCore:SpellPrediction(args)
             unitPosition2D = unitPosition
         end
         
-    return {
+        -- Límite de tiempo de cómputo (protección FPS)
+        if os.clock() - _startClock > 0.005 then
+            -- si excede el tiempo, ser conservador
+            if hitChance > HITCHANCE_HIGH then hitChance = HITCHANCE_HIGH end
+        end
+
+        return {
             HitChance = hitChance,
             CastPosition = castPosition2D, -- DEVOLVER EN 2D
             UnitPosition = unitPosition2D, -- DEVOLVER EN 2D
@@ -2063,7 +2318,7 @@ function PredictionCore:SpellPrediction(args)
             end
         end)
         
-        -- LÓGICA MEJORADA DE HIT CHANCE
+    -- LÓGICA MEJORADA DE HIT CHANCE
         
         -- Si está en Zhonya's, es imposible de golpear
         if isInZhonyas then
@@ -2095,6 +2350,22 @@ function PredictionCore:SpellPrediction(args)
         -- Analizar patrón de movimiento para tracking obvio
         local unitData = UnitTracker.Units[target.networkID]
         if unitData and unitData.movementPattern then
+            -- Heurísticas de waypoints/visibilidad al estilo GG
+            local now = Game.Timer()
+            local justAppeared = unitData.wasVisible and (now - (unitData.lastVisibleTime or 0) < 0.5)
+            local longInvisible = (not unitData.wasVisible) and (now - (unitData.lastInvisibleTime or 0) > 1.0)
+            if justAppeared then
+                return HITCHANCE_NORMAL
+            end
+            if longInvisible then
+                return HITCHANCE_LOW
+            end
+            local justStartedMove = (now - (unitData.lastMoveStartTime or 0) < 0.15)
+            local justStopped = (now - (unitData.lastStopTime or 0) < 0.05)
+            if justStartedMove or justStopped then
+                return HITCHANCE_HIGH
+            end
+
             local reactionTime = Menu:GetReactionTime()
             
             -- Si el tiempo de predicción es menor que el tiempo de reacción
@@ -2484,8 +2755,11 @@ _G.DepressivePrediction = {
     GetMapInfo = function()
         local mapBounds = Math:GetMapBounds()
         local mapID = Game.mapID or 0
+        local mapName = (Game.mapName and tostring(Game.mapName)) or ""
+        local mapNameLower = mapName:lower()
         local mapType = "unknown"
-        
+
+        -- Primary detection by mapID
         if mapID == 11 then
             mapType = "summoners_rift"
         elseif mapID == 12 then
@@ -2493,15 +2767,66 @@ _G.DepressivePrediction = {
         elseif mapID >= 30 and mapID <= 35 then
             mapType = "arena"
         end
-        
+
+        -- Fallback by name substring if ID didn't resolve (or mismatch)
+        if mapType == "unknown" then
+            if mapNameLower:find("rift") then
+                mapType = "summoners_rift"
+            elseif mapNameLower:find("abyss") or mapNameLower:find("aram") then
+                mapType = "howling_abyss"
+            elseif mapNameLower:find("arena") then
+                mapType = "arena"
+            end
+        end
+
+        -- Propagate globally for other modules (EvadeLogic, Geometry, SpellFilter)
+        _G.MapType = mapType
+
+        -- Debug print once per call (can be throttled externally if needed)
+        print(string.format("[DepressiveEvade] Detected mapID: %s | mapName: %s | resolved mapType: %s", tostring(mapID), mapName, mapType))
+
         return {
             mapID = mapID,
+            mapName = mapName,
             mapType = mapType,
             bounds = mapBounds,
-            isArena = mapBounds.maxDistance <= 3000,
-            isARAM = mapID == 12
+            isArena = mapType == "arena" or mapBounds.maxDistance <= 3000,
+            isARAM = mapType == "howling_abyss" or mapID == 12
         }
+    end,
+    
+    -- NUEVA FUNCIÓN: Obtener rango efectivo del menú (helper para scripts de campeones)
+    GetEffectiveRange = function(baseRange, target, useBoundingRadius)
+        if Menu and Menu.GetEffectiveRange then
+            return Menu:GetEffectiveRange(baseRange, target, useBoundingRadius)
+        else
+            -- Fallback si la función no está disponible
+            local rangeFactor = Menu and Menu:GetMaxRange() or 1
+            local effectiveRange = baseRange * rangeFactor
+            if useBoundingRadius and target and target.boundingRadius then
+                effectiveRange = effectiveRange + target.boundingRadius
+            end
+            return effectiveRange
+        end
+    end,
+    
+    -- NUEVA FUNCIÓN: Verificar si un objetivo está en rango efectivo
+    IsInEffectiveRange = function(source, target, baseRange, useBoundingRadius)
+        if not source or not target or not source.pos or not target.pos then
+            return false
+        end
+        
+        local effectiveRange = _G.DepressivePrediction.GetEffectiveRange(baseRange, target, useBoundingRadius)
+        local distance = Math:GetDistance(Math:Get2D(source.pos), Math:Get2D(target.pos))
+        
+        return distance <= effectiveRange
     end,
 }
 
 print("DepressivePrediction v" .. Version .. " loaded successfully!")
+print("  - Enhanced menu range emphasis: MaxRange setting now properly applied")
+print("  - Added GetEffectiveRange() helper for champion scripts")
+print("  - Improved range validation and clamping")
+
+-- Retornar el módulo para require()
+return _G.DepressivePrediction
