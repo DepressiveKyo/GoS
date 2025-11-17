@@ -1,4 +1,4 @@
-local Version = 3.0
+local Version = 3.1
 local __name__ = "DepressivePrediction"
 local __version__ = Version
 
@@ -2830,3 +2830,4 @@ print("  - Improved range validation and clamping")
 
 -- Retornar el módulo para require()
 return _G.DepressivePrediction
+
