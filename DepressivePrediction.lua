@@ -197,7 +197,7 @@ do
                 ZhonyaDetection = root:MenuElement({id = "ZhonyaDetection", name = "Detect Stasis (Zhonya / GA)", value = true}),
                 YasuoWallDetection = root:MenuElement({id = "YasuoWallDetection", name = "Check Yasuo Wall", value = true}),
                 ShowVisuals = root:MenuElement({id = "ShowVisuals", name = "Show Tracking Visuals", value = false}),
-                EdgeOnly = root:MenuElement({id = "EdgeOnly", name = "Require target near max range", value = false}),
+                EdgeOnly = root:MenuElement({id = "EdgeOnly", name = "Require target near max range", value = true}),
                 EdgePercent = root:MenuElement({id = "EdgePercent", name = "Edge range % threshold", value = 90, min = 70, max = 100, step = 1}),
                 VersionA = root:MenuElement({name = '', type = _G.SPACE, id = 'VersionSpaceA'}),
                 VersionB = root:MenuElement({name = 'Version  ' .. Version, type = _G.SPACE, id = 'VersionSpaceB'}),
@@ -2830,4 +2830,5 @@ print("  - Improved range validation and clamping")
 
 -- Retornar el módulo para require()
 return _G.DepressivePrediction
+
 
