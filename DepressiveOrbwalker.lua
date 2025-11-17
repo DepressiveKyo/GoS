@@ -1,5 +1,5 @@
 local __name__ = "DepressiveOrbwalker"
-local __version__ = 1.2
+local __version__ = 1.3
 
 if _G.DepressiveOrbUpdate then
 	return
@@ -5265,12 +5265,17 @@ SmoothMouse = {
         
         local elapsed = GetTickCount() - self.startTime
         local baseTime = self.totalDistance / self.speed
-        
-        -- Apply acceleration curve (starts slow, speeds up, then slows down)
-        local normalizedTime = elapsed / baseTime
+		-- Safety: avoid division by zero; if baseTime <= 0 interpret as completed
+		local normalizedTime
+		if baseTime <= 0 or baseTime ~= baseTime then -- check NaN or zero
+			normalizedTime = 1
+		else
+			-- Apply acceleration curve (starts slow, speeds up, then slows down)
+			normalizedTime = elapsed / baseTime
+		end
         
         -- OPTIMIZED: Early termination check with buffer for precision
-        if normalizedTime >= 0.99 then
+	if normalizedTime >= 0.99 then
             -- Movement essentially complete - snap to target
             Control.SetCursorPos(math.floor(self.targetPos.x), math.floor(self.targetPos.y))
             self.isMoving = false
@@ -5321,6 +5326,7 @@ Cursor = {
 	Step = 0,
 	SmoothMovementActive = false,
 	OriginalCursorPosition = nil, -- posición original inmutable durante la acción
+	LastStepTick = 0,
 
 	Add = function(self, key, castPos)
 		-- If chat is open, do not queue cursor actions
@@ -5346,6 +5352,8 @@ Cursor = {
 			self.Timer = GetTickCount() + MenuDelay:Value()
 			self:StepSetToCastPos() -- Now handles both smooth and direct movement
 			self:StepPressKey()
+			-- Mark last step tick to watch for stuck state
+			self.LastStepTick = GetTickCount()
 		end
 	end,
 
@@ -5363,6 +5371,30 @@ Cursor = {
 			self.SmoothMovementActive = false
 			-- No limpiar OriginalCursorPosition aquí; se limpia al finalizar StepSetToCursorPos
 		end
+	end,
+
+	-- Force cancel any active cursor action and reset state
+	ForceReset = function(self)
+		-- Stop smooth movement and clear flags
+		if self.SmoothMovementActive then
+			SmoothMouse:Stop()
+			self.SmoothMovementActive = false
+		end
+		-- Reset step, original position and timer
+		self.Step = 0
+		self.OriginalCursorPosition = nil
+		self.CursorPos = nil
+		self.CastPos = nil
+		self.Timer = 0
+		self.Keys = nil
+		self.LastStepTick = 0
+		-- Release potential stuck mouse press and notify operator
+		pcall(function()
+			Control.mouse_event(MOUSEEVENTF_RIGHTUP)
+			Control.mouse_event(MOUSEEVENTF_LEFTUP)
+		end)
+		-- Debug: Notify operator about the forced reset (only when running local)
+		pcall(function() print("[DepressiveOrbwalker] Cursor: ForceReset executed to recover from stuck state") end)
 	end,
 
 	StepSetToCastPos = function(self)
@@ -5393,6 +5425,8 @@ Cursor = {
 			end
 		end
 		self.correctedCastPos = pos
+		-- whenever we set a new target, refresh last step tick
+		self.LastStepTick = GetTickCount()
 		
 		-- OPTIMIZED: Check distance to current cursor for smart movement
 		local cursorPos = Game.cursorPos()
@@ -5415,6 +5449,7 @@ Cursor = {
 					self.SmoothMovementActive = false
 					self.Step = 1
 					self.Timer = GetTickCount() + MenuDelay:Value() + 50 -- small safety margin
+					self.LastStepTick = GetTickCount()
 				end)
 				self.SmoothMovementActive = true
 			end
@@ -5429,6 +5464,7 @@ Cursor = {
 		-- cursor pos and apply any final reinforcement (reposition) before executing.
 		self.Timer = GetTickCount() + MenuDelay:Value() + 30 -- small safety margin
 		self.Step = 1
+		self.LastStepTick = GetTickCount()
 	end,
 
 	-- Nueva función para ejecutar la acción directamente
@@ -5482,6 +5518,7 @@ Cursor = {
 		
 		-- Pasar directamente al retorno
 		self.Step = 2
+		self.LastStepTick = GetTickCount()
 	end,
 
 	StepWaitForResponse = function(self)
@@ -5559,6 +5596,7 @@ Cursor = {
 					-- Limpiar posición original SOLO al finalizar el retorno
 					self.OriginalCursorPosition = nil
 					self.CursorPos = nil
+					self.LastStepTick = GetTickCount()
 				end)
 				self.SmoothMovementActive = true
 			end
@@ -5570,6 +5608,8 @@ Cursor = {
 			self.CursorPos = nil
 		end
 		self.Timer = GetTickCount() + MenuDelay:Value()
+		-- Update LastStepTick used for watchdog
+		self.LastStepTick = GetTickCount()
 		-- No cambiar Step aquí si usamos smoothness, el callback lo hará
 		if not MenuSmoothMouse:Value() then
 			self.Step = 3
@@ -5591,6 +5631,16 @@ Cursor = {
 		-- Update smooth mouse movement
 		if SmoothMouse:IsMoving() then
 			SmoothMouse:Update()
+		end
+		-- Watchdog: recover from stuck Step states
+		if self.Step and self.Step > 0 then
+			local now = GetTickCount()
+			if self.LastStepTick and self.LastStepTick > 0 and (now - self.LastStepTick) >= 1200 then
+				-- Reset everything gracefully
+				self:ForceReset()
+				-- Reset movement timer to ensure immediate new actions
+				Movement.MoveTimer = 0
+			end
 		end
 		-- Evitar recapturas de cursor mientras hay movimiento suave activo
 		-- self.OriginalCursorPosition se define en Add y se limpia al final del retorno
