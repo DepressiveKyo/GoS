@@ -1,5 +1,5 @@
 local __name__ = "DepressiveOrbwalker"
-local __version__ = 1.3
+local __version__ = 1.4
 
 if _G.DepressiveOrbUpdate then
 	return
@@ -359,6 +359,9 @@ local ORBWALKER_MODE_LANECLEAR = 2
 local ORBWALKER_MODE_JUNGLECLEAR = 3
 local ORBWALKER_MODE_LASTHIT = 4
 local ORBWALKER_MODE_FLEE = 5
+
+-- Auto Safe Reset configuration (always enabled)
+local AUTO_SAFE_RESET_TIMEOUT = 2000 -- ms
 
 --#region FPS Optimization System
 local FPSOptimizer = {
@@ -1382,7 +1385,7 @@ Menu = {
         self.Orbwalker.General:MenuElement({id = 'HoldRadius', name = 'Hold Radius', value = 0, min = 0, max = 250, step = 10})
         self.Orbwalker.General:MenuElement({id = 'ExtraWindUpTime', name = 'Extra WindUpTime', value = 0, min = -25, max = 75, step = 5})
 	-- Attack Cancel (post-AA spell cast) options
-	self.Orbwalker.General:MenuElement({id = 'CancelQ', name = 'Cancel: Cast Q after AA', value = true})
+	self.Orbwalker.General:MenuElement({id = 'CancelQ', name = 'Cancel: Cast Q after AA', value = false})
 	self.Orbwalker.General:MenuElement({id = 'CancelW', name = 'Cancel: Cast W after AA', value = false})
 	self.Orbwalker.General:MenuElement({id = 'CancelE', name = 'Cancel: Cast E after AA', value = false})
 	self.Orbwalker.General:MenuElement({id = 'CancelR', name = 'Cancel: Cast R after AA', value = false})
@@ -1411,7 +1414,7 @@ Menu = {
         self.Main:MenuElement({id = 'SetCursorMultipleTimes', name = 'Set Cursor Position Multiple Times', value = false})
         self.Main:MenuElement({id = 'CursorDelay', name = 'Cursor Delay', value = 5, min = 1, max = 50, step = 1})
 		self.Main:MenuElement({id = 'Humanizer', name = 'min dist b/t move commands', value = 120, min = 0, max = 300, step = 5})
-        self.Main:MenuElement({name = '', type = SPACE, id = 'SmoothSpace'})
+	self.Main:MenuElement({name = '', type = SPACE, id = 'SmoothSpace'})
         self.Main:MenuElement({id = 'SmoothMouse', name = 'Smooth Mouse Movement', value = true})
         self.Main:MenuElement({id = 'SmoothSpeed', name = 'Smooth Speed (pixels/ms)', value = 80, min = 1.0, max = 100.0, step = 1.0})
         self.Main:MenuElement({id = 'SmoothAcceleration', name = 'Mouse Acceleration', value = 5, min = 1.0, max = 5.0, step = 0.1})
@@ -1419,7 +1422,7 @@ Menu = {
         self.Main:MenuElement({name = '', type = SPACE, id = 'FPSOptimizationSpace'})
         self.Main:MenuElement({id = 'FPSOptimization', name = '[FPS] Optimization System', type = MENU})
         self.Main.FPSOptimization:MenuElement({id = 'Enabled', name = 'Enable FPS Optimization', value = true, callback = function(value) FPSOptimizer.enabled = value end})
-        self.Main.FPSOptimization:MenuElement({id = 'TargetFPS', name = 'Target FPS', value = 60, min = 30, max = 200, step = 10, callback = function(value) FPSOptimizer.targetFPS = value end})
+	self.Main.FPSOptimization:MenuElement({id = 'TargetFPS', name = 'Target FPS', value = 60, min = 30, max = 200, step = 10, callback = function(value) FPSOptimizer.targetFPS = value end})
         self.Main.FPSOptimization:MenuElement({id = 'SmartCache', name = 'Smart Object Caching', value = true, callback = function(value) FPSOptimizer.smartCacheEnabled = value end})
         self.Main.FPSOptimization:MenuElement({id = 'ChunkProcessing', name = 'Chunk Processing (High Load)', value = true})
         self.Main.FPSOptimization:MenuElement({name = '', type = SPACE, id = 'SmartCacheSpace'})
@@ -1431,7 +1434,7 @@ Menu = {
         self.Main.FPSOptimization.SmartCacheConfig:MenuElement({id = 'LaneClearCacheHeroes', name = 'Cache Heroes in LaneClear', value = false, callback = function(value) FPSOptimizer.cacheConfig[ORBWALKER_MODE_LANECLEAR].cacheHeroes = value end})
         self.Main.FPSOptimization.SmartCacheConfig:MenuElement({id = 'LaneClearCacheMinions', name = 'Cache Minions in LaneClear', value = true, callback = function(value) FPSOptimizer.cacheConfig[ORBWALKER_MODE_LANECLEAR].cacheMinions = value end})
         self.Main.FPSOptimization.SmartCacheConfig:MenuElement({id = 'LastHitCacheHeroes', name = 'Cache Heroes in LastHit', value = false, callback = function(value) FPSOptimizer.cacheConfig[ORBWALKER_MODE_LASTHIT].cacheHeroes = value end})
-        self.Main.FPSOptimization.SmartCacheConfig:MenuElement({id = 'LastHitCacheMinions', name = 'Cache Minions in LastHit', value = true, callback = function(value) FPSOptimizer.cacheConfig[ORBWALKER_MODE_LASTHIT].cacheMinions = value end})
+	self.Main.FPSOptimization.SmartCacheConfig:MenuElement({id = 'LastHitCacheMinions', name = 'Cache Minions in LastHit', value = true, callback = function(value) FPSOptimizer.cacheConfig[ORBWALKER_MODE_LASTHIT].cacheMinions = value end})
     end,
 }
 -- stylua: ignore end
@@ -5393,8 +5396,7 @@ Cursor = {
 			Control.mouse_event(MOUSEEVENTF_RIGHTUP)
 			Control.mouse_event(MOUSEEVENTF_LEFTUP)
 		end)
-		-- Debug: Notify operator about the forced reset (only when running local)
-		pcall(function() print("[DepressiveOrbwalker] Cursor: ForceReset executed to recover from stuck state") end)
+		-- Debug prints removed: ForceReset runs silently now
 	end,
 
 	StepSetToCastPos = function(self)
@@ -5534,8 +5536,8 @@ Cursor = {
 		if cursorPos then
 			dist = math.sqrt((cursorPos.x - expected.x)^2 + (cursorPos.y - expected.y)^2)
 		end
-		local now = GetTickCount()
-		local timeout = self.Timer or (now + MenuDelay:Value() + 50)
+	local now = GetTickCount()
+	local timeout = self.Timer or (now + MenuDelay:Value() + 50)
 
 		-- If within small threshold, or timer exceeded, execute the action
 		local threshold = 5
@@ -5544,7 +5546,7 @@ Cursor = {
 			return
 		end
 
-		if now >= timeout then
+	if now >= timeout then
 			-- Timeout reached - try to reinforce cursor position once
 			Control.SetCursorPos(math.floor(expected.x + 0.5), math.floor(expected.y + 0.5))
 			-- Allow a short additional delay to let OS/game register the pos, then execute
@@ -5632,10 +5634,25 @@ Cursor = {
 		if SmoothMouse:IsMoving() then
 			SmoothMouse:Update()
 		end
+
+		-- If Data:Stop is signaled (chat open / evade / not top), ensure we reset any pending cursor action
+		if Data and Data:Stop() and self.Step and self.Step > 0 then
+			self:ForceReset()
+			Movement.MoveTimer = 0
+			return
+		end
 		-- Watchdog: recover from stuck Step states
 		if self.Step and self.Step > 0 then
 			local now = GetTickCount()
-			if self.LastStepTick and self.LastStepTick > 0 and (now - self.LastStepTick) >= 1200 then
+			local safeResetEnabled = true
+			local timeout = AUTO_SAFE_RESET_TIMEOUT
+			-- Extra safety: if the game loses focus or chat opens, force reset immediately
+			if GameIsChatOpen() or (not GameIsOnTop()) then
+				self:ForceReset()
+				Movement.MoveTimer = 0
+				return
+			end
+			if safeResetEnabled and self.LastStepTick and self.LastStepTick > 0 and (now - self.LastStepTick) >= timeout then
 				-- Reset everything gracefully
 				self:ForceReset()
 				-- Reset movement timer to ensure immediate new actions
@@ -5929,16 +5946,22 @@ Orbwalker = {
 			Control.KeyUp(HK_TCO)
 		end
 		
+		-- Early skip reasons tracking for diagnostics
+		local skipReason = nil
 		if Cursor.Step > 0 then
-			return
+			skipReason = "Cursor.Step>0"
 		end
-		
 		if Data:Stop() then
-			return
+			skipReason = (skipReason and skipReason .. ",DataStop" or "DataStop")
 		end
-		
 		if isNone then
+			skipReason = (skipReason and skipReason .. ",ModeNone" or "ModeNone")
+		end
+		if skipReason then
+			self.LastSkippedState = true
 			return
+		else
+			self.LastSkippedState = false
 		end
 		
 		-- Solo ejecutar orbwalk si no estamos en modo de alta carga o es un tick crítico
@@ -5964,6 +5987,17 @@ Orbwalker = {
 				local range = Data:GetAutoAttackRange(enemy, myHero)
 				Draw.Circle(enemy.pos, range, 1, IsInRange(enemy, myHero, range) and Color.EnemyRange or Color.Range)
 			end
+		end
+
+		-- Debug / Safe Reset Info
+		if Menu.Main.Drawings.SmartCacheInfo:Value() then
+			local x, y = 20, 50
+			local info = "Orbwalker: step=" .. tostring(Cursor.Step or 0)
+			info = info .. " | smooth=" .. tostring(SmoothMouse:IsMoving())
+			info = info .. " | moveIn=" .. tostring(math_max(0, Movement.MoveTimer - GetTickCount()))
+			local modeInfo = FPSOptimizer:GetModeInfo()
+			info = info .. " | mode=" .. tostring(modeInfo.mode) .. " hHeroes=" .. tostring(modeInfo.cachedHeroesCount or 0) .. " hMinions=" .. tostring(modeInfo.cachedMinionsCount or 0)
+			Draw.Text(info, 16, x, y)
 		end
 	end,
 
@@ -6289,38 +6323,40 @@ Orbwalker:RegisterMenuKey(ORBWALKER_MODE_LANECLEAR, Menu.Orbwalker.Keys.LaneClea
 Orbwalker:RegisterMenuKey(ORBWALKER_MODE_JUNGLECLEAR, Menu.Orbwalker.Keys.Jungle)
 Orbwalker:RegisterMenuKey(ORBWALKER_MODE_FLEE, Menu.Orbwalker.Keys.Flee)
 
-_G.SDK = {
-	OnDraw = {},
-	OnTick = {},
-	OnWndMsg = {},
-	Menu = Menu,
-	Color = Color,
-	Action = Action,
-	BuffManager = Buff,
-	Damage = Damage,
-	Data = Data,
-	Spell = Spell,
-	SummonerSpell = SummonerSpell,
-	ItemManager = Item,
-	ObjectManager = Object,
-	TargetSelector = Target,
-	HealthPrediction = Health,
-	Cursor = Cursor,
-	Attack = Attack,
-	Orbwalker = Orbwalker,
-	Cached = Cached,
-	Movement = Movement,
-	DAMAGE_TYPE_PHYSICAL = DAMAGE_TYPE_PHYSICAL,
-	DAMAGE_TYPE_MAGICAL = DAMAGE_TYPE_MAGICAL,
-	DAMAGE_TYPE_TRUE = DAMAGE_TYPE_TRUE,
-	ORBWALKER_MODE_NONE = ORBWALKER_MODE_NONE,
-	ORBWALKER_MODE_COMBO = ORBWALKER_MODE_COMBO,
-	ORBWALKER_MODE_HARASS = ORBWALKER_MODE_HARASS,
-	ORBWALKER_MODE_LANECLEAR = ORBWALKER_MODE_LANECLEAR,
-	ORBWALKER_MODE_JUNGLECLEAR = ORBWALKER_MODE_JUNGLECLEAR,
-	ORBWALKER_MODE_LASTHIT = ORBWALKER_MODE_LASTHIT,
-	ORBWALKER_MODE_FLEE = ORBWALKER_MODE_FLEE,
-	IsRecalling = function(unit)
+-- Merge into existing global SDK if present, otherwise create a new SDK table.
+_G.SDK = _G.SDK or {}
+_G.SDK.OnDraw = _G.SDK.OnDraw or {}
+_G.SDK.OnTick = _G.SDK.OnTick or {}
+_G.SDK.OnWndMsg = _G.SDK.OnWndMsg or {}
+_G.SDK.Menu = _G.SDK.Menu or Menu
+_G.SDK.Color = _G.SDK.Color or Color
+_G.SDK.Action = _G.SDK.Action or Action
+_G.SDK.BuffManager = _G.SDK.BuffManager or Buff
+_G.SDK.Damage = _G.SDK.Damage or Damage
+_G.SDK.Data = _G.SDK.Data or Data
+_G.SDK.Spell = _G.SDK.Spell or Spell
+_G.SDK.SummonerSpell = _G.SDK.SummonerSpell or SummonerSpell
+_G.SDK.ItemManager = _G.SDK.ItemManager or Item
+_G.SDK.ObjectManager = _G.SDK.ObjectManager or Object
+_G.SDK.TargetSelector = _G.SDK.TargetSelector or Target
+_G.SDK.HealthPrediction = _G.SDK.HealthPrediction or Health
+_G.SDK.Cursor = _G.SDK.Cursor or Cursor
+_G.SDK.Attack = _G.SDK.Attack or Attack
+_G.SDK.Orbwalker = _G.SDK.Orbwalker or Orbwalker
+_G.SDK.Cached = _G.SDK.Cached or Cached
+_G.SDK.Movement = _G.SDK.Movement or Movement
+_G.SDK.DAMAGE_TYPE_PHYSICAL = _G.SDK.DAMAGE_TYPE_PHYSICAL or DAMAGE_TYPE_PHYSICAL
+_G.SDK.DAMAGE_TYPE_MAGICAL = _G.SDK.DAMAGE_TYPE_MAGICAL or DAMAGE_TYPE_MAGICAL
+_G.SDK.DAMAGE_TYPE_TRUE = _G.SDK.DAMAGE_TYPE_TRUE or DAMAGE_TYPE_TRUE
+_G.SDK.ORBWALKER_MODE_NONE = _G.SDK.ORBWALKER_MODE_NONE or ORBWALKER_MODE_NONE
+_G.SDK.ORBWALKER_MODE_COMBO = _G.SDK.ORBWALKER_MODE_COMBO or ORBWALKER_MODE_COMBO
+_G.SDK.ORBWALKER_MODE_HARASS = _G.SDK.ORBWALKER_MODE_HARASS or ORBWALKER_MODE_HARASS
+_G.SDK.ORBWALKER_MODE_LANECLEAR = _G.SDK.ORBWALKER_MODE_LANECLEAR or ORBWALKER_MODE_LANECLEAR
+_G.SDK.ORBWALKER_MODE_JUNGLECLEAR = _G.SDK.ORBWALKER_MODE_JUNGLECLEAR or ORBWALKER_MODE_JUNGLECLEAR
+_G.SDK.ORBWALKER_MODE_LASTHIT = _G.SDK.ORBWALKER_MODE_LASTHIT or ORBWALKER_MODE_LASTHIT
+_G.SDK.ORBWALKER_MODE_FLEE = _G.SDK.ORBWALKER_MODE_FLEE or ORBWALKER_MODE_FLEE
+if _G.SDK.IsRecalling == nil then
+	_G.SDK.IsRecalling = function(unit)
 		if Buff:HasBuff(unit, "recall") then
 			return true
 		end
@@ -6329,8 +6365,8 @@ _G.SDK = {
 			return true
 		end
 		return false
-	end,
-}
+	end
+end
 
 --[[tickTest = 2
 drawTest = 2]]
