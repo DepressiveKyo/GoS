@@ -2,7 +2,7 @@
 if _G.__DEPRESSIVE_NEXT_YASUO_LOADED then return end
 _G.__DEPRESSIVE_NEXT_YASUO_LOADED = true
 
-local Version = 3.3
+local Version = 3.4
 local Name = "DepressiveYasuo2"
 
 -- Hero validation
@@ -251,7 +251,7 @@ local BlockableSpells = {
     ["LeblancRE"] = {charName = "Leblanc", displayName = "Ethereal Chains [Ultimate]", slot = 2, type = "linear", speed = 1750, range = 925, delay = 0.25, radius = 55, collision = true},
     
     -- LEE SIN
-    ["BlindMonkQOne"] = {charName = "LeeSin", displayName = "Sonic Wave", slot = 0, type = "linear", speed = 1800, range = 1100, delay = 0.25, radius = 60, collision = true},
+    ["LeeSinQOne"] = {charName = "LeeSin", displayName = "Sonic Wave", slot = 0, type = "linear", speed = 1800, range = 1100, delay = 0.25, radius = 60, collision = true},
     
     -- LEONA
     ["LeonaZenithBlade"] = {charName = "Leona", displayName = "Zenith Blade", slot = 2, type = "linear", speed = 2000, range = 875, delay = 0.25, radius = 70, collision = false},
@@ -443,6 +443,11 @@ local BlockableSpells = {
     
     -- YASUO
     ["YasuoQ3"] = {charName = "Yasuo", displayName = "Gathering Storm", slot = 0, type = "linear", speed = 1200, range = 1100, delay = 0.03, radius = 90, collision = false},
+
+    -- FIDDLESTICKS
+    -- Q: Terrify (targeted fear)
+    ["FiddleSticksQ"] = {charName = "Fiddlesticks", displayName = "Terrify", slot = 0, type = "targeted", speed = math.huge, range = 575, delay = 0.25, radius = 0, collision = false},
+    ["Terrify"] = {charName = "Fiddlesticks", displayName = "Terrify", slot = 0, type = "targeted", speed = math.huge, range = 575, delay = 0.25, radius = 0, collision = false},
     
     -- YONE
     ["YoneQ3"] = {charName = "Yone", displayName = "Mortal Steel [Storm]", slot = 0, type = "linear", speed = 1500, range = 1050, delay = 0.25, radius = 80, collision = false},
@@ -471,6 +476,9 @@ local BlockableSpells = {
     
     -- ZYRA
     ["ZyraE"] = {charName = "Zyra", displayName = "Grasping Roots", slot = 2, type = "linear", speed = 1150, range = 1100, delay = 0.25, radius = 70, collision = false},
+
+    -- TRISTANA
+    ["TristanaR"] = {charName = "Tristana", displayName = "Buster Shot", slot = 3, type = "targeted", speed = math.huge, range = 669, delay = 0.25, radius = 0, collision = false},
 }
 
 -- Auto W system variables
@@ -953,6 +961,8 @@ function DepressiveYasuo2:LoadMenu()
     self.Menu.combo:MenuElement({id = "useR", name = "Use R", value = true})
     self.Menu.combo:MenuElement({id = "minHitChance", name = "Min Hit Chance", value = 3, min = 1, max = 6, step = 1})
     self.Menu.combo:MenuElement({id = "eqCombo", name = "E-Q Combo", value = true})
+    self.Menu.combo:MenuElement({id = "preferTargetNearCursor", name = "Prefer target nearest to cursor in Combo", value = true})
+    self.Menu.combo:MenuElement({id = "preferTargetNearCursorRange", name = "Cursor Target Range", value = 900, min = 300, max = 2000, step = 50})
     self.Menu.combo:MenuElement({id = "Airblade", name = "Enable Airblade (EQ→R)", value = true})
     self.Menu.combo:MenuElement({id = "AirbladeChampions", name = "Airblade: allow dash on champions", value = true})
     self.Menu.combo:MenuElement({id = "smartEChase", name = "Smart E Chase (chain minions)", value = true})
@@ -1457,6 +1467,8 @@ function DepressiveYasuo2:ManualAirblade()
     end
     if not dashUnit or GetDistance(myHero.pos, dashUnit.pos) > SPELL_RANGE.E then return end
     if HasEBuff(dashUnit) then return end
+    -- Turret safety check before E
+    if not self:IsSafeToE(dashUnit) then return end
 
     local now = Game.Timer()
     if now - (self.lastAirbladeTime or 0) < 0.3 then return end
@@ -1500,6 +1512,8 @@ function DepressiveYasuo2:AutoAirbladeOnTarget(target)
     end
 
     if not dashUnit or HasEBuff(dashUnit) then return end
+    -- Turret safety check: avoid dashing under enemy turret unless allowed
+    if not self:IsSafeToE(dashUnit) then return end
     if GetDistance(myHero.pos, dashUnit.pos) > SPELL_RANGE.E then return end
 
     -- Execute E then Q after configurable delay, then R after fixed 0.1s
@@ -1640,7 +1654,7 @@ function DepressiveYasuo2:BeybladeCombo()
     -- E to minion or target
     local eTarget = self:GetBestMinionForEQ(target) or target
 
-    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E then
+    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E and self:IsSafeToE(eTarget) then
         Control.CastSpell(HK_E, eTarget)
 
         DelayAction(function()
@@ -1890,6 +1904,16 @@ end
 -- Combo Functions
 function DepressiveYasuo2:Combo()
     local target = self:GetBestTarget()
+    -- If configured, prefer the enemy champion closest to the cursor for combo targeting
+    if self.Menu.combo.preferTargetNearCursor and self.Menu.combo.preferTargetNearCursor:Value() then
+        local preferRange = (self.Menu.combo.preferTargetNearCursorRange and self.Menu.combo.preferTargetNearCursorRange:Value()) or 1200
+        local mouseTarget = self:GetClosestEnemyToMouse(preferRange)
+        if IsValidTarget(mouseTarget, preferRange) then
+            target = mouseTarget
+        end
+        end
+    -- Update instance comboTarget tracker so other systems can reference it
+    self.comboTarget = target
     if not target then 
         return 
     end
@@ -1931,8 +1955,10 @@ function DepressiveYasuo2:Combo()
                             local now = Game.Timer()
                             if now - (self.lastAirbladeTime or 0) > 0.4 then
                                 self.lastAirbladeTime = now
-                                -- Cast E on unit
-                                Control.CastSpell(HK_E, dashUnit)
+                                -- Cast E on unit (avoid dashing into turrets)
+                                if self:IsSafeToE(dashUnit) then
+                                    Control.CastSpell(HK_E, dashUnit)
+                                end
                                 -- Delay Q slightly to ensure dash packet begins, then immediately R
                                 local qDelaySec = (self.Menu.airblade and self.Menu.airblade.qDelay and self.Menu.airblade.qDelay:Value() or 60) / 1000
                                 DelayAction(function()
@@ -2225,7 +2251,7 @@ function DepressiveYasuo2:BeybladeCombo()
     -- E to minion or target
     local eTarget = self:GetBestMinionForEQ(target) or target
 
-    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E then
+    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E and self:IsSafeToE(eTarget) then
         Control.CastSpell(HK_E, eTarget)
 
         DelayAction(function()
@@ -2275,7 +2301,7 @@ function DepressiveYasuo2:EQ3FlashCombo()
     -- Find minion or use target directly
     local eTarget = self:GetBestMinionForEQ(target) or target
     
-    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E then
+    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E and self:IsSafeToE(eTarget) then
         Control.CastSpell(HK_E, eTarget)
         
         DelayAction(function()
@@ -2610,6 +2636,7 @@ function DepressiveYasuo2:LastHit()
                 if GetDistance2D(heroPos2D, minionPos2D) <= qRange then
                     local qDamage = GetQDamage()
                     if minion.health <= qDamage and minion.health > myHero.totalDamage then
+                        -- Use Q to last hit this minion
                         Control.CastSpell(HK_Q, minion.pos)
                         return
                     end
@@ -2629,8 +2656,10 @@ function DepressiveYasuo2:LastHit()
                 if GetDistance2D(heroPos2D, minionPos2D) <= SPELL_RANGE.E then
                     local eDamage = GetEDamage()
                     if minion.health <= eDamage and minion.health > myHero.totalDamage then
-                        Control.CastSpell(HK_E, minion)
-                        return
+                        if self:IsSafeToEInClear(minion) then
+                            Control.CastSpell(HK_E, minion)
+                            return
+                        end
                     end
                 end
             end
@@ -2707,7 +2736,9 @@ function DepressiveYasuo2:Flee()
     
     -- Ejecutar E al mejor minion encontrado
     if bestMinion and bestScore > 0 then
-        Control.CastSpell(HK_E, bestMinion)
+        if self:IsSafeToE(bestMinion) then
+            Control.CastSpell(HK_E, bestMinion)
+        end
     end
 end
 
@@ -3210,8 +3241,27 @@ function DepressiveYasuo2:GetBestTarget()
             end
         end
     end
-    
     return bestTarget
+end
+
+-- Returns the closest enemy champion to the mouse cursor within a given range (2D)
+function DepressiveYasuo2:GetClosestEnemyToMouse(range)
+    range = range or 1200
+    local mouse = Game.mousePos()
+    if not mouse then return nil end
+    local mouse2D = {x = mouse.x, z = mouse.z}
+    local best, bestDist = nil, math.huge
+    for i = 1, Game.HeroCount() do
+        local e = Game.Hero(i)
+        if IsValidTarget(e, range) then
+            local dist = GetDistance2D(mouse2D, {x = e.pos.x, z = e.pos.z})
+            if dist < bestDist then
+                bestDist = dist
+                best = e
+            end
+        end
+    end
+    return best
 end
 
 function DepressiveYasuo2:ManualGapcloser()
@@ -3341,7 +3391,7 @@ function DepressiveYasuo2:Harass()
     -- Find minion for harass
     if self.Menu.harass.useE:Value() and Ready(_E) and isChasing then
         local harassMinion = self:GetBestMinionForEQ(target)
-        if harassMinion and not HasEBuff(harassMinion) then
+        if harassMinion and not HasEBuff(harassMinion) and self:IsSafeToE(harassMinion) then
             Control.CastSpell(HK_E, harassMinion)
             
             if self.Menu.harass.useQ:Value() then
@@ -3585,6 +3635,7 @@ function DepressiveYasuo2:HandleBeyblade()
     
     -- Execute first step immediately (E to positioning unit)
     if Ready(_E) and not HasEBuff(bestUnit) then
+        if not self:IsSafeToE(bestUnit) then return end
         Control.CastSpell(HK_E, bestUnit)
         
         -- Queue Q3 with small delay
