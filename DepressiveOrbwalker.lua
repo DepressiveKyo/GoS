@@ -1,5 +1,5 @@
 local __name__ = "DepressiveOrbwalker"
-local __version__ = 1.4
+local __version__ = 1.5
 
 if _G.DepressiveOrbUpdate then
 	return
@@ -2752,6 +2752,7 @@ Data = {
 		Zilean = { 3, false, 0.658 },
 		Zoe = { 4, false, 0.658 },
 		Zyra = { 2, false, 0.681 },
+		Zaahen = { 4, true, 0.625 },
 	},
 
 	HeroSpecialMelees = {
@@ -2883,6 +2884,7 @@ Data = {
 		["XinZhao"] = {{ Slot = _Q, Key = HK_Q }},
 		["Yorick"] = {{ Slot = _Q, Key = HK_Q, Name = "YorickQ" }},
 		["Yunara"] = {{ Slot = _Q, Key = HK_Q }},
+		["Zaahen"] = {{ Slot = _Q, Key = HK_Q }},
 	},
 
 	WndMsg = function(self, msg, wParam)
