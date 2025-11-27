@@ -2,7 +2,7 @@
 if _G.__DEPRESSIVE_NEXT_YASUO_LOADED then return end
 _G.__DEPRESSIVE_NEXT_YASUO_LOADED = true
 
-local Version = 3.4
+local Version = 3.5
 local Name = "DepressiveYasuo2"
 
 -- Hero validation
@@ -968,6 +968,7 @@ function DepressiveYasuo2:LoadMenu()
     self.Menu.combo:MenuElement({id = "smartEChase", name = "Smart E Chase (chain minions)", value = true})
     self.Menu.combo:MenuElement({id = "aggressiveMovement", name = "Aggressive Movement (More E-Q)", value = true})
     self.Menu.combo:MenuElement({id = "movementStyle", name = "Movement Style", drop = {"Balanced", "Aggressive", "Very Aggressive"}, value = 2})
+    self.Menu.combo:MenuElement({id = "autoAirblade", name = "Auto Airblade (Killable+Airborne)", value = true})
     
     -- Ultimate Settings (inspired by YasuoThePackGod)
     self.Menu:MenuElement({type = MENU, id = "ultimate", name = "Ultimate Settings"})
@@ -1026,20 +1027,22 @@ function DepressiveYasuo2:LoadMenu()
     -- Q3 Animation Cancel
     self.Menu:MenuElement({type = MENU, id = "q3cancel", name = "Q3 Animation Cancel"})
     self.Menu.q3cancel:MenuElement({id = "enabled", name = "Enable Q3 cancel", value = true})
-    self.Menu.q3cancel:MenuElement({id = "useCtrl3", name = "Use Ctrl+3 (dance) to cancel", value = true})
+    self.Menu.q3cancel:MenuElement({id = "useCtrl4", name = "Use Ctrl+4 (laugh) to cancel", value = true})
     self.Menu.q3cancel:MenuElement({id = "delay", name = "Delay after cast (ms)", value = 35, min = 0, max = 120, step = 5})
     
-    -- Beyblade System (E-Q3-Flash Combo)
-    self.Menu:MenuElement({type = MENU, id = "beyblade", name = "Beyblade (E-Q3-Flash)"})
-    self.Menu.beyblade:MenuElement({id = "enabled", name = "Enable Beyblade Combo", value = true})
-    self.Menu.beyblade:MenuElement({id = "key", name = "Beyblade Key", key = string.byte("T"), toggle = false})
-    self.Menu.beyblade:MenuElement({id = "maxRange", name = "Max Target Range", value = 1100, min = 600, max = 1200, step = 50})
-    self.Menu.beyblade:MenuElement({id = "flashRange", name = "Flash Range", value = 450, min = 350, max = 450, step = 25})
-    self.Menu.beyblade:MenuElement({id = "autoFlash", name = "Auto Flash after Q3", value = true})
-    self.Menu.beyblade:MenuElement({id = "requireQ3", name = "Only use when Q3 ready", value = true})
-    self.Menu.beyblade:MenuElement({id = "minHitChance", name = "Min Q3 Hit Chance", value = 3, min = 1, max = 6, step = 1})
-    self.Menu.beyblade:MenuElement({id = "flashStyle", name = "Flash style", drop = {"Toward target (capped)", "To cursor", "Behind target (overshoot)"}, value = 1})
-    self.Menu.beyblade:MenuElement({id = "overshoot", name = "Behind/offset distance", value = 75, min = 25, max = 150, step = 5})
+    -- Beyblade System (E-Q3-Flash Combo) - Fixed
+    self.Menu:MenuElement({type = MENU, id = "newBeyblade", name = "Beyblade (E-Q3-Flash) [New]"})
+    self.Menu.newBeyblade:MenuElement({id = "bbEnabled", name = "Enable Beyblade Combo", value = true})
+    self.Menu.newBeyblade:MenuElement({id = "bbKey", name = "Beyblade Key", key = string.byte("T"), toggle = false})
+    self.Menu.newBeyblade:MenuElement({id = "bbCursorDist", name = "Cursor Priority Range", value = 500, min = 100, max = 1000, step = 50})
+    self.Menu.newBeyblade:MenuElement({id = "bbMaxDist", name = "Max Target Range", value = 1100, min = 600, max = 1200, step = 50})
+    self.Menu.newBeyblade:MenuElement({id = "bbUseChamps", name = "Use Champions for Gapclose", value = true})
+    self.Menu.newBeyblade:MenuElement({id = "bbFlashDist", name = "Flash Range", value = 425, min = 350, max = 450, step = 25})
+    self.Menu.newBeyblade:MenuElement({id = "bbAutoFlash", name = "Auto Flash after Q3", value = true})
+    self.Menu.newBeyblade:MenuElement({id = "bbReqQ3", name = "Only use when Q3 ready", value = true})
+    self.Menu.newBeyblade:MenuElement({id = "bbHitChance", name = "Min Q3 Hit Chance", value = 3, min = 1, max = 6, step = 1})
+    self.Menu.newBeyblade:MenuElement({id = "bbStyle", name = "Flash style", drop = {"Toward target (capped)", "To cursor", "Behind target (overshoot)"}, value = 1})
+    self.Menu.newBeyblade:MenuElement({id = "bbOffset", name = "Behind/offset distance", value = 75, min = 25, max = 150, step = 5})
 
     -- Airblade manual trigger
     self.Menu:MenuElement({type = MENU, id = "airblade", name = "Airblade (EQ→R)"})
@@ -1177,13 +1180,18 @@ function DepressiveYasuo2:Tick()
     end
     
     -- Mega combo key: prefer Airblade (G-sequence) over instant R/beyblade
-    if self.Menu.beyblade.enabled:Value() and (self.keysPressed.beyblade or self.Menu.beyblade.key:Value()) then
+    if self.Menu.newBeyblade.bbEnabled:Value() and (self.keysPressed.beyblade or self.Menu.newBeyblade.bbKey:Value()) then
         self:ExecuteMegaCombo()
     end
 
     -- Manual Airblade key trigger
     if self.Menu.airblade and self.Menu.airblade.enabled and self.Menu.airblade.enabled:Value() and self.Menu.airblade.key:Value() then
         self:ManualAirblade()
+    end
+
+    -- Auto Airblade (Automatic)
+    if self.Menu.combo.autoAirblade and self.Menu.combo.autoAirblade:Value() then
+        self:AutoAirbladeLogic()
     end
     
     -- Execute ongoing beyblade combo
@@ -1321,7 +1329,7 @@ function DepressiveYasuo2:Draw()
         local statusText = "Ready"
         
         if self.beybladeState ~= "idle" then
-            statusText = "Executing Beyblade: Step " .. self.beybladeStep
+            statusText = "Executing Beyblade"
         elseif self.walljumpExecuting then
             statusText = "Executing Walljump: Step " .. self.walljumpStep
         elseif self.comboState ~= "idle" then
@@ -1347,6 +1355,16 @@ function DepressiveYasuo2:Draw()
             Draw.Text(self.cachedSpellInfo.q, 14, 100, 140, Draw.Color(255, 255, 255, 255))
             Draw.Text(self.cachedSpellInfo.e, 14, 100, 155, Draw.Color(255, 255, 255, 255))
             Draw.Text(self.cachedSpellInfo.r, 14, 100, 170, Draw.Color(255, 255, 255, 255))
+        end
+    end
+
+    -- Draw Beyblade Target (Yasuo2 style)
+    if self.lockedBeybladeTarget and not self.lockedBeybladeTarget.dead and self.lockedBeybladeTarget.visible then
+        Draw.Circle(self.lockedBeybladeTarget.pos, 120, 3, Draw.Color(255, 0, 255, 0)) 
+        
+        local screenPos = self.lockedBeybladeTarget.pos:ToScreen()
+        if screenPos.onScreen then
+            Draw.Text("Beyblade Target", 15, screenPos.x, screenPos.y, Draw.Color(255, 255, 255, 255))
         end
     end
     
@@ -1426,7 +1444,7 @@ function DepressiveYasuo2:OnWndMsg(msg, wParam)
         end
 
         -- Also track the Beyblade (mega combo) key configured in the menu
-        if self.Menu and self.Menu.beyblade and self.Menu.beyblade.key and wParam == self.Menu.beyblade.key:Value() then
+        if self.Menu and self.Menu.newBeyblade and self.Menu.newBeyblade.bbKey and wParam == self.Menu.newBeyblade.bbKey:Value() then
             self.keysPressed.beyblade = true
         end
     elseif msg == KEY_UP then
@@ -1443,7 +1461,7 @@ function DepressiveYasuo2:OnWndMsg(msg, wParam)
         end
 
         -- Also track Beyblade key release
-        if self.Menu and self.Menu.beyblade and self.Menu.beyblade.key and wParam == self.Menu.beyblade.key:Value() then
+        if self.Menu and self.Menu.newBeyblade and self.Menu.newBeyblade.bbKey and wParam == self.Menu.newBeyblade.bbKey:Value() then
             self.keysPressed.beyblade = false
         end
     end
@@ -1494,42 +1512,6 @@ function DepressiveYasuo2:ManualAirblade()
     end, qDelaySec)
 end
 
--- Automated Airblade for a specific target (used after Beyblade detection)
-function DepressiveYasuo2:AutoAirbladeOnTarget(target)
-    if not target or not target.valid or target.dead then return end
-    if not Ready(_R) then return end
-    if not Ready(_E) then return end
-    -- Q can be ready or will be ready after E (cd <= 0.5)
-    local qCd = myHero:GetSpellData(_Q).currentCd or 0
-    if qCd > 0.5 then return end
-
-    -- Find dash unit (champion or minion depending on settings)
-    local dashUnit = nil
-    if self.Menu.combo and self.Menu.combo.AirbladeChampions and self.Menu.combo.AirbladeChampions:Value() then
-        dashUnit = GetClosestEDashUnit(target, SPELL_RANGE.E)
-    else
-        dashUnit = GetClosestMinion(myHero.pos, SPELL_RANGE.E)
-    end
-
-    if not dashUnit or HasEBuff(dashUnit) then return end
-    -- Turret safety check: avoid dashing under enemy turret unless allowed
-    if not self:IsSafeToE(dashUnit) then return end
-    if GetDistance(myHero.pos, dashUnit.pos) > SPELL_RANGE.E then return end
-
-    -- Execute E then Q after configurable delay, then R after fixed 0.1s
-    Control.CastSpell(HK_E, dashUnit)
-    local qDelaySec = (self.Menu.airblade and self.Menu.airblade.qDelay and self.Menu.airblade.qDelay:Value() or 60) / 1000
-    DelayAction(function()
-        if Ready(_Q) then
-            Control.CastSpell(HK_Q, dashUnit.pos)
-            DelayAction(function()
-                if Ready(_R) and target and target.valid and not target.dead and IsKnockedUp(target) then
-                    Control.CastSpell(HK_R, target)
-                end
-            end, 0.1)
-        end
-    end, qDelaySec)
-end
 
 function DepressiveYasuo2:ExecuteClosestWalljumpToMouse()
     if self.walljumpExecuting then return end
@@ -1639,55 +1621,6 @@ function DepressiveYasuo2:IsSafeToE(target)
     end
     
     return not isUnderTurret
-end
-
-function DepressiveYasuo2:BeybladeCombo()
-    local target = self:GetBestTarget()
-    if not target or not Ready(_E) or not Ready(_Q) then return end
-
-    local flashSlot = self:GetSummonerSpellSlot("SummonerFlash")
-    if not flashSlot or not Ready(flashSlot) then return end
-
-    self.comboState = "beyblade"
-    self.comboTarget = target
-
-    -- E to minion or target
-    local eTarget = self:GetBestMinionForEQ(target) or target
-
-    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E and self:IsSafeToE(eTarget) then
-        Control.CastSpell(HK_E, eTarget)
-
-        DelayAction(function()
-            if Ready(_Q) then
-                Control.CastSpell(HK_Q)
-
-                DelayAction(function()
-                    if Ready(flashSlot) then
-                        local flashPos = myHero.pos:Extended(target.pos, 400)
-                        Control.CastSpell(flashSlot, flashPos)
-
-                        DelayAction(function()
-                            if Ready(_Q) and HasQ3() then
-                                local pred, hitChance = GetPrediction(target, "Q3")
-                                if pred and hitChance >= 2 then
-                                    Control.CastSpell(HK_Q, pred)
-                                else
-                                    Control.CastSpell(HK_Q, target.pos)
-                                end
-
-                                DelayAction(function()
-                                    if Ready(_R) and self:CanUseUltimate(target) then
-                                        Control.CastSpell(HK_R)
-                                    end
-                                    self.comboState = "idle"
-                                end, 0.3)
-                            end
-                        end, 0.2)
-                    end
-                end, 0.15)
-            end
-        end, 0.1)
-    end
 end
 
 function DepressiveYasuo2:CheckWalljumpStatus()
@@ -2221,13 +2154,13 @@ end
 -- Execute the action that cancels Q3 end-lag (Ctrl+3 dance by default)
 function DepressiveYasuo2:PerformQ3CancelAction()
     local pressTime = 0.02
-    if self.Menu.q3cancel and self.Menu.q3cancel.useCtrl3 and self.Menu.q3cancel.useCtrl3:Value() then
-        -- Prefer native emote key if available, otherwise press the '3' key with Ctrl
-        local key3 = _G.HK_EMOTE3 or _G.HK_3 or string.byte("3") or 51
+    if self.Menu.q3cancel and self.Menu.q3cancel.useCtrl4 and self.Menu.q3cancel.useCtrl4:Value() then
+        -- Prefer native emote key if available, otherwise press the '4' key with Ctrl
+        local key4 = _G.HK_EMOTE4 or _G.HK_4 or string.byte("4") or 52
         Control.KeyDown(HK_CTRL)
-        Control.KeyDown(key3)
+        Control.KeyDown(key4)
         DelayAction(function()
-            Control.KeyUp(key3)
+            Control.KeyUp(key4)
             Control.KeyUp(HK_CTRL)
         end, pressTime)
     else
@@ -2235,55 +2168,6 @@ function DepressiveYasuo2:PerformQ3CancelAction()
         if myHero and myHero.pos then
             Control.Move(myHero.pos)
         end
-    end
-end
-
-function DepressiveYasuo2:BeybladeCombo()
-    local target = self:GetBestTarget()
-    if not target or not Ready(_E) or not Ready(_Q) then return end
-
-    local flashSlot = self:GetSummonerSpellSlot("SummonerFlash")
-    if not flashSlot or not Ready(flashSlot) then return end
-
-    self.comboState = "beyblade"
-    self.comboTarget = target
-
-    -- E to minion or target
-    local eTarget = self:GetBestMinionForEQ(target) or target
-
-    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E and self:IsSafeToE(eTarget) then
-        Control.CastSpell(HK_E, eTarget)
-
-        DelayAction(function()
-            if Ready(_Q) then
-                Control.CastSpell(HK_Q)
-
-                DelayAction(function()
-                    if Ready(flashSlot) then
-                        local flashPos = myHero.pos:Extended(target.pos, 400)
-                        Control.CastSpell(flashSlot, flashPos)
-
-                        DelayAction(function()
-                            if Ready(_Q) and HasQ3() then
-                                local pred, hitChance = GetPrediction(target, "Q3")
-                                if pred and hitChance >= 2 then
-                                    Control.CastSpell(HK_Q, pred)
-                                else
-                                    Control.CastSpell(HK_Q, target.pos)
-                                end
-
-                                DelayAction(function()
-                                    if Ready(_R) and self:CanUseUltimate(target) then
-                                        Control.CastSpell(HK_R)
-                                    end
-                                    self.comboState = "idle"
-                                end, 0.3)
-                            end
-                        end, 0.2)
-                    end
-                end, 0.15)
-            end
-        end, 0.1)
     end
 end
 
@@ -2332,6 +2216,9 @@ function DepressiveYasuo2:BeybladeCombo()
     
     local flashSlot = self:GetSummonerSpellSlot("SummonerFlash")
     if not flashSlot or not Ready(flashSlot) then return end
+
+    -- Check menu settings
+    if self.Menu.newBeyblade.bbReqQ3:Value() and not HasQ3() then return end
     
     self.comboState = "beyblade"
     self.comboTarget = target
@@ -2339,7 +2226,7 @@ function DepressiveYasuo2:BeybladeCombo()
     -- E to minion or target
     local eTarget = self:GetBestMinionForEQ(target) or target
     
-    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E then
+    if not HasEBuff(eTarget) and GetDistance(myHero.pos, eTarget.pos) <= SPELL_RANGE.E and self:IsSafeToE(eTarget) then
         Control.CastSpell(HK_E, eTarget)
         
         DelayAction(function()
@@ -2348,13 +2235,26 @@ function DepressiveYasuo2:BeybladeCombo()
                 
                 DelayAction(function()
                     if Ready(flashSlot) then
-                        local flashPos = myHero.pos:Extended(target.pos, 400)
+                        -- Use configured flash range
+                        local flashRange = self.Menu.newBeyblade.bbFlashDist:Value()
+                        local flashPos = myHero.pos:Extended(target.pos, flashRange)
+                        
+                        -- Handle flash style
+                        local style = self.Menu.newBeyblade.bbStyle:Value()
+                        if style == 2 then -- To cursor
+                            flashPos = mousePos
+                        elseif style == 3 then -- Behind
+                            local overshoot = self.Menu.newBeyblade.bbOffset:Value()
+                            flashPos = target.pos:Extended(myHero.pos, -overshoot)
+                        end
+                        
                         Control.CastSpell(flashSlot, flashPos)
                         
                         DelayAction(function()
                             if Ready(_Q) and HasQ3() then
+                                local minHitChance = self.Menu.newBeyblade.bbHitChance:Value()
                                 local pred, hitChance = GetPrediction(target, "Q3")
-                                if pred and hitChance >= 2 then
+                                if pred and hitChance >= minHitChance then
                                     Control.CastSpell(HK_Q, pred)
                                 else
                                     Control.CastSpell(HK_Q, target.pos)
@@ -3604,401 +3504,240 @@ function DepressiveYasuo2:AdvancedComboLogic(target)
     return "standard"
 end
 
+function DepressiveYasuo2:GetDashEndPos(unit)
+    local currentPos = myHero.pos
+    local unitPos = unit.pos
+    local dashDist = SPELL_RANGE.E or 475
+    
+    local direction = (unitPos - currentPos):Normalized()
+    return currentPos + direction * dashDist
+end
+
 function DepressiveYasuo2:HandleBeyblade()
-    -- Check Q availability. Respect menu option `requireQ3` so users can
-    -- choose to allow Beyblade even when Q3 isn't ready.
-    local requireQ3 = self.Menu.beyblade and self.Menu.beyblade.requireQ3 and self.Menu.beyblade.requireQ3:Value()
+    -- Beyblade Logic from Yasuo2.lua (Fixed Timing)
+    if self.beybladeState ~= "idle" then return end
+
+    local requireQ3 = self.Menu.newBeyblade and self.Menu.newBeyblade.bbReqQ3 and self.Menu.newBeyblade.bbReqQ3:Value()
     if requireQ3 then
         if not HasQ3() or not Ready(_Q) then return end
     else
-        -- If Q3 not required, still require Q to be ready for the combo
         if not Ready(_Q) then return end
     end
     
-    -- Check if Flash is available
-    local flashSlot = self:GetFlashSlot()
-    if not flashSlot or not Ready(flashSlot) then return end
-    
-    -- Find best target for Beyblade (prioritize cursor target)
     local target = self:GetBestBeybladeTargetWithCursor()
     if not target then return end
     
-    -- Find best unit to E onto for optimal positioning (including champions)
+    local flashSlot = self:GetFlashSlot()
+    if not flashSlot or not Ready(flashSlot) then return end
+    
     local bestUnit = self:GetBestUnitForBeyblade(target)
     if not bestUnit then return end
     
-    -- Start the Beyblade combo
-    self.beybladeState = "executing_beyblade"
-    self.beybladeTarget = target
-    self.beybladeStep = 1
+    self.beybladeState = "executing"
     self.beybladeTimer = Game.Timer()
+    self.lockedBeybladeTarget = target
     
-    -- Execute first step immediately (E to positioning unit)
-    if Ready(_E) and not HasEBuff(bestUnit) then
-        if not self:IsSafeToE(bestUnit) then return end
-        Control.CastSpell(HK_E, bestUnit)
+    -- Cast E on minion/champion
+    Control.CastSpell(HK_E, bestUnit)
+    
+    -- Store target position before dash (in case target moves)
+    local targetPosBeforeDash = target.pos
+    
+    -- Wait for E dash to start, then cast Q during dash
+    DelayAction(function()
+        -- Cast Q during E dash (EQ combo) - FORCE IT
+        if Ready(_Q) and HasQ3() then
+            Control.CastSpell(HK_Q)
+        end
         
-        -- Queue Q3 with small delay
+        -- Flash timing: wait for Q3 to fire during the E dash
+        -- Q3 needs ~0.12-0.15s to fire after Q is pressed
+        -- Flash MUST execute after Q3 fires
         DelayAction(function()
-            if Ready(_Q) and HasQ3() and self.beybladeState == "executing_beyblade" then
-                local pred, chance = DepressivePrediction.GetPrediction(self.beybladeTarget, "Q3")
-                local minHitChance = self.Menu.beyblade and self.Menu.beyblade.minHitChance and self.Menu.beyblade.minHitChance:Value() or 2
-                
-                if pred and chance >= minHitChance then
-                    Control.CastSpell(HK_Q, pred)
-                else
-                    Control.CastSpell(HK_Q, self.beybladeTarget.pos)
-                end
-                
-                -- Queue Flash with delay after Q3
-                DelayAction(function()
-                    if self.beybladeState == "executing_beyblade" and 
-                       self.beybladeTarget and self.beybladeTarget.valid and not self.beybladeTarget.dead then
-                        
-                        local flashSlot = self:GetFlashSlot()
-                        if flashSlot and Ready(flashSlot) then
-                            local currentTarget = self.beybladeTarget
-                            -- Compute robust flash position based on style and distances
-                            local flashPos = self:GetFlashPositionForBeyblade(currentTarget)
-                            
-                            -- Execute Flash
-                            Control.SetCursorPos(flashPos)
-                            if flashSlot == SUMMONER_1 then
-                                Control.KeyDown(HK_SUMMONER_1)
-                                Control.KeyUp(HK_SUMMONER_1)
-                            else
-                                Control.KeyDown(HK_SUMMONER_2)
-                                Control.KeyUp(HK_SUMMONER_2)
-                            end
-                        
-                            -- Do NOT cast R here; wait for Airblade logic to handle R timing
-                        end
-                        
-                        -- Capture current target locally then reset combo state
-                        local capturedTarget = self.beybladeTarget
-                        self:ResetBeyblade()
-
-                        local interval = 0.1
-                        local maxWait = 1.0
-                        local attempts = math.floor(maxWait / interval)
-                        local attempt = 0
-
-                        DelayAction(function()
-                            DelayAction(function()
-                                -- inner no-op to ensure DelayAction scheduling works in this environment
-                            end, 0)
-                        end, 0)
-
-                        -- Start polling loop
-                        DelayAction(function()
-                            local function poll()
-                                attempt = attempt + 1
-                                if not capturedTarget or not capturedTarget.valid or capturedTarget.dead then
-                                    return -- stop polling
-                                end
-
-                                -- Must be knocked up to use R
-                                if not IsKnockedUp(capturedTarget) then
-                                    if attempt >= attempts then return end
-                                    DelayAction(poll, interval)
-                                    return
-                                end
-
-                                -- Spell readiness: need E and R, and Q ready or will be ready after E (<=0.5s)
-                                local eReady = Ready(_E)
-                                local rReady = Ready(_R)
-                                local qCd = myHero:GetSpellData(_Q).currentCd or 0
-
-                                if eReady and rReady and qCd <= 0.5 then
-                                    -- Execute automated Airblade and stop polling
-                                    self:AutoAirbladeOnTarget(capturedTarget)
-                                    return
-                                end
-
-                                if attempt >= attempts then
-                                    return -- give up after timeout
-                                end
-
-                                -- Retry after interval
-                                DelayAction(poll, interval)
-                            end
-
-                            -- Kick off the first poll after a tiny delay to allow server-side state to update
-                            DelayAction(poll, 0.03)
-                        end, 0.06)
-                    end
-                end, 0.2)
+            -- FORCE FLASH - no checks, just execute
+            local tPos = targetPosBeforeDash
+            if self.lockedBeybladeTarget and self.lockedBeybladeTarget.valid then
+                tPos = self.lockedBeybladeTarget.pos
             end
-        end, 0.1)
-    end
+            
+            local dist = GetDistance2D(myHero.pos, tPos)
+            local flashRange = self.Menu.newBeyblade.bbFlashDist and self.Menu.newBeyblade.bbFlashDist:Value() or 400
+            
+            -- Check flash style
+            local flashPos = nil
+            local flashStyle = self.Menu.newBeyblade.bbStyle and self.Menu.newBeyblade.bbStyle:Value() or 1
+            
+            if flashStyle == 1 then
+                -- Toward target (capped)
+                local dir = (tPos - myHero.pos):Normalized()
+                flashPos = myHero.pos + dir * math.min(flashRange, dist)
+            elseif flashStyle == 2 then
+                -- To cursor
+                flashPos = Game.mousePos()
+            elseif flashStyle == 3 then
+                -- Behind target (overshoot)
+                local dir = (tPos - myHero.pos):Normalized()
+                local overshoot = self.Menu.newBeyblade.bbOffset and self.Menu.newBeyblade.bbOffset:Value() or 75
+                flashPos = tPos + dir * overshoot
+            else
+                -- Default: toward target
+                local dir = (tPos - myHero.pos):Normalized()
+                flashPos = myHero.pos + dir * math.min(flashRange, dist)
+            end
+            
+            -- FORCE FLASH EXECUTION - no conditions
+            if flashPos then
+                Control.SetCursorPos(flashPos)
+                if flashSlot == SUMMONER_1 then
+                    Control.KeyDown(HK_SUMMONER_1)
+                    Control.KeyUp(HK_SUMMONER_1)
+                else
+                    Control.KeyDown(HK_SUMMONER_2)
+                    Control.KeyUp(HK_SUMMONER_2)
+                end
+            end
+            
+            -- R after flash (instant)
+            DelayAction(function()
+                if self.lockedBeybladeTarget and self.lockedBeybladeTarget.valid then
+                    if Ready(_R) and self:IsTargetAirborne(self.lockedBeybladeTarget) then
+                        Control.CastSpell(HK_R, self.lockedBeybladeTarget)
+                    end
+                end
+                self.beybladeState = "idle"
+                self.lockedBeybladeTarget = nil
+            end, 0.05)
+        end, 0.15) -- Flash delay: wait 0.15s after Q cast for Q3 to fire
+    end, 0.1) -- Wait 100ms for E dash to start before casting Q
 end
 
--- Helper: compute flash landing position for Beyblade styles
-function DepressiveYasuo2:GetFlashPositionForBeyblade(target)
-    if not target then return myHero.pos end
-    local style = self.Menu.beyblade.flashStyle:Value() -- 1 toward, 2 cursor, 3 behind
-    local flashRange = (self.Menu.beyblade.flashRange and self.Menu.beyblade.flashRange:Value()) or 450
-    local overshoot = (self.Menu.beyblade.overshoot and self.Menu.beyblade.overshoot:Value()) or 75
+function DepressiveYasuo2:AutoAirbladeLogic()
+    -- Avoid spam if already doing something complex
+    if self.beybladeState ~= "idle" or self.walljumpExecuting then return end
+    if not Ready(_R) or not Ready(_E) then return end
 
-    local heroPos = myHero.pos
-    local tPos = target.pos
+    -- Check Q CD (must be ready or almost ready for EQ)
+    local qCd = myHero:GetSpellData(_Q).currentCd or 0
+    if qCd > 0.5 then return end
+    
+    -- Don't auto airblade if we just did it
+    local now = Game.Timer()
+    if now - (self.lastAirbladeTime or 0) < 1.0 then return end
 
-    if style == 2 then
-        -- To cursor (clamped to flash range from hero)
-        local cursor = Game.mousePos()
-        local dir = (cursor - heroPos):Normalized()
-        local dist = math.min(flashRange, GetDistance(heroPos, cursor))
-        return heroPos + dir * dist
+    for i = 1, Game.HeroCount() do
+        local target = Game.Hero(i)
+        if IsValidTarget(target, SPELL_RANGE.R) and self:IsTargetAirborne(target) and self:CanKillWithR(target) then
+             -- Found target. Now find closest dash unit.
+             local bestUnit = nil
+             local closestDist = math.huge
+             
+             -- Search minions/jungle
+             for j = 1, Game.MinionCount() do
+                 local m = Game.Minion(j)
+                 if IsValidTarget(m, SPELL_RANGE.E) and not HasEBuff(m) then
+                     local d = GetDistance(myHero.pos, m.pos)
+                     if d < closestDist then
+                         closestDist = d
+                         bestUnit = m
+                     end
+                end
+            end
+
+             -- Search heroes (excluding target)
+             for j = 1, Game.HeroCount() do
+                 local h = Game.Hero(j)
+                 if IsValidTarget(h, SPELL_RANGE.E) and h ~= target and not HasEBuff(h) then
+                     local d = GetDistance(myHero.pos, h.pos)
+                     if d < closestDist then
+                         closestDist = d
+                         bestUnit = h
+                    end
+                end
+            end
+
+             if bestUnit and self:IsSafeToE(bestUnit) then
+                 self.lastAirbladeTime = now
+                 -- Execute Auto Airblade
+                 Control.CastSpell(HK_E, bestUnit)
+                 
+                 local qDelay = 0.05 -- fast EQ
+                 DelayAction(function()
+                    if Ready(_Q) then Control.CastSpell(HK_Q) end
+                 end, qDelay)
+                 
+                 -- Zero delay R for immediate followup
+                 DelayAction(function()
+                    if Ready(_R) and target and target.valid and not target.dead and self:IsTargetAirborne(target) then 
+                         Control.CastSpell(HK_R, target) 
+                    end
+                 end, 0.1) -- Reduced from 0.25 to 0.05
+                 return -- Action taken
+             end
+        end
     end
-
-    local dirToTarget = (tPos - heroPos):Normalized()
-    if style == 3 then
-        -- Behind target relative to its movement or facing (use target pathing if available)
-        local moveDir = dirToTarget
-        if target.pathing and target.pathing.hasMovePath and target.pathing.moveDir then
-            local md = target.pathing.moveDir
-            if md.x ~= 0 or md.z ~= 0 then
-                moveDir = Vector(md.x, 0, md.z):Normalized()
+end
+    
+function DepressiveYasuo2:GetBestBeybladeTargetWithCursor()
+    local cursorRange = self.Menu.newBeyblade.bbCursorDist and self.Menu.newBeyblade.bbCursorDist:Value() or 500
+    local mousePos = Game.mousePos()
+    local bestTarget = nil
+    local closestDist = math.huge
+    
+    for i = 1, Game.HeroCount() do
+        local h = Game.Hero(i)
+        if IsValidTarget(h, 2000) then 
+            local d = GetDistance2D(mousePos, h.pos)
+            if d <= cursorRange and d < closestDist then
+                closestDist = d
+                bestTarget = h
             end
         end
-        -- Place behind target (opposite of movement) with overshoot
-        local behindDir = (tPos - heroPos):Normalized() -- default
-        if moveDir then
-            behindDir = moveDir
-        end
-        -- We want to appear slightly behind the target: target position - behindDir * overshoot (clamped by flash range)
-        local desired = tPos - behindDir * overshoot
-        local distToDesired = GetDistance(heroPos, desired)
-        if distToDesired > flashRange then
-            desired = heroPos + (desired - heroPos):Normalized() * flashRange
-        end
-        return desired
     end
-
-    -- Default: toward target capped at flash range but stop slightly before (avoid overshooting walls)
-    local distanceToTarget = GetDistance(heroPos, tPos)
-    local useDist = math.min(flashRange, distanceToTarget - 25) -- keep small gap
-    if useDist < 50 then useDist = math.min(flashRange, distanceToTarget) end
-    return heroPos + dirToTarget * useDist
+    return bestTarget 
 end
 
 function DepressiveYasuo2:ExecuteBeybladeCombo()
-    -- Safety timeout - reset if combo takes too long
-    local timeSinceStart = Game.Timer() - self.beybladeTimer
-    if timeSinceStart > 2.0 then -- 2 seconds timeout
-        self:ResetBeyblade()
-    end
-    
-    -- Check if target is still valid
-    if not self.beybladeTarget or not self.beybladeTarget.valid or self.beybladeTarget.dead then
-        self:ResetBeyblade()
-    end
-end
-
--- Get best target for Beyblade combo with cursor priority - Enhanced version
-function DepressiveYasuo2:GetBestBeybladeTargetWithCursor()
-    local bestTarget = nil
-    local bestScore = 0
-    local maxRange = self.Menu.beyblade and self.Menu.beyblade.maxRange and self.Menu.beyblade.maxRange:Value() or 2000
-    
-    -- Get mouse position for cursor targeting
-    local mousePos = Game.mousePos()
-    local mousePos2D = {x = mousePos.x, z = mousePos.z}
-    
-    -- PRIORITY 1: Check if cursor is over an enemy champion
-    local cursorTarget = nil
-    local cursorDistance = math.huge
-    local cursorRange = self.Menu.beyblade and self.Menu.beyblade.cursorRange and self.Menu.beyblade.cursorRange:Value() or 300
-    
-    for i = 1, Game.HeroCount() do
-        local hero = Game.Hero(i)
-        if IsValidTarget(hero, maxRange) then
-            local heroPos2D = {x = hero.pos.x, z = hero.pos.z}
-            local distanceToCursor = GetDistance2D(mousePos2D, heroPos2D)
-            
-            -- If cursor is close to this hero (within configured range), prioritize it
-            if distanceToCursor <= cursorRange then
-                if distanceToCursor < cursorDistance then
-                    cursorDistance = distanceToCursor
-                    cursorTarget = hero
-                end
-            end
+    if Game.Timer() - self.beybladeTimer > 2.5 then 
+        self.beybladeState = "idle" 
+        self.lockedBeybladeTarget = nil
         end
     end
     
-    -- If we found a cursor target, use it with highest priority
-    if cursorTarget then
-        return cursorTarget
-    end
-    
-    -- PRIORITY 2: If no cursor target, use smart targeting
-    for i = 1, Game.HeroCount() do
-        local hero = Game.Hero(i)
-        if IsValidTarget(hero, maxRange) then
-            local distance = GetDistance2D(myHero.pos, hero.pos)
-            local healthPercent = hero.health / hero.maxHealth
-            
-            -- Score based on priority and health
-            local score = 1000
-            
-            -- Prioritize low health targets
-            if healthPercent < 0.5 then
-                score = score + 500
-            elseif healthPercent < 0.7 then
-                score = score + 200
-            end
-            
-            -- Prioritize closer targets
-            score = score + (maxRange - distance) / 10
-            
-            -- Prioritize fleeing targets
-            if self:IsEnemyFleeing(hero) then
-                score = score + 300
-            end
-            
-            -- Prioritize ADC and Mid laners
-            local charName = hero.charName:lower()
-            if string.find(charName, "jinx") or string.find(charName, "caitlyn") or 
-               string.find(charName, "ashe") or string.find(charName, "vayne") or
-               string.find(charName, "ahri") or string.find(charName, "zed") or
-               string.find(charName, "yasuo") then
-                score = score + 300
-            end
-            
-            if score > bestScore then
-                bestScore = score
-                bestTarget = hero
-            end
-        end
-    end
-    
-    return bestTarget
-end
-
-function DepressiveYasuo2:GetBestBeybladeTarget()
-    local bestTarget = nil
-    local bestScore = 0
-    local maxRange = self.Menu.beyblade.maxRange:Value()
-    
-    for i = 1, Game.HeroCount() do
-        local hero = Game.Hero(i)
-        if IsValidTarget(hero, maxRange) then
-            local distance = GetDistance(myHero.pos, hero.pos)
-            local healthPercent = hero.health / hero.maxHealth
-            
-            -- Score based on priority and health
-            local score = 1000
-            
-            -- Prioritize low health targets
-            if healthPercent < 0.5 then
-                score = score + 500
-            end
-            
-            -- Prioritize closer targets
-            score = score + (maxRange - distance) / 10
-            
-            -- Prioritize ADC and Mid laners
-            if self.Menu.ultimate.prioritizeADC:Value() then
-                local charName = hero.charName:lower()
-                if string.find(charName, "adc") or string.find(charName, "marksman") or 
-                   string.find(charName, "jinx") or string.find(charName, "caitlyn") or 
-                   string.find(charName, "ashe") or string.find(charName, "vayne") then
-                    score = score + 300
-                end
-            end
-            
-            if score > bestScore then
-                bestScore = score
-                bestTarget = hero
-            end
-        end
-    end
-    
-    return bestTarget
-end
-
--- Get best unit for Beyblade combo (including champions) - Enhanced version
 function DepressiveYasuo2:GetBestUnitForBeyblade(target)
-    if not target or not target.valid then return nil end
-    
+    if not target then return nil end
     local bestUnit = nil
-    local bestScore = 0
-    local flashRange = 450 -- Flash range
-    local useChampions = self.Menu.beyblade and self.Menu.beyblade.useChampions and self.Menu.beyblade.useChampions:Value()
-    if useChampions == nil then useChampions = true end
+    local closestGap = math.huge
     
-    -- Check enemy champions first (excluding our target) - HIGHEST PRIORITY
-    if useChampions then
-        for i = 1, Game.HeroCount() do
-            local hero = Game.Hero(i)
-            if hero and hero.isEnemy and hero ~= target and not hero.dead and hero.visible and 
-               not HasEBuff(hero) then
-                local distanceToHero = GetDistance2D(myHero.pos, hero.pos)
-                if distanceToHero <= SPELL_RANGE.E then
-                    local distanceFromHeroToTarget = GetDistance2D(hero.pos, target.pos)
-                    
-                    -- Target must be within flash range after E
-                    if distanceFromHeroToTarget <= flashRange then
-                        if distanceFromHeroToTarget >= 200 and distanceFromHeroToTarget <= 1000 then
-                            local optimalDistance = 600
-                            local distancePenalty = math.abs(distanceFromHeroToTarget - optimalDistance)
-                            local score = 3000 - distancePenalty -- HIGHEST SCORE FOR CHAMPIONS
-                            
-                            -- Bonus for closer heroes
-                            score = score + (SPELL_RANGE.E - distanceToHero) / 5
-                            
-                            if score > bestScore then
-                                bestScore = score
-                                bestUnit = hero
-                            end
-                        end
-                    end
-                end
-            end
+    local candidates = {}
+    
+    -- Add Minions
+    for i = 1, Game.MinionCount() do
+        local m = Game.Minion(i)
+        if m and m.valid and m.visible and not m.dead and m.isTargetable and m.maxHealth > 5 and (m.isEnemy or m.team == 300) then
+             if GetDistance2D(myHero.pos, m.pos) <= SPELL_RANGE.E then
+                 table.insert(candidates, m)
+             end
         end
     end
     
-    -- Check minions and jungle monsters (including red buff birds)
-    for i = 1, Game.MinionCount() do
-        local minion = Game.Minion(i)
-        if minion and minion.alive and minion.visible and not HasEBuff(minion) then
-            local isJungleMonster = minion.team == 300
-            local isEnemyMinion = minion.isEnemy
-            
-            if isJungleMonster or isEnemyMinion then
-                local distanceToMinion = GetDistance2D(myHero.pos, minion.pos)
-                if distanceToMinion <= SPELL_RANGE.E then
-                    local distanceFromMinionToTarget = GetDistance2D(minion.pos, target.pos)
-                    
-                    -- Target must be within flash range after E
-                    if distanceFromMinionToTarget <= flashRange then
-                        if distanceFromMinionToTarget >= 200 and distanceFromMinionToTarget <= 1000 then
-                            local optimalDistance = 600
-                            local distancePenalty = math.abs(distanceFromMinionToTarget - optimalDistance)
-                            local baseScore = isJungleMonster and 2000 or 1000
-                            local score = baseScore - distancePenalty
-                            
-                            -- Bonus for closer minions
-                            score = score + (SPELL_RANGE.E - distanceToMinion) / 5
-                            
-                            -- Bonus for jungle monsters (red buff birds, etc.)
-                            if isJungleMonster then
-                                score = score + 300
-                                
-                                -- Extra bonus for red buff birds
-                                if minion.charName:find("Red") or minion.charName:find("Raptor") then
-                                    score = score + 200
-                                end
-                            end
-                            
-                            if score > bestScore then
-                                bestScore = score
-                                bestUnit = minion
-                            end
-                        end
-                    end
-                end
-            end
+    -- Add Heroes (excluding target)
+    for i = 1, Game.HeroCount() do
+        local h = Game.Hero(i)
+        if IsValidTarget(h, SPELL_RANGE.E) and h ~= target then
+            table.insert(candidates, h)
+        end
+    end
+    
+    for _, unit in ipairs(candidates) do
+        if not HasEBuff(unit) then
+             local endPos = self:GetDashEndPos(unit)
+             local distToEnd = GetDistance2D(endPos, target.pos)
+             
+             -- Relaxed distance check (650) to ensure we find valid candidates even at max range
+             if distToEnd < 650 and distToEnd < closestGap then
+                 closestGap = distToEnd
+                 bestUnit = unit
+             end
         end
     end
     
@@ -4235,12 +3974,6 @@ function DepressiveYasuo2:WillLinearSpellHitMe(startPos, endPos, radius)
     return distToLine < (radius + myHero.boundingRadius + 50)
 end
 
-function DepressiveYasuo2:ResetBeyblade()
-    self.beybladeState = "idle"
-    self.beybladeTarget = nil
-    self.beybladeStep = 0
-    self.beybladeTimer = 0
-end
 
 -- Auto W System Functions
 -- Initialize the script (AIONext compatible)
