@@ -1,5 +1,5 @@
 local __name__ = "DepressiveOrbwalker"
-local __version__ = 1.5
+local __version__ = 1.6
 
 if _G.DepressiveOrbUpdate then
 	return
@@ -132,18 +132,23 @@ end
 
 --#region headers
 
+-- OPTIMIZACIÓN: Localizar todas las funciones de math en el scope local
 local math_huge = math.huge
 local math_pi = math.pi
 local math_ceil = assert(math.ceil)
+local math_floor = assert(math.floor)
 local math_min = assert(math.min)
 local math_max = assert(math.max)
 local math_atan = assert(math.atan)
 local math_random = assert(math.random)
+local math_sqrt = assert(math.sqrt)
+local math_abs = assert(math.abs)
 
 local table_sort = assert(table.sort)
 local table_remove = assert(table.remove)
 local table_insert = assert(table.insert)
 
+-- OPTIMIZACIÓN: Localizar variables globales frecuentemente usadas
 local myHero = myHero
 local os = os
 local math = math
@@ -152,7 +157,18 @@ local Vector = Vector
 local Control = Control
 local Draw = Draw
 local pairs = pairs
+local ipairs = ipairs
+local type = type
+local tostring = tostring
+local tonumber = tonumber
 local GetTickCount = GetTickCount
+local rawget = rawget
+local rawset = rawset
+local setmetatable = setmetatable
+local next = next
+local string_format = string.format
+local string_lower = string.lower
+local string_find = string.find
 
 local GameTimer = Game.Timer
 local GameIsOnTop = Game.IsOnTop
@@ -169,38 +185,57 @@ local GameObjectCount = Game.ObjectCount
 local GameTurretCount = Game.TurretCount
 local GameMinionCount = Game.MinionCount
 
+-- OPTIMIZACIÓN: Constantes matemáticas precalculadas
+local DEG_TO_RAD = math_pi / 180.0
+local RAD_TO_DEG = 180.0 / math_pi
+
 --#endregion
 
 --#region methods
 
+-- OPTIMIZACIÓN: IsInRange sin crear tablas intermedias
 local function IsInRange(p1, p2, range)
-	p2 = p2 or myHero
-	p1 = p1.pos or p1
-	p2 = p2.pos or p2
-	local dx = p1.x - p2.x
-	local dy = (p1.z or p1.y) - (p2.z or p2.y)
+	local pos1, pos2
+	if p1.pos then pos1 = p1.pos else pos1 = p1 end
+	if p2 then
+		if p2.pos then pos2 = p2.pos else pos2 = p2 end
+	else
+		pos2 = myHero.pos
+	end
+	local dx = pos1.x - pos2.x
+	local dy = (pos1.z or pos1.y) - (pos2.z or pos2.y)
 	return dx * dx + dy * dy <= range * range
 end
 
+-- OPTIMIZACIÓN: GetDistance con sqrt local
 local function GetDistance(p1, p2)
-	p2 = p2 or myHero
-	p1 = p1.pos or p1
-	p2 = p2.pos or p2
-	local dx = p1.x - p2.x
-	local dy = (p1.z or p1.y) - (p2.z or p2.y)
-	return math.sqrt(dx * dx + dy * dy)
+	local pos1, pos2
+	if p1.pos then pos1 = p1.pos else pos1 = p1 end
+	if p2 then
+		if p2.pos then pos2 = p2.pos else pos2 = p2 end
+	else
+		pos2 = myHero.pos
+	end
+	local dx = pos1.x - pos2.x
+	local dy = (pos1.z or pos1.y) - (pos2.z or pos2.y)
+	return math_sqrt(dx * dx + dy * dy)
 end
 
--- Optimized squared distance (faster, useful for range comparisons)
+-- OPTIMIZACIÓN: GetDistanceSq para comparaciones de rango (evita sqrt)
 local function GetDistanceSq(p1, p2)
-	p2 = p2 or myHero
-	p1 = p1.pos or p1
-	p2 = p2.pos or p2
-	local dx = p1.x - p2.x
-	local dy = (p1.z or p1.y) - (p2.z or p2.y)
+	local pos1, pos2
+	if p1.pos then pos1 = p1.pos else pos1 = p1 end
+	if p2 then
+		if p2.pos then pos2 = p2.pos else pos2 = p2 end
+	else
+		pos2 = myHero.pos
+	end
+	local dx = pos1.x - pos2.x
+	local dy = (pos1.z or pos1.y) - (pos2.z or pos2.y)
 	return dx * dx + dy * dy
 end
 
+-- OPTIMIZACIÓN: Polar con constante precalculada
 local function Polar(v1)
 	local x = v1.x
 	local z = v1.z or v1.y
@@ -210,7 +245,7 @@ local function Polar(v1)
 		end
 		return z < 0 and 270 or 0
 	end
-	local theta = math_atan(z / x) * (180.0 / math_pi)
+	local theta = math_atan(z / x) * RAD_TO_DEG
 	if x < 0 then
 		theta = theta + 180
 	end
@@ -359,6 +394,7 @@ local ORBWALKER_MODE_LANECLEAR = 2
 local ORBWALKER_MODE_JUNGLECLEAR = 3
 local ORBWALKER_MODE_LASTHIT = 4
 local ORBWALKER_MODE_FLEE = 5
+local ORBWALKER_MODE_SPACING = 6
 
 -- Auto Safe Reset configuration (always enabled)
 local AUTO_SAFE_RESET_TIMEOUT = 2000 -- ms
@@ -385,6 +421,11 @@ local FPSOptimizer = {
     skipNextTick = false,
     skipNextDraw = false,
     
+    -- OPTIMIZACIÓN: Pool de tablas para evitar garbage collection
+    _heroPool = {},
+    _minionPool = {},
+    _objectPool = {},
+    
     -- Cache de objetos para reducir llamadas API
     cachedHeroes = {},
     cachedMinions = {},
@@ -410,17 +451,17 @@ local FPSOptimizer = {
             cacheRange = 1200
         },
         [ORBWALKER_MODE_LANECLEAR] = {
-            cacheHeroes = false,
+            cacheHeroes = true,
             cacheMinions = true,
             cacheRange = 1000
         },
         [ORBWALKER_MODE_JUNGLECLEAR] = {
-            cacheHeroes = false,
+            cacheHeroes = true,
             cacheMinions = true,
             cacheRange = 1000
         },
         [ORBWALKER_MODE_LASTHIT] = {
-            cacheHeroes = false,
+            cacheHeroes = true,
             cacheMinions = true,
             cacheRange = 800
         },
@@ -428,6 +469,11 @@ local FPSOptimizer = {
             cacheHeroes = true,
             cacheMinions = true,
             cacheRange = 2000
+        },
+        [ORBWALKER_MODE_SPACING] = {
+            cacheHeroes = true,
+            cacheMinions = false,
+            cacheRange = 1500
         },
         [ORBWALKER_MODE_NONE] = {
             cacheHeroes = true,
@@ -444,20 +490,23 @@ local FPSOptimizer = {
         
         self.lastModeCheck = currentTime
         
-        -- Detectar modo actual del orbwalker
+        -- Detectar modo actual del orbwalker (OPTIMIZADO: acceso directo)
         if Orbwalker and Orbwalker.Modes then
-            if Orbwalker.Modes[ORBWALKER_MODE_COMBO] then
+            local modes = Orbwalker.Modes
+            if modes[ORBWALKER_MODE_COMBO] then
                 self.currentOrbwalkerMode = ORBWALKER_MODE_COMBO
-            elseif Orbwalker.Modes[ORBWALKER_MODE_HARASS] then
+            elseif modes[ORBWALKER_MODE_HARASS] then
                 self.currentOrbwalkerMode = ORBWALKER_MODE_HARASS
-            elseif Orbwalker.Modes[ORBWALKER_MODE_LANECLEAR] then
+            elseif modes[ORBWALKER_MODE_LANECLEAR] then
                 self.currentOrbwalkerMode = ORBWALKER_MODE_LANECLEAR
-            elseif Orbwalker.Modes[ORBWALKER_MODE_JUNGLECLEAR] then
+            elseif modes[ORBWALKER_MODE_JUNGLECLEAR] then
                 self.currentOrbwalkerMode = ORBWALKER_MODE_JUNGLECLEAR
-            elseif Orbwalker.Modes[ORBWALKER_MODE_LASTHIT] then
+            elseif modes[ORBWALKER_MODE_LASTHIT] then
                 self.currentOrbwalkerMode = ORBWALKER_MODE_LASTHIT
-            elseif Orbwalker.Modes[ORBWALKER_MODE_FLEE] then
+            elseif modes[ORBWALKER_MODE_FLEE] then
                 self.currentOrbwalkerMode = ORBWALKER_MODE_FLEE
+            elseif modes[ORBWALKER_MODE_SPACING] then
+                self.currentOrbwalkerMode = ORBWALKER_MODE_SPACING
             else
                 self.currentOrbwalkerMode = ORBWALKER_MODE_NONE
             end
@@ -479,7 +528,7 @@ local FPSOptimizer = {
         -- Calcular FPS actual
         if self.lastFrameTime > 0 then
             self.frameTime = currentTime - self.lastFrameTime
-            self.currentFPS = math.min(1000 / math.max(self.frameTime, 1), 120)
+            self.currentFPS = math_min(1000 / math_max(self.frameTime, 1), 120)
         end
         self.lastFrameTime = currentTime
         
@@ -517,6 +566,13 @@ local FPSOptimizer = {
         return currentTime - self.lastCacheUpdate >= self.cacheInterval
     end,
     
+    -- OPTIMIZACIÓN: Limpiar tabla sin crear nueva (más eficiente para GC)
+    WipeTable = function(self, t)
+        for i = #t, 1, -1 do
+            t[i] = nil
+        end
+    end,
+    
     UpdateObjectCache = function(self)
         if not self:ShouldUpdateCache() then
             return
@@ -527,39 +583,41 @@ local FPSOptimizer = {
         
         local config = self:GetCacheConfig()
         local myPos = myHero.pos
+        local cacheRangeSq = config.cacheRange * config.cacheRange  -- Pre-calcular rango al cuadrado
         
         -- Cache heroes solo si está habilitado para el modo actual
         if config.cacheHeroes then
-            self.cachedHeroes = {}
-            for i = 1, GameHeroCount() do
+            -- OPTIMIZACIÓN: Limpiar tabla sin crear nueva
+            self:WipeTable(self.cachedHeroes)
+            local heroCount = GameHeroCount()
+            for i = 1, heroCount do
                 local hero = GameHero(i)
-                if hero and hero.valid and not hero.dead and hero.isEnemy then -- Added 'and hero.isEnemy'
-                    local distance = GetDistance(hero.pos, myPos)
-                    if distance <= config.cacheRange then
-                        table.insert(self.cachedHeroes, hero)
-                    end
+                if hero and hero.valid and not hero.dead and hero.isEnemy then
+                    -- Always cache heroes regardless of range (important for long range spells)
+                    table_insert(self.cachedHeroes, hero)
                 end
             end
         else
             -- Limpiar cache de heroes si no está habilitado
-            self.cachedHeroes = {}
+            self:WipeTable(self.cachedHeroes)
         end
         
         -- Cache minions solo si está habilitado para el modo actual
         if config.cacheMinions then
-            self.cachedMinions = {}
-            for i = 1, GameMinionCount() do
+            self:WipeTable(self.cachedMinions)
+            local minionCount = GameMinionCount()
+            for i = 1, minionCount do
                 local minion = GameMinion(i)
                 if minion and minion.valid and not minion.dead and minion.isEnemy then
-                    local distance = GetDistance(minion.pos, myPos)
-                    if distance <= config.cacheRange then
-                        table.insert(self.cachedMinions, minion)
+                    -- Usar GetDistanceSq para evitar cálculo de sqrt (más rápido)
+                    if GetDistanceSq(minion.pos, myPos) <= cacheRangeSq then
+                        table_insert(self.cachedMinions, minion)
                     end
                 end
             end
         else
             -- Limpiar cache de minions si no está habilitado
-            self.cachedMinions = {}
+            self:WipeTable(self.cachedMinions)
         end
     end,
     
@@ -568,7 +626,7 @@ local FPSOptimizer = {
         if config.cacheHeroes then
             return self.cachedHeroes
         end
-        return {}
+        return self._heroPool -- Retorna tabla vacía reutilizable
     end,
     
     GetCachedMinions = function(self)
@@ -576,25 +634,31 @@ local FPSOptimizer = {
         if config.cacheMinions then
             return self.cachedMinions
         end
-        return {}
+        return self._minionPool
     end,
     
-    -- Optimización de loops pesados
+    -- Optimización de loops pesados con chunking
     OptimizeLoop = function(self, collection, maxProcessPerTick)
         maxProcessPerTick = maxProcessPerTick or (self.highLoadMode and 3 or 10)
         
-        if #collection <= maxProcessPerTick then
+        local collectionSize = #collection
+        if collectionSize <= maxProcessPerTick then
             return collection
         end
         
         -- Procesar solo una parte de la colección por tick
-        local startIdx = ((self.tickCounter - 1) % math.ceil(#collection / maxProcessPerTick)) * maxProcessPerTick + 1
-        local endIdx = math.min(startIdx + maxProcessPerTick - 1, #collection)
+        local chunks = math_ceil(collectionSize / maxProcessPerTick)
+        local startIdx = ((self.tickCounter - 1) % chunks) * maxProcessPerTick + 1
+        local endIdx = math_min(startIdx + maxProcessPerTick - 1, collectionSize)
         
-        local optimizedCollection = {}
+        -- OPTIMIZACIÓN: Reutilizar tabla del pool
+        local optimizedCollection = self._objectPool
+        self:WipeTable(optimizedCollection)
+        
         for i = startIdx, endIdx do
-            if collection[i] then
-                table.insert(optimizedCollection, collection[i])
+            local item = collection[i]
+            if item then
+                table_insert(optimizedCollection, item)
             end
         end
         
@@ -612,7 +676,8 @@ local FPSOptimizer = {
             [ORBWALKER_MODE_LANECLEAR] = "LANECLEAR",
             [ORBWALKER_MODE_JUNGLECLEAR] = "JUNGLECLEAR",
             [ORBWALKER_MODE_LASTHIT] = "LASTHIT",
-            [ORBWALKER_MODE_FLEE] = "FLEE"
+            [ORBWALKER_MODE_FLEE] = "FLEE",
+            [ORBWALKER_MODE_SPACING] = "SPACING"
         }
         
         return {
@@ -659,24 +724,30 @@ ChampionInfo = {
 	DrawObjects = function(self)
 		local text = {}
 		local mePos = myHero.pos
-		for i = 1, GameObjectCount() do
+		-- OPTIMIZACIÓN: Constantes precalculadas
+		local drawRangeSq = 1690000  -- 1300 * 1300
+		local textMergeRangeSq = 2500  -- 50 * 50
+		local objectCount = GameObjectCount()
+		
+		for i = 1, objectCount do
 			local obj = GameObject(i)
 			if obj then
 				local pos = obj.pos
-				if pos and GetDistance(mePos, pos) < 1300 then
+				if pos and GetDistanceSq(mePos, pos) <= drawRangeSq then
 					Draw.Circle(pos, 10)
 					local pos2D = pos:To2D()
 					local contains = false
-					for j = 1, #text do
+					local textCount = #text
+					for j = 1, textCount do
 						local t = text[j]
-						if GetDistance(pos2D, t[1]) < 50 then
+						if GetDistanceSq(pos2D, t[1]) <= textMergeRangeSq then
 							contains = true
 							t[2] = t[2] .. tostring(obj.handle) .. " " .. obj.name .. "\n"
 							break
 						end
 					end
 					if not contains then
-						table.insert(text, { pos2D, tostring(obj.handle) .. " " .. obj.name .. "\n" })
+						table_insert(text, { pos2D, tostring(obj.handle) .. " " .. obj.name .. "\n" })
 					end
 				end
 			end
@@ -691,13 +762,15 @@ ChampionInfo = {
 		local mePos = myHero.pos
 		if obj then
 			local pos = obj.pos
-			if pos and GetDistance(mePos, pos) < 1300 then
+			local drawRangeSq = 1300 * 1300  -- Pre-calcular rango al cuadrado
+			local textMergeRangeSq = 50 * 50  -- Pre-calcular rango de merge al cuadrado
+			if pos and GetDistanceSq(mePos, pos) <= drawRangeSq then
 				Draw.Circle(pos, 10)
 				local pos2D = pos:To2D()
 				local contains = false
 				for j = 1, #text do
 					local t = text[j]
-					if GetDistance(pos2D, t[1]) < 50 then
+					if GetDistanceSq(pos2D, t[1]) <= textMergeRangeSq then
 						contains = true
 						t[2] = t[2] .. tostring(obj.handle) .. " " .. obj.name .. "\n"
 						break
@@ -716,8 +789,10 @@ ChampionInfo = {
 	GwenDebug = function(self)
 		local enemy = nil
 		local enemies = Object:GetEnemyHeroes()
+		local myPos = myHero.pos
+		local debugRangeSq = 1000 * 1000  -- Pre-calcular rango al cuadrado
 		for i = 1, #enemies do
-			if GetDistance(enemies[i].pos, myHero.pos) < 1000 then
+			if GetDistanceSq(enemies[i].pos, myPos) <= debugRangeSq then
 				enemy = enemies[i]
 				break
 			end
@@ -826,9 +901,11 @@ ChampionInfo = {
 		local activeSpell = myHero.activeSpell
 		if activeSpell and activeSpell.valid then
 			if activeSpell.name == "AzirWSpawnSoldier" then
+				local myPos = myHero.pos
+				local detectRangeSq = 1000 * 1000  -- Pre-calcular rango al cuadrado
 				for i = 1, GameObjectCount() do
 					local obj = GameObject(i)
-					if obj and GetDistance(myHero.pos, obj.pos) <= 1000 and obj.name == "AzirSoldier" then
+					if obj and obj.name == "AzirSoldier" and GetDistanceSq(myPos, obj.pos) <= detectRangeSq then
 						table_insert(self.AzirSoldiers, obj)
 					end
 				end
@@ -842,14 +919,17 @@ ChampionInfo = {
 		if(myHero.range == 575) then -- Lethal Tempo grants 50 attack range. Hacky fix.
 			commandRange = 830
 		end
+		local myPos = myHero.pos
+		local commandRangeSq = commandRange * commandRange  -- Pre-calcular rango al cuadrado
+		local objRangeSq = 350 * 350  -- Pre-calcular rango al cuadrado
 		for i = 1, #self.AzirSoldiers do
 			local soldier = self.AzirSoldiers[i]
 			if
 				soldier
 				and soldier.name == "AzirSoldier"
 				and soldier.health > 0
-				and GetDistance(soldier, myHero) < commandRange
-				and GetDistance(soldier, obj) < 350
+				and GetDistanceSq(soldier, myPos) <= commandRangeSq
+				and GetDistanceSq(soldier, obj.pos) <= objRangeSq
 			then
 				result = true
 			end
@@ -908,14 +988,28 @@ Cached = {
 		local oKeys = {}
 		--Fetch hotkeys for orbwalker modes
 		if(Orbwalker.MenuKeys) then
-			oKeys = {
-				Orbwalker.MenuKeys[ORBWALKER_MODE_COMBO][1]:Key(),
-				Orbwalker.MenuKeys[ORBWALKER_MODE_FLEE][1]:Key(),
-				Orbwalker.MenuKeys[ORBWALKER_MODE_HARASS][1]:Key(),
-				Orbwalker.MenuKeys[ORBWALKER_MODE_LANECLEAR][1]:Key(),
-				Orbwalker.MenuKeys[ORBWALKER_MODE_JUNGLECLEAR][1]:Key(),
-				Orbwalker.MenuKeys[ORBWALKER_MODE_LASTHIT][1]:Key(),
-			}
+			oKeys = {}
+			if Orbwalker.MenuKeys[ORBWALKER_MODE_COMBO][1] then
+				table_insert(oKeys, Orbwalker.MenuKeys[ORBWALKER_MODE_COMBO][1]:Key())
+			end
+			if Orbwalker.MenuKeys[ORBWALKER_MODE_FLEE][1] then
+				table_insert(oKeys, Orbwalker.MenuKeys[ORBWALKER_MODE_FLEE][1]:Key())
+			end
+			if Orbwalker.MenuKeys[ORBWALKER_MODE_HARASS][1] then
+				table_insert(oKeys, Orbwalker.MenuKeys[ORBWALKER_MODE_HARASS][1]:Key())
+			end
+			if Orbwalker.MenuKeys[ORBWALKER_MODE_LANECLEAR][1] then
+				table_insert(oKeys, Orbwalker.MenuKeys[ORBWALKER_MODE_LANECLEAR][1]:Key())
+			end
+			if Orbwalker.MenuKeys[ORBWALKER_MODE_JUNGLECLEAR][1] then
+				table_insert(oKeys, Orbwalker.MenuKeys[ORBWALKER_MODE_JUNGLECLEAR][1]:Key())
+			end
+			if Orbwalker.MenuKeys[ORBWALKER_MODE_LASTHIT][1] then
+				table_insert(oKeys, Orbwalker.MenuKeys[ORBWALKER_MODE_LASTHIT][1]:Key())
+			end
+			if Orbwalker.MenuKeys[ORBWALKER_MODE_SPACING][1] then
+				table_insert(oKeys, Orbwalker.MenuKeys[ORBWALKER_MODE_SPACING][1]:Key())
+			end
 		end
 
 		--If we press an orbwalker hotkey, reset our buffer so we immediately cache new minions (we only do this once per button press to prevent lag)
@@ -946,62 +1040,70 @@ Cached = {
 		FPSOptimizer:Update()
 		FPSOptimizer:UpdateObjectCache()
 		
-		-- Optimización: usar wipe table en lugar de pairs loop
-		local buffKeys = {}
-		for k in pairs(self.Buffs) do
-			buffKeys[#buffKeys + 1] = k
+		-- OPTIMIZACIÓN: Limpiar buffs usando next() (más eficiente que pairs + tabla temporal)
+		local buffs = self.Buffs
+		local k = next(buffs)
+		while k do
+			local nextK = next(buffs, k)
+			buffs[k] = nil
+			k = nextK
 		end
-		for i = 1, #buffKeys do
-			self.Buffs[buffKeys[i]] = nil
-		end
+		
+		-- OPTIMIZACIÓN: Limpiar tablas usando índice inverso directamente
 		if self.HeroesSaved then
-			for i = #self.Heroes, 1, -1 do
-				self.Heroes[i] = nil
+			local heroes = self.Heroes
+			for i = #heroes, 1, -1 do
+				heroes[i] = nil
 			end
 			self.HeroesSaved = false
 		end
 		if self.MinionsSaved then
-			for i = #self.Minions, 1, -1 do
-				self.Minions[i] = nil
+			local minions = self.Minions
+			for i = #minions, 1, -1 do
+				minions[i] = nil
 			end
 			self.MinionsSaved = false
 		end
 		if self.ExtraHeroesSaved then
-			for i = #self.ExtraHeroes, 1, -1 do
-				local u = self.ExtraHeroes[i]
-				if u and u.valid and u.visible and u.isTargetable and not u.dead and not u.isImmortal then
-				else
-					self.ExtraHeroes[i] = nil
+			local extraHeroes = self.ExtraHeroes
+			for i = #extraHeroes, 1, -1 do
+				local u = extraHeroes[i]
+				if not (u and u.valid and u.visible and u.isTargetable and not u.dead and not u.isImmortal) then
+					extraHeroes[i] = nil
 				end
 			end
 			self.ExtraHeroesSaved = false
 		end
 		if self.ExtraUnitsSaved then
-			for i = #self.ExtraUnits, 1, -1 do
-				local u = self.ExtraUnits[i]
+			local extraUnits = self.ExtraUnits
+			for i = #extraUnits, 1, -1 do
+				local u = extraUnits[i]
 				if u and u.valid and u.visible and u.isTargetable and not u.dead and not u.isImmortal then
-					self.ExtraUnitsSaved=true
+					self.ExtraUnitsSaved = true
 				else
-					self.ExtraUnits[i] = nil
+					extraUnits[i] = nil
 				end
 			end
-				self.ExtraUnitsSaved = false
+			self.ExtraUnitsSaved = false
 		end
 		if self.TurretsSaved then
-			for i = #self.Turrets, 1, -1 do
-				self.Turrets[i] = nil
+			local turrets = self.Turrets
+			for i = #turrets, 1, -1 do
+				turrets[i] = nil
 			end
 			self.TurretsSaved = false
 		end
 		if self.WardsSaved then
-			for i = #self.Wards, 1, -1 do
-				self.Wards[i] = nil
+			local wards = self.Wards
+			for i = #wards, 1, -1 do
+				wards[i] = nil
 			end
 			self.WardsSaved = false
 		end
 		if self.PlantsSaved then
-			for i = #self.Plants, 1, -1 do
-				self.Plants[i] = nil
+			local plants = self.Plants
+			for i = #plants, 1, -1 do
+				plants[i] = nil
 			end
 			self.PlantsSaved = false
 		end
@@ -1124,8 +1226,23 @@ Cached = {
 			local config = FPSOptimizer:GetCacheConfig()
 			
 			-- Si el modo actual no requiere cachear minions, retornar solo extra units
+			-- PERO siempre incluir minions enemigos para detección de colisiones de hechizos
 			if not config.cacheMinions then
 				local result = {}
+				-- Asegurar que incluimos minions enemigos para detección de colisiones
+				-- Esto es crítico para que GGPrediction funcione correctamente
+				local count = GameMinionCount()
+				if count and count > 0 then
+					for i = 1, count do
+						local o = GameMinion(i)
+						if o and o.valid and o.visible and o.isTargetable and not o.dead and o.isEnemy then
+							if not o.isImmortal or o.charName:lower() == "sru_atakhan" then
+								table_insert(result, o)
+							end
+						end
+					end
+				end
+				-- Agregar unidades extra
 				for i = 1, #self.ExtraUnits do
 					table_insert(result, self.ExtraUnits[i])
 				end
@@ -1154,19 +1271,24 @@ Cached = {
 			local count = #cachedMinions
 			if count and count > 0 and count < 1000 then
 				-- Optimización: Procesar en chunks si hay muchos minions
+				-- PERO nunca limitar minions enemigos para detección de colisiones
 				local maxProcess = FPSOptimizer.highLoadMode and 10 or count
 				local processed = 0
+				local enemyMinionCount = 0
 				
 				for i = 1, count do
-					if processed >= maxProcess then
-						break
-					end
-					
 					local o = cachedMinions[i]
 					if o and o.valid and o.visible and o.isTargetable and not o.dead then
 						if not o.isImmortal or o.charName:lower() == "sru_atakhan" then
-							table_insert(self.Minions, o)
-							processed = processed + 1
+							-- Siempre incluir minions enemigos (necesarios para detección de colisiones)
+							if o.isEnemy then
+								table_insert(self.Minions, o)
+								enemyMinionCount = enemyMinionCount + 1
+							elseif processed < maxProcess then
+								-- Limitar solo minions aliados si es necesario
+								table_insert(self.Minions, o)
+								processed = processed + 1
+							end
 						end
 					end
 				end
@@ -1313,6 +1435,9 @@ Cached = {
 	end,
 
 	GetBuffs = function(self, o)
+		if o == nil then
+			return {}
+		end
 		local id = o.networkID
 		if self.Buffs[id] == nil then
 			local count = o.buffCount
@@ -1373,6 +1498,7 @@ Menu = {
         self.Orbwalker.Keys:MenuElement({id = 'LaneClear', name = 'LaneClear Key', key = string.byte('V')})
         self.Orbwalker.Keys:MenuElement({id = 'Jungle', name = 'Jungle Key', key = string.byte('V')})
         self.Orbwalker.Keys:MenuElement({id = 'Flee', name = 'Flee Key', key = string.byte('A')})
+        self.Orbwalker.Keys:MenuElement({id = 'Spacing', name = 'Auto Spacing Key', key = string.byte('Z'), tooltip = 'Maintains optimal distance: enemy in your range, you out of enemy range'})
         self.Orbwalker.Keys:MenuElement({id = 'HoldKey', name = 'Hold Key', key = string.byte('H'), tooltip = 'Should be same in game keybinds'})
         self.Orbwalker:MenuElement({id = 'General', name = 'General', type = MENU})
         self.Orbwalker.General:MenuElement({id = 'AttackBarrel', name = 'Attack Gangplank Barrel', value = true})
@@ -3325,19 +3451,21 @@ Spell = {
 		end,
 
 			ShouldWait = function(self)
-				return GameTimer() <= self.ShouldWaitTime + 1
+				-- Convertir a milisegundos para consistencia con Health:ShouldWait
+				return GetTickCount() < self.ShouldWaitTime + 1000
 			end,
 
 			SetLastHitable = function(self, target, time, damage)
 				local hpPred = Health:GetPrediction(target, time)
 				local lastHitable = false
 				local almostLastHitable = false
-				if hpPred - damage < 0 then
+				if hpPred <= damage then
 					lastHitable = true
 					self.IsLastHitable = true
-				elseif Health:GetPrediction(target, myHero:GetSpellData(self.spell).cd + (time * 3)) - damage < 0 then
+				elseif Health:GetPrediction(target, myHero:GetSpellData(self.spell).cd + (time * 3)) <= damage then
 					almostLastHitable = true
-					self.ShouldWaitTime = GameTimer()
+					-- Usar GetTickCount() para consistencia con ShouldWait en Health
+					self.ShouldWaitTime = GetTickCount()
 				end
 				return {
 					LastHitable = lastHitable,
@@ -3722,12 +3850,51 @@ Object = {
 
 	GetEnemyMinions = function(self, range, bbox, immortal)
 		local result = {}
+		-- Para detección de colisiones, necesitamos todos los minions, no solo los cercanos
+		-- Si el rango es muy grande (como para detección de colisiones), usar caché completo
 		local cachedminions = Cached:GetMinions()
-		for i = 1, #cachedminions do
-			local obj = cachedminions[i]
-			if obj.isEnemy and (not immortal or not obj.isImmortal) then
-				if not range or obj.distance < range + (bbox and obj.boundingRadius or 0) then
-					table_insert(result, obj)
+		-- Si no hay suficientes minions en el caché o el rango es muy grande, buscar directamente
+		if range and range > 1500 then
+			-- Rango grande sugiere detección de colisiones, buscar todos los minions enemigos
+			local count = GameMinionCount()
+			if count and count > 0 then
+				local myPos = myHero.pos
+				local rangeSq = range and (range + (bbox and 100 or 0)) * (range + (bbox and 100 or 0)) or nil  -- Aproximación para evitar calcular boundingRadius en cada iteración
+				for i = 1, count do
+					local obj = GameMinion(i)
+					if obj and obj.valid and obj.visible and obj.isTargetable and not obj.dead and obj.isEnemy then
+						if not immortal or not obj.isImmortal then
+							-- Verificar rango dinámicamente usando GetDistanceSq (más rápido)
+							if not range then
+								table_insert(result, obj)
+							else
+								local objRadius = bbox and obj.boundingRadius or 0
+								local totalRangeSq = (range + objRadius) * (range + objRadius)
+								if GetDistanceSq(myPos, obj.pos) <= totalRangeSq then
+									table_insert(result, obj)
+								end
+							end
+						end
+					end
+				end
+			end
+		else
+			-- Para rangos pequeños, usar el caché (más eficiente)
+			local myPos = myHero.pos
+			for i = 1, #cachedminions do
+				local obj = cachedminions[i]
+				if obj and obj.isEnemy and (not immortal or not obj.isImmortal) then
+					if not range then
+						table_insert(result, obj)
+					else
+						-- Usar GetDistanceSq para comparaciones más rápidas
+						local objRadius = bbox and obj.boundingRadius or 0
+						local totalRangeSq = (range + objRadius) * (range + objRadius)
+						local objDistanceSq = obj.distance and (obj.distance * obj.distance) or GetDistanceSq(myPos, obj.pos)
+						if objDistanceSq <= totalRangeSq then
+							table_insert(result, obj)
+						end
+					end
 				end
 			end
 		end
@@ -4005,16 +4172,17 @@ Target = {
 	WndMsg = function(self, msg, wParam)
 		if msg == WM_LBUTTONDOWN and self.MenuCheckSelected:Value() and GetTickCount() > self.SelectionTick + 100 then
 			self.Selected = nil
-			local num = 10000000
+			local maxRangeSq = 150 * 150  -- Pre-calcular rango máximo al cuadrado
+			local numSq = maxRangeSq
 			local pos = Vector(mousePos)
 			local enemies = Object:GetEnemyHeroes()
 			for i = 1, #enemies do
 				local enemy = enemies[i]
 				if enemy.pos:ToScreen().onScreen then
-					local distance = GetDistance(pos, enemy.pos)
-					if distance < 150 and distance < num then
+					local distanceSq = GetDistanceSq(pos, enemy.pos)
+					if distanceSq <= maxRangeSq and distanceSq < numSq then
 						self.Selected = enemy
-						num = distance
+						numSq = distanceSq
 					end
 				end
 			end
@@ -4023,12 +4191,27 @@ Target = {
 	end,
 
 	OnDraw = function(self)
-		if
-			self.MenuDrawSelected:Value()
-			and Object:IsValid(self.Selected)
-		--	and not Object:IsHeroImmortal(self.Selected)
-		then
-			Draw.Circle(self.Selected.pos, 150, 1, Color.DarkRed)
+		-- OPTIMIZACIÓN: Early exits
+		if not self.MenuDrawSelected:Value() then
+			return
+		end
+		
+		local selected = self.Selected
+		if not selected then
+			return
+		end
+		
+		if not Object:IsValid(selected) then
+			return
+		end
+		
+		-- OPTIMIZACIÓN: Screen check para evitar dibujar fuera de pantalla
+		local pos = selected.pos
+		if pos then
+			local pos2D = pos:To2D()
+			if pos2D.onScreen then
+				Draw.Circle(pos, 150, 1, Color.DarkRed)
+			end
 		end
 	end,
 
@@ -4096,11 +4279,17 @@ Target = {
 			if type(cmp) ~= "function" then
 				cmp = self.SortModes[SORT_AUTO]
 			end
+			if type(cmp) ~= "function" then
+				cmp = function(a, b) return a.distance < b.distance end
+			end
 			table_sort(a, cmp)
 		else
 			local cmp = self.CurrentSort
 			if type(cmp) ~= "function" then
 				cmp = self.SortModes[SORT_AUTO]
+			end
+			if type(cmp) ~= "function" then
+				cmp = function(a, b) return a.distance < b.distance end
 			end
 			table_sort(a, cmp)
 		end
@@ -4446,28 +4635,33 @@ Health = {
 		self.ShouldRemoveObjects = true
 		self.StaticAutoAttackDamage = Damage:GetStaticAutoAttackDamage(myHero, true)
 		-- SET OBJECTS
+		-- Cachear posición y rangos para evitar accesos repetitivos
+		local myPos = myHero.pos
 		attackRange = myHero.range + myHero.boundingRadius
+		local filterRangeSq = 2000 * 2000  -- Pre-calcular rango al cuadrado para filtrado
 		local cachedminions = Cached:GetMinions()
 		for i = 1, #cachedminions do
 			local obj = cachedminions[i]
-			if IsInRange(myHero, obj, 2000) then
+			if GetDistanceSq(myPos, obj.pos) <= filterRangeSq then
 				table_insert(self.CachedMinions, obj)
 			end
 		end
 		local cachedwards = Cached:GetWards()
 		for i = 1, #cachedwards do
 			local obj = cachedwards[i]
-			if obj.isEnemy and IsInRange(myHero, obj, 2000) then
+			if obj.isEnemy and GetDistanceSq(myPos, obj.pos) <= filterRangeSq then
 				table_insert(self.CachedWards, obj)
 			end
 		end
 		local cachedplants = Cached:GetPlants()
 		for i = 1, #cachedplants do
 			local obj = cachedplants[i]
-			if IsInRange(myHero, obj, 2000) then
+			if GetDistanceSq(myPos, obj.pos) <= filterRangeSq then
 				table_insert(self.CachedPlants, obj)
 			end
 		end
+		-- Pre-calcular rangos al cuadrado para comparaciones más rápidas
+		local attackRangeSq = attackRange * attackRange
 		for i = 1, #self.CachedMinions do
 			local obj = self.CachedMinions[i]
 			local handle = obj.handle
@@ -4476,31 +4670,37 @@ Health = {
 			if team == Data.AllyTeam then
 				self.AllyMinionsHandles[handle] = obj
 			elseif team == Data.EnemyTeam then
+				local objRadius = obj.boundingRadius
+				local totalRangeSq = (attackRange + objRadius) * (attackRange + objRadius)
 				if
-					IsInRange(myHero, obj, attackRange + obj.boundingRadius)
+					GetDistanceSq(myPos, obj.pos) <= totalRangeSq
 					or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(obj))
 				then
 					table_insert(self.EnemyMinionsInAttackRange, obj)
 				end
 			elseif team == Data.JungleTeam then
+				local objRadius = obj.boundingRadius
+				local totalRangeSq = (attackRange + objRadius) * (attackRange + objRadius)
 				if
-					IsInRange(myHero, obj, attackRange + obj.boundingRadius)
+					GetDistanceSq(myPos, obj.pos) <= totalRangeSq
 					or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(obj))
 				then
 					table_insert(self.JungleMinionsInAttackRange, obj)
 				end
 			end
 		end
+		local wardRangeSq = (attackRange + 35) * (attackRange + 35)
 		for i = 1, #self.CachedWards do
 			local obj = self.CachedWards[i]
-			if IsInRange(myHero, obj, attackRange + 35) then
+			if GetDistanceSq(myPos, obj.pos) <= wardRangeSq then
 				table_insert(self.EnemyWardsInAttackRange, obj)
 			end
 		end
 		for i = 1, #self.CachedPlants do
 			local obj = self.CachedPlants[i]
 			local objName = obj.charName:lower()
-			if IsInRange(myHero, obj, attackRange + obj.boundingRadius) then
+			local plantRangeSq = (attackRange + obj.boundingRadius) * (attackRange + obj.boundingRadius)
+			if GetDistanceSq(myPos, obj.pos) <= plantRangeSq then
 				if myHero.charName == "Senna" and objName == "sennasoul" then
 					local time = Attack:GetWindup() + obj.distance / Attack:GetProjectileSpeed()
 					local value= {LastHitable = true, Unkillable = false, AlmostLastHitable = false, PredictedHP = 1, Minion = obj,	AlmostAlmost = false, Time = time}
@@ -4533,7 +4733,8 @@ Health = {
 				elseif objType == Obj_AI_Turret then
 					objRadius = obj.boundingRadius
 				end
-				if IsInRange(myHero, obj, attackRange + objRadius) then
+				local structureRangeSq = (attackRange + objRadius) * (attackRange + objRadius)
+				if GetDistanceSq(myPos, obj.pos) <= structureRangeSq then
 					table_insert(self.EnemyStructuresInAttackRange, obj)
 				end
 			end
@@ -4575,7 +4776,7 @@ Health = {
 				self:SetLastHitable(
 					target,
 					anim,
-					time + target.distance / speed,
+					time + (speed > 0 and GetDistance(myHero.pos, target.pos) / speed or 0),
 					Damage:GetAutoAttackDamage(myHero, target, self.StaticAutoAttackDamage)
 				)
 			)
@@ -4588,18 +4789,37 @@ Health = {
 	end,
 
 	OnDraw = function(self)
-		if self.MenuDrawings.Enabled:Value() and self.MenuDrawings.LastHittableMinions:Value() then
-			-- Throttle heavy draw operations every 16ms
-			if DrawThrottle:CanDraw("HealthDraw") then
-				local farmMinions = self.FarmMinions
-				for i = 1, #farmMinions do
-					local args = farmMinions[i]
-					local minion = args.Minion
-					if Object:IsValid(minion) then
+		-- OPTIMIZACIÓN: Early exit si los draws están deshabilitados
+		local drawings = self.MenuDrawings
+		if not drawings.Enabled:Value() or not drawings.LastHittableMinions:Value() then
+			return
+		end
+		
+		local farmMinions = self.FarmMinions
+		local farmCount = #farmMinions
+		
+		-- OPTIMIZACIÓN: Early exit si no hay minions
+		if farmCount == 0 then
+			return
+		end
+		
+		-- OPTIMIZACIÓN: Cachear colores fuera del loop
+		local colorLastHit = Color.LastHitable
+		local colorAlmost = Color.AlmostLastHitable
+		
+		for i = 1, farmCount do
+			local args = farmMinions[i]
+			local minion = args.Minion
+			if minion and minion.valid and minion.visible and not minion.dead then
+				local pos = minion.pos
+				if pos then
+					local pos2D = pos:To2D()
+					if pos2D.onScreen then
+						local radius = math_max(65, minion.boundingRadius)
 						if args.LastHitable then
-							Draw.Circle(minion.pos, math_max(65, minion.boundingRadius), 1, Color.LastHitable)
+							Draw.Circle(pos, radius, 1, colorLastHit)
 						elseif args.AlmostLastHitable then
-							Draw.Circle(minion.pos, math_max(65, minion.boundingRadius), 1, Color.AlmostLastHitable)
+							Draw.Circle(pos, radius, 1, colorAlmost)
 						end
 					end
 				end
@@ -4608,10 +4828,13 @@ Health = {
 	end,
 
 	GetPrediction = function(self, target, time)
-		local timer, pos, handle, health
+		local timer, handle, health
 		timer = GameTimer()
-		pos = target.pos
 		handle = target.handle
+		-- Validar que el target sigue siendo válido
+		if not Object:IsValid(target) then
+			return 0
+		end
 		if self.TargetsHealth[handle] == nil then
 			self.TargetsHealth[handle] = target.health + Data:GetTotalShield(target)
 		end
@@ -4619,13 +4842,17 @@ Health = {
 		local activeAttacks = self.ActiveAttacks
 		local handles = self.Handles
 		local attackersDamage = self.AttackersDamage
+		local targetPos = target.pos -- Usar posición actual del target
 		for attackerHandle, attack in pairs(activeAttacks) do
 			local attacker = handles[attackerHandle]
-			if attacker and attack.Target == handle then
+			if attacker and attacker.valid and attacker.visible and attacker.alive and attack.Target == handle then
 				local speed, startT, flyT, endT, damage
 				speed = attack.Speed
+				if speed <= 0 then
+					speed = 2000 -- Velocidad por defecto si no está definida
+				end
 				startT = attack.StartTime
-				flyT = speed > 0 and GetDistance(attacker.pos, pos) / speed or 0
+				flyT = GetDistance(attacker.pos, targetPos) / speed
 				endT = (startT + attack.WindUpTime + flyT) - timer
 				if endT > 0 and endT < time then
 					if attackersDamage[attackerHandle] == nil then
@@ -4635,7 +4862,9 @@ Health = {
 						attackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(attacker, target)
 					end
 					damage = attackersDamage[attackerHandle][handle]
-					health = health - damage
+					if damage and damage > 0 then
+						health = health - damage
+					end
 				end
 			end
 		end
@@ -4643,11 +4872,14 @@ Health = {
 	end,
 
 	LocalGetPrediction = function(self, target, time)
-		local timer, pos, handle, health, turretAttacked
+		local timer, handle, health, turretAttacked
 		turretAttacked = false
 		timer = GameTimer()
-		pos = target.pos
 		handle = target.handle
+		-- Validar que el target sigue siendo válido
+		if not Object:IsValid(target) then
+			return 0, false
+		end
 		if self.TargetsHealth[handle] == nil then
 			self.TargetsHealth[handle] = target.health + Data:GetTotalShield(target)
 		end
@@ -4657,87 +4889,110 @@ Health = {
 		local selfHandles = self.Handles
 		local attackersDamage = self.AttackersDamage
 		local allyTurretHandle = self.AllyTurretHandle
+		local targetPos = target.pos -- Usar posición actual del target
 		for attackerHandle, attack in pairs(activeAttacks) do
 			local attacker = selfHandles[attackerHandle]
 			if attacker and attacker.valid and attacker.visible and attacker.alive and attack.Target == handle then
-				local speed, startT, flyT, endT, damage
-				speed = attack.Speed
-				startT = attack.StartTime
-				flyT = speed > 0 and GetDistance(attacker.pos, pos) / speed or 0
-				endT = (startT + attack.WindUpTime + flyT) - timer
-				-- laneClear
-				if endT < 0 and timer - attack.EndTime < 1.25 then
-					endT = attack.WindUpTime + flyT
-					endT = timer > attack.EndTime and endT or endT + (attack.EndTime - timer)
-					startT = timer > attack.EndTime and timer or attack.EndTime
-				end
-				if endT > 0 and endT < time then
-					handles[attackerHandle] = true
-					-- damage
-					if attackersDamage[attackerHandle] == nil then
-						attackersDamage[attackerHandle] = {}
+				-- Validar que tenemos todos los datos necesarios
+				if attack.WindUpTime and attack.AnimationTime then
+					local speed, startT, flyT, endT, damage
+					speed = attack.Speed
+					if speed <= 0 then
+						speed = 2000 -- Velocidad por defecto si no está definida
 					end
-					if attackersDamage[attackerHandle][handle] == nil then
-						attackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(attacker, target)
+					startT = attack.StartTime
+					flyT = GetDistance(attacker.pos, targetPos) / speed
+					endT = (startT + attack.WindUpTime + flyT) - timer
+					-- laneClear - manejar ataques recientemente completados
+					if endT < 0 and attack.EndTime and timer - attack.EndTime < 1.25 then
+						endT = attack.WindUpTime + flyT
+						endT = timer > attack.EndTime and endT or endT + (attack.EndTime - timer)
+						startT = timer > attack.EndTime and timer or attack.EndTime
 					end
-					damage = attackersDamage[attackerHandle][handle]
-					-- laneClear
-					local c = 1
-					while endT < time do
-						if attackerHandle == allyTurretHandle then
-							turretAttacked = true
-						else
-							health = health - damage
+					if endT > 0 and endT < time then
+						handles[attackerHandle] = true
+						-- damage
+						if attackersDamage[attackerHandle] == nil then
+							attackersDamage[attackerHandle] = {}
 						end
-						endT = (startT + attack.WindUpTime + flyT + c * attack.AnimationTime) - timer
-						c = c + 1
-						if c > 10 then
-							health = self.TargetsHealth[handle]
-							break
+						if attackersDamage[attackerHandle][handle] == nil then
+							attackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(attacker, target)
+						end
+						damage = attackersDamage[attackerHandle][handle]
+						if damage and damage > 0 then
+							-- laneClear
+							local c = 1
+							local maxIterations = 10
+							local predictedHealth = health
+							while endT < time and c <= maxIterations do
+								if attackerHandle == allyTurretHandle then
+									turretAttacked = true
+								else
+									predictedHealth = predictedHealth - damage
+								end
+								endT = (startT + attack.WindUpTime + flyT + c * attack.AnimationTime) - timer
+								c = c + 1
+							end
+							if c <= maxIterations then
+								health = predictedHealth
+							else
+							-- Si excedimos iteraciones, recalcular desde health base con predicción conservadora
+							local timeRemaining = math_max(0, time - endT)
+							local estimatedHits = math_ceil(timeRemaining / (attack.AnimationTime or 1))
+							health = health - (damage * math_min(estimatedHits, 5))
+							end
 						end
 					end
 				end
 			end
 		end
-		-- laneClear
+		-- laneClear - predicción de minions aliados
 		local allyMinionsHandles = self.AllyMinionsHandles
 		for attackerHandle, obj in pairs(allyMinionsHandles) do
 			if handles[attackerHandle] == nil and obj and obj.valid and obj.visible and obj.alive then
 				local aaData = obj.attackData
-				local isMoving = obj.pathing.hasMovePath
-				if
-					aaData == nil
-					or aaData.target == nil
-					or self.Handles[aaData.target] == nil
-					or isMoving
-					or self.ActiveAttacks[attackerHandle] == nil
-				then
-					local distance = GetDistance(obj.pos, pos)
-					local range = Data:GetAutoAttackRange(obj, target)
-					local extraRange = isMoving and 250 or 0
-					if distance < range + extraRange then
-						local speed, flyT, endT, damage
-						speed = aaData.projectileSpeed
-						distance = distance > range and range or distance
-						flyT = speed > 0 and distance / speed or 0
-						endT = aaData.windUpTime + flyT
-						if endT < time then
-							if self.AttackersDamage[attackerHandle] == nil then
-								self.AttackersDamage[attackerHandle] = {}
+				if aaData and aaData.target and aaData.projectileSpeed and aaData.windUpTime and aaData.animationTime then
+					local isMoving = obj.pathing.hasMovePath
+					local targetInRange = self.Handles[aaData.target] ~= nil
+					if (not targetInRange or isMoving or self.ActiveAttacks[attackerHandle] == nil) then
+						local objPos = obj.pos
+						local distance = GetDistance(objPos, targetPos)
+						local range = Data:GetAutoAttackRange(obj, target)
+						local extraRange = isMoving and 250 or 0
+						if distance < range + extraRange then
+							local speed, flyT, endT, damage
+							speed = aaData.projectileSpeed
+							if speed <= 0 then
+								speed = 2000 -- Velocidad por defecto
 							end
-							if self.AttackersDamage[attackerHandle][handle] == nil then
-								self.AttackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(obj, target)
-							end
-							damage = self.AttackersDamage[attackerHandle][handle]
-							local c = 1
-							while endT < time do
-								health = health - damage
-								endT = aaData.windUpTime + flyT + c * aaData.animationTime
-								c = c + 1
-								if c > 10 then
-									--print("ERROR LANECLEAR!")
-									health = self.TargetsHealth[handle]
-									break
+							distance = distance > range and range or distance
+							flyT = distance / speed
+							endT = aaData.windUpTime + flyT
+							if endT < time then
+								if self.AttackersDamage[attackerHandle] == nil then
+									self.AttackersDamage[attackerHandle] = {}
+								end
+								if self.AttackersDamage[attackerHandle][handle] == nil then
+									self.AttackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(obj, target)
+								end
+								damage = self.AttackersDamage[attackerHandle][handle]
+								if damage and damage > 0 then
+									local c = 1
+									local maxIterations = 10
+									local predictedHealth = health
+									while endT < time and c <= maxIterations do
+										predictedHealth = predictedHealth - damage
+										endT = aaData.windUpTime + flyT + c * aaData.animationTime
+										c = c + 1
+									end
+									if c <= maxIterations then
+										health = predictedHealth
+									else
+										-- Estimación conservadora si excedimos iteraciones
+										local timeRemaining = math_max(0, time - endT)
+										local estimatedHits = math_ceil(timeRemaining / (aaData.animationTime or 1))
+										health = health - (damage * math_min(estimatedHits, 5))
+									end
 								end
 							end
 						end
@@ -4753,7 +5008,21 @@ Health = {
 		timer = GameTimer()
 		handle = target.handle
 		currentHealth = target.health + Data:GetTotalShield(target)
-		self.TargetsHealth[handle] = currentHealth
+		-- Actualizar TargetsHealth solo si:
+		-- 1. Es nil (primera vez)
+		-- 2. El health actual es significativamente mayor (regeneración/heal, con tolerancia de 5 HP)
+		-- Esto preserva la predicción de daño acumulado mientras maneja regeneración
+		local storedHealth = self.TargetsHealth[handle]
+		if storedHealth == nil then
+			self.TargetsHealth[handle] = currentHealth
+		elseif currentHealth > storedHealth + 5 then
+			-- Health aumentó significativamente (regeneración o heal)
+			self.TargetsHealth[handle] = currentHealth
+		elseif currentHealth < storedHealth - target.maxHealth * 0.1 then
+			-- Health bajó más del 10% del max health, probablemente recibió daño no rastreado
+			-- Actualizar para evitar predicciones incorrectas
+			self.TargetsHealth[handle] = currentHealth
+		end
 		health = self:GetPrediction(target, time)
 		lastHitable = false
 		almostLastHitable = false
@@ -4779,7 +5048,7 @@ Health = {
 			}
 		end
 		-- lasthitable
-		if health - damage < 0 then
+		if health <= damage then
 			lastHitable = true
 			self.IsLastHitable = true
 			return {
@@ -4807,14 +5076,14 @@ Health = {
 			end ]]
 			almostLastHitable = true
 			self.ShouldWaitTime = GetTickCount()
-		elseif almostHealth - damage < 0 then
+		elseif almostHealth <= damage then
 			almostLastHitable = true
 		elseif currentHealth ~= almostHealth then
 			almostAlmostHealth, turretAttacked = self:LocalGetPrediction(
 				target,
 				1.25 * anim + 1.25 * time + extraTime -- removed +0.5 just to test
 			)
-			if almostAlmostHealth - damage < 0 then
+			if almostAlmostHealth <= damage then
 				almostalmost = true
 			end
 		end
@@ -4824,6 +5093,7 @@ Health = {
 			or (turretAttack and turretAttack.target == handle)
 			or (
 				self.AllyTurret
+				and self.AllyTurret.valid
 				and (
 					Data:IsInAutoAttackRange(self.AllyTurret, target)
 					or Data:IsInAutoAttackRange2(self.AllyTurret, target)
@@ -4832,21 +5102,33 @@ Health = {
 		then
 			local nearTurret, isTurretTarget, maxHP, startTime, windUpTime, flyTime, turretDamage, turretHits
 			nearTurret = true
-			isTurretTarget = turretAttack.target == handle
+			isTurretTarget = turretAttack and turretAttack.target == handle or false
 			maxHP = target.maxHealth
-			startTime = turretAttack.endTime - 1.20048
-			windUpTime = 0.16686
-			flyTime = GetDistance(self.AllyTurret, target) / 1200
-			turretDamage = Damage:GetAutoAttackDamage(self.AllyTurret, target)
-			turretHits = 1
-			while maxHP > turretHits * turretDamage do
-				turretHits = turretHits + 1
-				if turretHits > 10 then
-					--print("ERROR TURRETHITS")
-					break
-				end
+			if turretAttack and turretAttack.endTime then
+				startTime = turretAttack.endTime - 1.20048
+			else
+				startTime = timer
 			end
-			turretHits = turretHits - 1
+			windUpTime = 0.16686
+			if self.AllyTurret and self.AllyTurret.valid then
+				flyTime = GetDistance(self.AllyTurret.pos, target.pos) / 1200
+			else
+				flyTime = 0
+			end
+			if self.AllyTurret and self.AllyTurret.valid then
+				turretDamage = Damage:GetAutoAttackDamage(self.AllyTurret, target)
+			else
+				turretDamage = 0
+			end
+			-- Calcular hits de torre de forma más eficiente y segura
+			if turretDamage > 0 and maxHP > 0 then
+				turretHits = math_ceil(maxHP / turretDamage)
+				-- Limitar a máximo 10 hits para evitar cálculos erróneos
+				turretHits = math_min(turretHits, 10)
+				turretHits = turretHits - 1
+			else
+				turretHits = 0
+			end
 			return {
 				LastHitable = lastHitable,
 				Unkillable = unkillable,
@@ -4900,27 +5182,58 @@ Health = {
 		return #self.EnemyWardsInAttackRange > 0 and self.EnemyWardsInAttackRange[1] or nil
 	end,
 
+	-- Función auxiliar para obtener prioridad del tipo de minion
+	GetMinionPriority = function(self, charName)
+		-- Cannon minion (Siege) - Prioridad 1 (máxima)
+		if charName == "SRU_ChaosMinionSiege" or charName == "SRU_OrderMinionSiege" then
+			return 1
+		-- Melee minion - Prioridad 2
+		elseif charName == "SRU_ChaosMinionMelee" or charName == "SRU_OrderMinionMelee" then
+			return 2
+		-- Caster minion (Ranged) - Prioridad 3
+		elseif charName == "SRU_ChaosMinionRanged" or charName == "SRU_OrderMinionRanged" then
+			return 3
+		end
+		-- Otros tipos de minions - Prioridad 4
+		return 4
+	end,
+
 	GetLastHitTarget = function(self)
-		local min = 10000000
-		local result = nil
+		local bestTarget = nil
+		local bestPriority = math_huge
+		local bestHP = math_huge
+		
 		for i = 1, #self.FarmMinions do
 			local minion = self.FarmMinions[i]
-			if
-				Object:IsValid(minion.Minion)
-				and minion.LastHitable
-				and (minion.PredictedHP < min or ((minion.Minion.charName == "SRU_ChaosMinionSiege" or minion.Minion.charName == "SRU_OrderMinionSiege")))
-				and (Data:IsInAutoAttackRange(myHero, minion.Minion) or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(minion.Minion)))
-			then
-				min = minion.PredictedHP
-				result = minion.Minion
-				self.LastHitHandle = result.handle
-				if (minion.Minion.charName == "SRU_ChaosMinionSiege" or minion.Minion.charName == "SRU_OrderMinionSiege") then
-					--print("Siege Miniongetlasthittaarget")
-					break
+			if minion and Object:IsValid(minion.Minion) and minion.LastHitable then
+				local isInRange = Data:IsInAutoAttackRange(myHero, minion.Minion) 
+					or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(minion.Minion))
+				if isInRange then
+					local charName = minion.Minion.charName
+					local priority = self:GetMinionPriority(charName)
+					local predictedHP = minion.PredictedHP or math_huge
+					
+					-- Priorizar por tipo de minion primero, luego por HP más bajo
+					local shouldSelect = false
+					if priority < bestPriority then
+						-- Tipo de minion con mayor prioridad
+						shouldSelect = true
+					elseif priority == bestPriority and predictedHP < bestHP then
+						-- Mismo tipo, pero menos HP (más cerca de morir)
+						shouldSelect = true
+					end
+					
+					if shouldSelect then
+						bestTarget = minion.Minion
+						bestPriority = priority
+						bestHP = predictedHP
+						self.LastHitHandle = bestTarget.handle
+					end
 				end
 			end
 		end
-		return result
+		
+		return bestTarget
 	end,
 
 	GetHarassTarget = function(self)
@@ -4959,19 +5272,50 @@ Health = {
 	end,
 
 	GetLaneMinion = function(self)
-		local laneMinion = nil
-		local num = 10000
-		for i = 1, #self.FarmMinions do
-			local minion = self.FarmMinions[i]
-			if Data:IsInAutoAttackRange(myHero, minion.Minion) or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(minion.Minion)) then
-				if minion.PredictedHP < num and not minion.AlmostAlmost and not minion.AlmostLastHitable then --and (self.AllyTurret == nil or minion.CanUnderTurret) then
-					num = minion.PredictedHP
-					laneMinion = minion.Minion
-				end
-			--	Draw.Circle(minion.Minion.pos, 50, 1, Color.Red)
+		-- Primero verificar si hay minions lasthitable (no debería llegar aquí si GetLaneClearTarget funciona bien, pero por seguridad)
+		if self.IsLastHitable then
+			local lastHitTarget = self:GetLastHitTarget()
+			if lastHitTarget ~= nil then
+				return lastHitTarget
 			end
 		end
-		return laneMinion
+		
+		-- Buscar minion para lane clear, priorizando por tipo y HP
+		local bestMinion = nil
+		local bestPriority = math_huge
+		local bestHP = math_huge
+		
+		for i = 1, #self.FarmMinions do
+			local minion = self.FarmMinions[i]
+			if minion and Object:IsValid(minion.Minion) then
+				local isInRange = Data:IsInAutoAttackRange(myHero, minion.Minion) 
+					or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(minion.Minion))
+				if isInRange then
+					-- Ignorar minions que están casi lasthitable (deben ser manejados por lasthit)
+					if not minion.AlmostAlmost and not minion.AlmostLastHitable then
+						local charName = minion.Minion.charName
+						local priority = self:GetMinionPriority(charName)
+						local predictedHP = minion.PredictedHP or math_huge
+						
+						-- Priorizar por tipo de minion, luego por HP más bajo para clear más rápido
+						local shouldSelect = false
+						if priority < bestPriority then
+							shouldSelect = true
+						elseif priority == bestPriority and predictedHP < bestHP then
+							shouldSelect = true
+						end
+						
+						if shouldSelect then
+							bestMinion = minion.Minion
+							bestPriority = priority
+							bestHP = predictedHP
+						end
+					end
+				end
+			end
+		end
+		
+		return bestMinion
 	end,
 
 	GetLaneClearTarget = function(self)
@@ -4979,49 +5323,55 @@ Health = {
 		local LaneClearHeroes = Menu.Orbwalker.General.LaneClearHeroes:Value()
 		local structure = #self.EnemyStructuresInAttackRange > 0 and self.EnemyStructuresInAttackRange[1] or nil
 		local other = #self.EnemyWardsInAttackRange > 0 and self.EnemyWardsInAttackRange[1] or nil
+		
+		-- PRIORIDAD 1: SIEMPRE priorizar lasthit antes de clear durante laneclear
+		if self.IsLastHitable then
+			local lastHitTarget = self:GetLastHitTarget()
+			if lastHitTarget ~= nil then
+				return lastHitTarget
+			end
+		end
+		
+		-- PRIORIDAD 2: Estructuras (torres, inhibidores, etc.)
 		if structure ~= nil then
 			if not LastHitPriority then
 				return structure
 			end
-			if self.IsLastHitable then
-				return self:GetLastHitTarget()
-			end
-			if other ~= nil then
-				return other
-			end
-			if LastHitPriority and not self:ShouldWait() then
+			-- Si LastHitPriority está activo, esperar un poco antes de atacar estructura
+			if not self:ShouldWait() then
 				return structure
 			end
-		else
-			if not LastHitPriority and LaneClearHeroes then
-				local hero = Target:GetComboTarget()
-				if hero ~= nil then
+		end
+		
+		-- PRIORIDAD 3: Wards enemigas
+		if other ~= nil then
+			return other
+		end
+		
+		-- PRIORIDAD 4: Héroes enemigos (solo si LaneClearHeroes está activo)
+		if LaneClearHeroes then
+			local hero = Target:GetComboTarget()
+			if hero ~= nil then
+				-- Solo atacar héroe si no hay LastHitPriority o si no estamos esperando
+				if not LastHitPriority or not self:ShouldWait() then
 					return hero
 				end
-			end
-			if self.IsLastHitable then
-				return self:GetLastHitTarget()
-			end
-			if self:ShouldWait() then
-				return nil
-			end
-			if LastHitPriority and LaneClearHeroes then
-				local hero = Target:GetComboTarget()
-				if hero ~= nil then
-					return hero
-				end
-			end
-			-- lane minion
-			local laneMinion = self:GetLaneMinion()
-			if laneMinion ~= nil then
-				self.LaneClearHandle = laneMinion.handle
-				return laneMinion
-			end
-			-- ward
-			if other ~= nil then
-				return other
 			end
 		end
+		
+		-- PRIORIDAD 5: Lane clear normal (solo si no hay lasthit disponible)
+		-- Esperar un poco si hay minions casi lasthitable
+		if self:ShouldWait() then
+			return nil
+		end
+		
+		-- Buscar minion para lane clear
+		local laneMinion = self:GetLaneMinion()
+		if laneMinion ~= nil then
+			self.LaneClearHandle = laneMinion.handle
+			return laneMinion
+		end
+		
 		return nil
 	end,
 }
@@ -5355,8 +5705,11 @@ Cursor = {
 			self.correctedCastPos = self.CastPos
 			self.IsMouseClick = key == MOUSEEVENTF_RIGHTDOWN
 			self.Timer = GetTickCount() + MenuDelay:Value()
+			self.SmoothMovementActive = false
 			self:StepSetToCastPos() -- Now handles both smooth and direct movement
-			self:StepPressKey()
+			if not self.SmoothMovementActive then
+				self:StepPressKey()
+			end
 			-- Mark last step tick to watch for stuck state
 			self.LastStepTick = GetTickCount()
 		end
@@ -5677,26 +6030,35 @@ Cursor = {
 	end,
 
 	OnDraw = function(self)
-		if MenuDrawCursor:Value() then
-			Draw.Circle(mousePos, 150, 1, Color.Cursor)
-			
-			-- Draw smooth movement path if active
-			if MenuSmoothMouse:Value() and SmoothMouse:IsMoving() then
+		-- OPTIMIZACIÓN: Early exit
+		if not MenuDrawCursor:Value() then
+			return
+		end
+		
+		Draw.Circle(mousePos, 150, 1, Color.Cursor)
+		
+		-- Draw smooth movement path if active
+		if MenuSmoothMouse:Value() and SmoothMouse:IsMoving() then
+			local targetPos = SmoothMouse.targetPos
+			if targetPos then
 				-- Draw current target position
-				Draw.Circle(Vector(SmoothMouse.targetPos.x, myHero.pos.y, SmoothMouse.targetPos.y), 75, 2, Color.Yellow)
+				local myY = myHero.pos.y
+				Draw.Circle(Vector(targetPos.x, myY, targetPos.y), 75, 2, Color.Yellow)
 				
-				-- Draw bezier curve path (simplified visualization)
+				-- OPTIMIZACIÓN: Draw bezier curve path con menos creaciones de Vector
+				local colorLine = Color.LightGreen
 				local steps = 10
-				for i = 0, steps - 1 do
-					local t1 = i / steps
-					local t2 = (i + 1) / steps
-					local pos1 = SmoothMouse:BezierLerp(t1)
-					local pos2 = SmoothMouse:BezierLerp(t2)
+				local prevPos = SmoothMouse:BezierLerp(0)
+				
+				for i = 1, steps do
+					local t = i / steps
+					local currPos = SmoothMouse:BezierLerp(t)
 					Draw.Line(
-						Vector(pos1.x, myHero.pos.y, pos1.y):To2D(),
-						Vector(pos2.x, myHero.pos.y, pos2.y):To2D(),
-						1, Color.LightGreen
+						Vector(prevPos.x, myY, prevPos.y):To2D(),
+						Vector(currPos.x, myY, currPos.y):To2D(),
+						1, colorLine
 					)
+					prevPos = currPos
 				end
 			end
 			-- No debug cursor info (removed, per user request)
@@ -5890,6 +6252,7 @@ Orbwalker = {
 		[ORBWALKER_MODE_JUNGLECLEAR] = {},
 		[ORBWALKER_MODE_LASTHIT] = {},
 		[ORBWALKER_MODE_FLEE] = {},
+		[ORBWALKER_MODE_SPACING] = {},
 	},
 
 	Modes = {
@@ -5899,6 +6262,7 @@ Orbwalker = {
 		[ORBWALKER_MODE_JUNGLECLEAR] = false,
 		[ORBWALKER_MODE_LASTHIT] = false,
 		[ORBWALKER_MODE_FLEE] = false,
+		[ORBWALKER_MODE_SPACING] = false,
 	},
 
 	ForceMovement = nil,
@@ -5976,29 +6340,52 @@ Orbwalker = {
 		if not self.Menu.Enabled:Value() then
 			return
 		end
-		if self.MenuDrawings.Range:Value() then
-			Draw.Circle(myHero.pos, Data:GetAutoAttackRange(myHero), 1, Color.Range)
+		
+		-- OPTIMIZACIÓN: Cachear posición y drawings menu
+		local myPos = myHero.pos
+		local drawings = self.MenuDrawings
+		
+		if drawings.Range:Value() then
+			Draw.Circle(myPos, Data:GetAutoAttackRange(myHero), 1, Color.Range)
 		end
-		if self.MenuDrawings.HoldRadius:Value() then
-			Draw.Circle(myHero.pos, self.Menu.General.HoldRadius:Value(), 1, Color.LightGreen)
+		if drawings.HoldRadius:Value() then
+			Draw.Circle(myPos, self.Menu.General.HoldRadius:Value(), 1, Color.LightGreen)
 		end
-		if self.MenuDrawings.EnemyRange:Value() then
-			local t = Object:GetEnemyHeroes()
-			for i = 1, #t do
-				local enemy = t[i]
-				local range = Data:GetAutoAttackRange(enemy, myHero)
-				Draw.Circle(enemy.pos, range, 1, IsInRange(enemy, myHero, range) and Color.EnemyRange or Color.Range)
+		if drawings.EnemyRange:Value() then
+			local enemies = Object:GetEnemyHeroes()
+			local enemyCount = #enemies
+			if enemyCount > 0 then
+				-- OPTIMIZACIÓN: Cachear colores fuera del loop
+				local colorRange = Color.Range
+				local colorEnemy = Color.EnemyRange
+				for i = 1, enemyCount do
+					local enemy = enemies[i]
+					local enemyPos = enemy.pos
+					if enemyPos then
+						local pos2D = enemyPos:To2D()
+						if pos2D.onScreen then
+							local range = Data:GetAutoAttackRange(enemy, myHero)
+							local inRange = IsInRange(enemy, myHero, range)
+							Draw.Circle(enemyPos, range, 1, inRange and colorEnemy or colorRange)
+						end
+					end
+				end
 			end
 		end
 
-		-- Debug / Safe Reset Info
+		-- Debug / Safe Reset Info (OPTIMIZACIÓN: usar string.format)
 		if Menu.Main.Drawings.SmartCacheInfo:Value() then
 			local x, y = 20, 50
-			local info = "Orbwalker: step=" .. tostring(Cursor.Step or 0)
-			info = info .. " | smooth=" .. tostring(SmoothMouse:IsMoving())
-			info = info .. " | moveIn=" .. tostring(math_max(0, Movement.MoveTimer - GetTickCount()))
 			local modeInfo = FPSOptimizer:GetModeInfo()
-			info = info .. " | mode=" .. tostring(modeInfo.mode) .. " hHeroes=" .. tostring(modeInfo.cachedHeroesCount or 0) .. " hMinions=" .. tostring(modeInfo.cachedMinionsCount or 0)
+			local info = string_format(
+				"Orbwalker: step=%d | smooth=%s | moveIn=%d | mode=%s hH=%d hM=%d",
+				Cursor.Step or 0,
+				tostring(SmoothMouse:IsMoving()),
+				math_max(0, Movement.MoveTimer - GetTickCount()),
+				modeInfo.mode,
+				modeInfo.cachedHeroesCount or 0,
+				modeInfo.cachedMinionsCount or 0
+			)
 			Draw.Text(info, 16, x, y)
 		end
 	end,
@@ -6019,6 +6406,7 @@ Orbwalker = {
 			[ORBWALKER_MODE_JUNGLECLEAR] = self:HasMode(ORBWALKER_MODE_JUNGLECLEAR),
 			[ORBWALKER_MODE_LASTHIT] = self:HasMode(ORBWALKER_MODE_LASTHIT),
 			[ORBWALKER_MODE_FLEE] = self:HasMode(ORBWALKER_MODE_FLEE),
+			[ORBWALKER_MODE_SPACING] = self:HasMode(ORBWALKER_MODE_SPACING),
 		}
 	end,
 
@@ -6308,10 +6696,103 @@ Orbwalker = {
 		end
 	end,
 
+	GetSpacingTarget = function(self)
+		-- Encuentra el enemigo más cercano para hacer spacing
+		local enemies = Object:GetEnemyHeroes(2000, false, true)
+		if #enemies == 0 then
+			return nil
+		end
+		
+		-- Ordenar por distancia y retornar el más cercano
+		table_sort(enemies, function(a, b)
+			return GetDistance(myHero.pos, a.pos) < GetDistance(myHero.pos, b.pos)
+		end)
+		
+		return enemies[1]
+	end,
+
+	GetSpacingPosition = function(self, target)
+		if not target or not Object:IsValid(target) then
+			return nil
+		end
+		
+		local myPos = myHero.pos
+		local targetPos = target.pos
+		local distance = GetDistance(myPos, targetPos)
+		
+		-- Obtener rangos de ataque
+		local myRange = Data:GetAutoAttackRange(myHero, target)
+		local enemyRange = Data:GetAutoAttackRange(target, myHero)
+		
+		-- Margen de seguridad (evitar estar justo en el borde)
+		local safetyMargin = 50
+		local optimalDistance = myRange - safetyMargin
+		
+		-- Calcular dirección desde el enemigo hacia nosotros
+		local direction = (myPos - targetPos):Normalized()
+		
+		-- Si el enemigo está dentro de nuestro rango pero nosotros estamos dentro de su rango
+		if distance <= myRange and distance <= enemyRange then
+			-- Retroceder: alejarse del enemigo
+			local retreatDistance = enemyRange - distance + safetyMargin + 50
+			local retreatPos = myPos + direction * retreatDistance
+			return retreatPos
+		-- Si el enemigo está fuera de nuestro rango pero dentro de su rango
+		elseif distance > myRange and distance <= enemyRange then
+			-- Retroceder más agresivamente
+			local retreatDistance = enemyRange - distance + safetyMargin + 100
+			local retreatPos = myPos + direction * retreatDistance
+			return retreatPos
+		-- Si el enemigo está dentro de nuestro rango pero fuera del suyo
+		elseif distance <= myRange and distance > enemyRange then
+			-- Acercarse ligeramente para mantener distancia óptima
+			if distance < optimalDistance then
+				-- Ya estamos en posición óptima, no moverse
+				return nil
+			else
+				-- Acercarse un poco para estar en rango óptimo
+				local approachDistance = distance - optimalDistance
+				local approachPos = myPos - direction * math_min(approachDistance, 50)
+				return approachPos
+			end
+		-- Si el enemigo está fuera de ambos rangos
+		elseif distance > myRange and distance > enemyRange then
+			-- Acercarse para entrar en nuestro rango
+			local approachDistance = distance - optimalDistance
+			local approachPos = myPos - direction * math_min(approachDistance, 100)
+			return approachPos
+		end
+		
+		return nil
+	end,
+
 	Orbwalk = function(self)
 		if GameIsChatOpen() or Data:Stop() then
 			return
 		end
+		
+		-- Modo Auto Spacing: mantener distancia óptima
+		if self:HasMode(ORBWALKER_MODE_SPACING) then
+			local spacingTarget = self:GetSpacingTarget()
+			if spacingTarget and Object:IsValid(spacingTarget) then
+				-- Intentar atacar si está a rango
+				if self:Attack(spacingTarget) then
+					return
+				end
+				
+				-- Calcular posición de spacing
+				local spacingPos = self:GetSpacingPosition(spacingTarget)
+				if spacingPos then
+					-- Forzar movimiento hacia la posición de spacing
+					self.ForceMovement = spacingPos
+					self:Move()
+					self.ForceMovement = nil
+					return
+				end
+			end
+		end
+		
+		-- Lógica normal de orbwalk
 		if not self:Attack(self:GetTarget()) then
 			self:Move()
 		end
@@ -6324,39 +6805,44 @@ Orbwalker:RegisterMenuKey(ORBWALKER_MODE_LASTHIT, Menu.Orbwalker.Keys.LastHit)
 Orbwalker:RegisterMenuKey(ORBWALKER_MODE_LANECLEAR, Menu.Orbwalker.Keys.LaneClear)
 Orbwalker:RegisterMenuKey(ORBWALKER_MODE_JUNGLECLEAR, Menu.Orbwalker.Keys.Jungle)
 Orbwalker:RegisterMenuKey(ORBWALKER_MODE_FLEE, Menu.Orbwalker.Keys.Flee)
+Orbwalker:RegisterMenuKey(ORBWALKER_MODE_SPACING, Menu.Orbwalker.Keys.Spacing)
 
 -- Merge into existing global SDK if present, otherwise create a new SDK table.
 _G.SDK = _G.SDK or {}
 _G.SDK.OnDraw = _G.SDK.OnDraw or {}
 _G.SDK.OnTick = _G.SDK.OnTick or {}
 _G.SDK.OnWndMsg = _G.SDK.OnWndMsg or {}
-_G.SDK.Menu = _G.SDK.Menu or Menu
-_G.SDK.Color = _G.SDK.Color or Color
-_G.SDK.Action = _G.SDK.Action or Action
-_G.SDK.BuffManager = _G.SDK.BuffManager or Buff
-_G.SDK.Damage = _G.SDK.Damage or Damage
-_G.SDK.Data = _G.SDK.Data or Data
-_G.SDK.Spell = _G.SDK.Spell or Spell
-_G.SDK.SummonerSpell = _G.SDK.SummonerSpell or SummonerSpell
-_G.SDK.ItemManager = _G.SDK.ItemManager or Item
-_G.SDK.ObjectManager = _G.SDK.ObjectManager or Object
-_G.SDK.TargetSelector = _G.SDK.TargetSelector or Target
-_G.SDK.HealthPrediction = _G.SDK.HealthPrediction or Health
-_G.SDK.Cursor = _G.SDK.Cursor or Cursor
-_G.SDK.Attack = _G.SDK.Attack or Attack
-_G.SDK.Orbwalker = _G.SDK.Orbwalker or Orbwalker
-_G.SDK.Cached = _G.SDK.Cached or Cached
-_G.SDK.Movement = _G.SDK.Movement or Movement
-_G.SDK.DAMAGE_TYPE_PHYSICAL = _G.SDK.DAMAGE_TYPE_PHYSICAL or DAMAGE_TYPE_PHYSICAL
-_G.SDK.DAMAGE_TYPE_MAGICAL = _G.SDK.DAMAGE_TYPE_MAGICAL or DAMAGE_TYPE_MAGICAL
-_G.SDK.DAMAGE_TYPE_TRUE = _G.SDK.DAMAGE_TYPE_TRUE or DAMAGE_TYPE_TRUE
-_G.SDK.ORBWALKER_MODE_NONE = _G.SDK.ORBWALKER_MODE_NONE or ORBWALKER_MODE_NONE
-_G.SDK.ORBWALKER_MODE_COMBO = _G.SDK.ORBWALKER_MODE_COMBO or ORBWALKER_MODE_COMBO
-_G.SDK.ORBWALKER_MODE_HARASS = _G.SDK.ORBWALKER_MODE_HARASS or ORBWALKER_MODE_HARASS
-_G.SDK.ORBWALKER_MODE_LANECLEAR = _G.SDK.ORBWALKER_MODE_LANECLEAR or ORBWALKER_MODE_LANECLEAR
-_G.SDK.ORBWALKER_MODE_JUNGLECLEAR = _G.SDK.ORBWALKER_MODE_JUNGLECLEAR or ORBWALKER_MODE_JUNGLECLEAR
-_G.SDK.ORBWALKER_MODE_LASTHIT = _G.SDK.ORBWALKER_MODE_LASTHIT or ORBWALKER_MODE_LASTHIT
-_G.SDK.ORBWALKER_MODE_FLEE = _G.SDK.ORBWALKER_MODE_FLEE or ORBWALKER_MODE_FLEE
+-- SIEMPRE usar nuestros módulos para asegurar compatibilidad con GGAIO y otros scripts
+_G.SDK.Menu = Menu
+_G.SDK.Color = Color
+_G.SDK.Action = Action
+_G.SDK.BuffManager = Buff
+_G.SDK.Damage = Damage
+_G.SDK.Data = Data
+_G.SDK.Spell = Spell
+_G.SDK.SummonerSpell = SummonerSpell
+_G.SDK.ItemManager = Item
+_G.SDK.ObjectManager = Object
+_G.SDK.TargetSelector = Target
+_G.SDK.HealthPrediction = Health
+_G.SDK.Cursor = Cursor
+_G.SDK.Attack = Attack
+-- CRÍTICO: SIEMPRE sobrescribir Orbwalker para asegurar compatibilidad con GGAIO
+-- GGAIO.lua espera que _G.SDK.Orbwalker sea nuestro DepressiveOrbwalker
+_G.SDK.Orbwalker = Orbwalker
+_G.SDK.Cached = Cached
+_G.SDK.Movement = Movement
+_G.SDK.DAMAGE_TYPE_PHYSICAL = DAMAGE_TYPE_PHYSICAL
+_G.SDK.DAMAGE_TYPE_MAGICAL = DAMAGE_TYPE_MAGICAL
+_G.SDK.DAMAGE_TYPE_TRUE = DAMAGE_TYPE_TRUE
+_G.SDK.ORBWALKER_MODE_NONE = ORBWALKER_MODE_NONE
+_G.SDK.ORBWALKER_MODE_COMBO = ORBWALKER_MODE_COMBO
+_G.SDK.ORBWALKER_MODE_HARASS = ORBWALKER_MODE_HARASS
+_G.SDK.ORBWALKER_MODE_LANECLEAR = ORBWALKER_MODE_LANECLEAR
+_G.SDK.ORBWALKER_MODE_JUNGLECLEAR = ORBWALKER_MODE_JUNGLECLEAR
+_G.SDK.ORBWALKER_MODE_LASTHIT = ORBWALKER_MODE_LASTHIT
+_G.SDK.ORBWALKER_MODE_FLEE = ORBWALKER_MODE_FLEE
+_G.SDK.ORBWALKER_MODE_SPACING = ORBWALKER_MODE_SPACING
 if _G.SDK.IsRecalling == nil then
 	_G.SDK.IsRecalling = function(unit)
 		if Buff:HasBuff(unit, "recall") then
@@ -6411,50 +6897,50 @@ Callback.Add("Load", function()
 		end
 		drawTest = 1]]
 	
+		-- Track chat open timer
 		if GameIsChatOpen() then
 			LastChatOpenTimer = GetTickCount()
 		end
 
+		-- OPTIMIZACIÓN: Reset y ticks esenciales
 		Cached:Reset()
 		Cursor:OnTick()
 		Action:OnTick()
 		Attack:OnTick()
 		Orbwalker:OnTick()
-		for i = 1, #ticks do
+		
+		-- OPTIMIZACIÓN: Ejecutar callbacks de tick sin pcall para mayor velocidad
+		local tickCount = #ticks
+		for i = 1, tickCount do
 			local fn = ticks[i]
-			if fn then pcall(fn) end
+			if fn then fn() end
 		end
+		
+		-- Solo procesar draws si están habilitados
 		if Menu.Main.Drawings.Enabled:Value() then
 			Target:OnDraw()
 			Cursor:OnDraw()
 			Orbwalker:OnDraw()
 			Health:OnDraw()
-			for i = 1, #draws do
+			
+			-- OPTIMIZACIÓN: Ejecutar callbacks de draw
+			local drawCount = #draws
+			for i = 1, drawCount do
 				local fn = draws[i]
-				if fn then pcall(fn) end
+				if fn then fn() end
 			end
 			
 			-- Mostrar información de debug del sistema de caché inteligente
 			if Menu.Main.Drawings.SmartCacheInfo:Value() and FPSOptimizer.enabled and FPSOptimizer.smartCacheEnabled then
 				local modeInfo = FPSOptimizer:GetModeInfo()
-				local debugText = string.format(
-					"Smart Cache Debug:\n" ..
-					"Mode: %s\n" ..
-					"Cache Heroes: %s\n" ..
-					"Cache Minions: %s\n" ..
-					"Cache Range: %d\n" ..
-					"Cached Heroes: %d\n" ..
-					"Cached Minions: %d\n" ..
-					"FPS: %.1f",
+				local debugText = string_format(
+					"Smart Cache: %s | Heroes: %d | Minions: %d | Range: %d | FPS: %.0f",
 					modeInfo.mode,
-					tostring(modeInfo.cacheHeroes),
-					tostring(modeInfo.cacheMinions),
-					modeInfo.cacheRange,
 					modeInfo.cachedHeroesCount,
 					modeInfo.cachedMinionsCount,
+					modeInfo.cacheRange,
 					FPSOptimizer.currentFPS
 				)
-				
 				Draw.Text(debugText, 14, 10, 200)
 			end
 		end
@@ -6489,9 +6975,11 @@ Callback.Add("Load", function()
 		Spell:WndMsg(msg, wParam)
 		Target:WndMsg(msg, wParam)
 		Cached:WndMsg(msg, wParam)
-		for i = 1, #wndmsgs do
+		-- OPTIMIZACIÓN: Cachear longitud
+		local wndmsgCount = #wndmsgs
+		for i = 1, wndmsgCount do
 			local fn = wndmsgs[i]
-			if fn then pcall(fn, msg, wParam) end
+			if fn then fn(msg, wParam) end
 		end
 	end)
 
@@ -6499,5 +6987,21 @@ Callback.Add("Load", function()
 		_G.Orbwalker.Enabled:Value(false)
 		_G.Orbwalker.Drawings.Enabled:Value(false)
 	end
+	
+	-- Asegurar que nuestro Orbwalker esté registrado después de que todos los scripts se carguen
+	-- Esto es crítico para compatibilidad con GGAIO y otros scripts que dependen de _G.SDK.Orbwalker
+	Callback.Add("Load", function()
+		_G.SDK = _G.SDK or {}
+		_G.SDK.Orbwalker = Orbwalker
+		_G.SDK.Menu = Menu
+		_G.SDK.TargetSelector = Target
+		_G.SDK.ObjectManager = Object
+		_G.SDK.Attack = Attack
+		_G.SDK.Data = Data
+		_G.SDK.HealthPrediction = Health
+		_G.SDK.BuffManager = Buff
+		_G.SDK.Damage = Damage
+		_G.SDK.Spell = Spell
+		_G.SDK.Cursor = Cursor
+	end)
 end)
-
