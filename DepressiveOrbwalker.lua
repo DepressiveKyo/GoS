@@ -1,5 +1,5 @@
 local __name__ = "DepressiveOrbwalker"
-local __version__ = 1.6
+local __version__ = 1.7
 
 if _G.DepressiveOrbUpdate then
 	return
@@ -5442,7 +5442,11 @@ do
 			end
 		local pos = GetControlPos(a, b, c)
 		if pos then
-			if Cursor.Step > 0 then
+			-- Permitir hechizos dirigidos a unidades (target unit spells) incluso cuando Cursor.Step > 0
+			-- Estos hechizos no requieren precisión de cursor porque el juego automáticamente apunta al target
+			-- Ejemplos: Yasuo E, Irelia Q, Akali R, etc.
+			local isTargetUnitSpell = (not b and a and a.pos ~= nil)
+			if Cursor.Step > 0 and not isTargetUnitSpell then
 				return false
 			end
 
