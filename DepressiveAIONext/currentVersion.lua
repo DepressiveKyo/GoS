@@ -14,7 +14,7 @@ Data = {
     Cassiopeia = { Version = 0.01, Changelog = "Cassiopeia" },
     Elise = { Version = 1.25, Changelog = "Elise" },
     Fiora = { Version = 2.1, Changelog = "Fiora" },
-    Katarina = { Version = 1.0, Changelog = "Katarina" },
+    Katarina = { Version = 1.1, Changelog = "Katarina" },
     Lillia = { Version = 1.0, Changelog = "Lillia" },
     Lulu = { Version = 1.0, Changelog = "Lulu" },
     Mel = { Version = 0.1, Changelog = "Mel" },
@@ -25,4 +25,5 @@ Data = {
     Zed = { Version = 1.0, Changelog = "Zed" },
     }
 }
+
 
