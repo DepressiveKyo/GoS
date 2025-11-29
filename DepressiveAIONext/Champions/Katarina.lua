@@ -1,7 +1,7 @@
 if _G.__DEPRESSIVE_NEXT_KATARINA_LOADED then return end
 _G.__DEPRESSIVE_NEXT_KATARINA_LOADED = true
 
-local Version = "1.0"
+local Version = "1.1"
 local Name = "Depressive - Katarina"
 
 if myHero.charName ~= "Katarina" then return end
@@ -126,8 +126,39 @@ local function HitchanceOK(got, needed)
 	return (got or 0) >= needed
 end
 
+-- Check if Katarina is channeling her ultimate (Death Lotus)
+-- Must be defined before functions that use it
+local function IsChannelingUlt()
+	-- Method 1: Check buff
+	for i = 0, myHero.buffCount do
+		local buff = myHero:GetBuff(i)
+		if buff and buff.name and buff.count > 0 then
+			local name = buff.name:lower()
+			if name:find("katarinar") or name:find("katarinarsound") or name:find("deathlotustarget") then
+				return true
+			end
+		end
+	end
+	
+	-- Method 2: Check if R spell is on cooldown but was just cast (active channel)
+	local rData = myHero:GetSpellData(_R)
+	if rData and rData.level > 0 then
+		-- R has a channel time of 2.5 seconds, check if currently casting
+		if myHero.activeSpell and myHero.activeSpell.valid then
+			local spellName = myHero.activeSpell.name
+			if spellName and spellName:lower():find("katarinar") then
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
 local function CastQWithPrediction(target)
 	if not target then return false end
+	-- Never Q during R channel - would cancel ultimate
+	if IsChannelingUlt() then return false end
 	if DepressivePrediction and DepressivePrediction.SpellPrediction then
 		local ok, spell = pcall(function() return DepressivePrediction:SpellPrediction({
 			Type = DepressivePrediction.SPELLTYPE_LINE,
@@ -211,6 +242,8 @@ end
 -- Try instant E to the best dagger near the target; returns true if cast
 local function TryInstantEDagger(target)
 	if not target or not Ready(_E) then return false end
+	-- Never E during R channel - would cancel ultimate
+	if IsChannelingUlt() then return false end
 	local d = GetBestDagger(target)
 	if d and d.pos then
 		local jumpPos = GetDaggerEdgePos(d, target) or d.pos
@@ -226,19 +259,6 @@ local function IsInMeleeRange(target)
 	if not target then return false end
 	local distance = myHero.pos:DistanceTo(target.pos)
 	return distance <= 350
-end
-
-local function IsChannelingUlt()
-	for i = 0, myHero.buffCount do
-		local buff = myHero:GetBuff(i)
-		if buff and buff.name and buff.count > 0 then
-			local name = buff.name:lower()
-			if name:find("katarinar") or name:find("katarinarsound") then
-				return true
-			end
-		end
-	end
-	return false
 end
 
 local function GetEnemiesInRRange()
@@ -312,12 +332,18 @@ end
 function DepressiveKatarina:Tick()
 	if myHero.dead or Game.IsChatOpen() then return end
     
-	-- Execute delayed scheduled actions (used for minor timings)
-	ProcessDelayedActions()
-    
 	if not CheckPredictionSystem() then return end
     
 	isChannelingR = IsChannelingUlt()
+    
+	-- Execute delayed scheduled actions ONLY if NOT channeling R
+	-- This prevents W/E/Q from canceling the ultimate
+	if not isChannelingR then
+		ProcessDelayedActions()
+	else
+		-- Clear all pending actions when R is active to prevent cancellation
+		_DelayedActions = {}
+	end
     
 	if isChannelingR then
 		-- Bloquear orbwalker completamente durante la R
@@ -408,10 +434,11 @@ function DepressiveKatarina:Combo()
 	if comboWCast and Ready(_W) then comboWCast = false end
 
 		-- Continuous instant dagger jumps while holding combo if enabled
-	if self.Menu.Combo.InstantEDagger:Value() and Ready(_E) then
+		-- Double-check R is not channeling before any spell cast
+	if self.Menu.Combo.InstantEDagger:Value() and Ready(_E) and not IsChannelingUlt() then
 			if TryInstantEDagger(target) then
 				-- After jumping to dagger optionally W if setting enabled
-				if self.Menu.Combo.EWCombo:Value() and Ready(_W) and not comboWCast then
+				if self.Menu.Combo.EWCombo:Value() and Ready(_W) and not comboWCast and not IsChannelingUlt() then
 					Control.CastSpell(HK_W)
 					comboWCast = true
 					lastComboTime = Game.Timer()
@@ -419,17 +446,17 @@ function DepressiveKatarina:Combo()
 			end
 		end
         
-    if not comboQCast and distance <= SPELL_RANGE.Q and self.Menu.Combo.UseQ:Value() and Ready(_Q) then
+    if not comboQCast and distance <= SPELL_RANGE.Q and self.Menu.Combo.UseQ:Value() and Ready(_Q) and not IsChannelingUlt() then
 	    CastQWithPrediction(target)
 			comboQCast = true
 			lastComboTime = Game.Timer()
-			if self.Menu.Combo.InstantEDagger:Value() and Ready(_E) then
+			if self.Menu.Combo.InstantEDagger:Value() and Ready(_E) and not IsChannelingUlt() then
 				local daggerAfterQ = GetBestDagger(target)
 				if daggerAfterQ and daggerAfterQ.pos then
 					Control.CastSpell(HK_E, daggerAfterQ.pos)
 					comboECast = true
 					lastComboTime = Game.Timer()
-					if self.Menu.Combo.EWCombo:Value() and Ready(_W) then
+					if self.Menu.Combo.EWCombo:Value() and Ready(_W) and not IsChannelingUlt() then
 						Control.CastSpell(HK_W)
 						comboWCast = true
 						lastComboTime = Game.Timer()
@@ -439,7 +466,7 @@ function DepressiveKatarina:Combo()
 			return
 		end
         
-	if not comboECast and self.Menu.Combo.UseE:Value() and Ready(_E) and self.Menu.Combo.EDagger:Value() then
+	if not comboECast and self.Menu.Combo.UseE:Value() and Ready(_E) and self.Menu.Combo.EDagger:Value() and not IsChannelingUlt() then
 			local bestDagger = GetBestDagger(target)
 			if bestDagger and bestDagger.pos then
 				local edgePos = GetDaggerEdgePos(bestDagger, target)
@@ -449,7 +476,8 @@ function DepressiveKatarina:Combo()
                 
 				if self.Menu.Combo.EWCombo:Value() and Ready(_W) then
 					DelayAction(function()
-						if Ready(_W) then
+						-- Don't cast W if R is channeling (would cancel it)
+						if Ready(_W) and not IsChannelingUlt() then
 							Control.CastSpell(HK_W)
 							comboWCast = true
 							lastComboTime = Game.Timer()
@@ -471,11 +499,11 @@ function DepressiveKatarina:Combo()
 			end
 		end
         
-	if IsInMeleeRange(target) and self.Menu.Combo.UseW:Value() and Ready(_W) and not comboWCast then
+	if IsInMeleeRange(target) and self.Menu.Combo.UseW:Value() and Ready(_W) and not comboWCast and not IsChannelingUlt() then
 			Control.CastSpell(HK_W)
 			comboWCast = true
 			lastComboTime = Game.Timer()
-			if self.Menu.Combo.InstantEDagger:Value() and Ready(_E) then
+			if self.Menu.Combo.InstantEDagger:Value() and Ready(_E) and not IsChannelingUlt() then
 				local daggerAfterW = GetBestDagger(target)
 				if daggerAfterW and daggerAfterW.pos then
 					Control.CastSpell(HK_E, daggerAfterW.pos)
