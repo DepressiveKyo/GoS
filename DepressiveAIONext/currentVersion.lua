@@ -23,7 +23,7 @@ Data = {
     Riven = { Version = 1.0, Changelog = "Riven" },
     TwistedFate = { Version = 1.9, Changelog = "TwistedFate" },
     Vayne = { Version = 4.0, Changelog = "Vayne" },
-    Yasuo = { Version = 3.5, Changelog = "Yasuo" },
+    Yasuo = { Version = 4.0, Changelog = "Yasuo" },
     Zed = { Version = 1.0, Changelog = "Zed" },
     }
 }
