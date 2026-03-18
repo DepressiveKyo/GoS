@@ -8,7 +8,7 @@ local PredictionLoaded = false
 DelayAction(function()
     PredictionLoaded = _G.DepressivePrediction ~= nil
 end, 1.0)
-local ScriptVersion = 4.0
+local ScriptVersion = 4.1
 local LoadingComplete = false
 Callback.Add("Draw", function()
     if not LoadingComplete then
@@ -37,6 +37,7 @@ local MathMin         = math.min
 local MathMax         = math.max
 local MathAbs         = math.abs
 local MathHuge        = math.huge
+local StringLower     = string.lower
 local myHero          = myHero
 
 local DangerousSpells = {
@@ -183,7 +184,7 @@ local DangerousSpells = {
     ["SowTheWind"]                = { charName = "Janna",       delay = 0.25, speed = 1600, isMissile = true,  threat = 4 },
     ["GalioQ"]                    = { charName = "Galio",       delay = 0.25, speed = 1150, isMissile = true,  threat = 4 },
     ["GravesSmokeGrenade"]        = { charName = "Graves",      delay = 0.15, speed = 1500, isMissile = true,  threat = 4 },
-    ["FiddlesticksDarkWind"]      = { charName = "FiddleSticks",delay = 0.25, speed = 1100, isMissile = true,  threat = 3 },
+    ["FiddleSticksQ"]             = { charName = "FiddleSticks",delay = 0.25, speed = MathHuge, isMissile = false, threat = 6 },
     ["SyndraE"]                   = { charName = "Syndra",      delay = 0.25, speed = 1600, isMissile = false, threat = 7 },
     ["CamilleE"]                  = { charName = "Camille",     delay = 0,    speed = 1900, isMissile = true,  threat = 6 },
     ["DianaQ"]                    = { charName = "Diana",       delay = 0.25, speed = 1900, isMissile = false, threat = 5 },
@@ -192,6 +193,18 @@ local DangerousSpells = {
     ["SennaW"]                    = { charName = "Senna",       delay = 0.25, speed = 1150, isMissile = true,  threat = 6 },
 
 }
+
+local DangerousSpellLookup = {}
+for spellName, data in pairs(DangerousSpells) do
+    DangerousSpellLookup[StringLower(spellName)] = data
+end
+
+local function GetDangerousSpellInfo(spellName)
+    if not spellName or spellName == "" then
+        return nil
+    end
+    return DangerousSpells[spellName] or DangerousSpellLookup[StringLower(spellName)]
+end
 
 local function DistSqr(p1, p2)
     local p2 = p2 or myHero.pos
@@ -214,6 +227,32 @@ local function SpellReady(slot)
         and myHero:GetSpellData(slot).level > 0
         and myHero:GetSpellData(slot).mana <= myHero.mana
         and Game.CanUseSpell(slot) == 0
+end
+
+local function IsSpellTargetingUnit(spell, unit)
+    if not spell or not unit then
+        return false
+    end
+    
+    local target = spell.target
+    if not target then
+        return false
+    end
+    
+    if target == unit or target == unit.handle or target == unit.networkID then
+        return true
+    end
+    
+    if type(target) == "table" or type(target) == "userdata" then
+        if target.handle and target.handle == unit.handle then
+            return true
+        end
+        if target.networkID and target.networkID == unit.networkID then
+            return true
+        end
+    end
+    
+    return false
 end
 
 local function CountEnemiesInRange(range, pos)
@@ -478,8 +517,8 @@ function WindSamurai:BuildMenu()
     self.menu:MenuElement({type = MENU, id = "windwall", name = "[Wind Wall] Settings"})
         self.menu.windwall:MenuElement({id = "enable", name = "Enable Auto Wind Wall", value = true})
         self.menu.windwall:MenuElement({id = "onlyCombo", name = "Only in Combo Mode", value = false})
-        self.menu.windwall:MenuElement({id = "minThreat", name = "Min Threat Score to block", value = 5, min = 1, max = 10})
-        self.menu.windwall:MenuElement({id = "hpSafe", name = "Always block if HP% below", value = 30, min = 5, max = 80, step = 5})
+        self.menu.windwall:MenuElement({id = "minThreat", name = "Min Threat Score to block", value = 1, min = 1, max = 10})
+        self.menu.windwall:MenuElement({id = "hpSafe", name = "Always block if HP% below", value = 100, min = 5, max = 100, step = 5})
         self.menu.windwall:MenuElement({type = MENU, id = "spells", name = "Spells to Block"})
 
     DelayAction(function()
@@ -1330,7 +1369,9 @@ end
 
 function WindSamurai:SmartWindWall()
     if not self.menu.windwall.enable:Value() then return end
-    if self.lastW + 1000 > GetTickCount() or not SpellReady(_W) or self.pendingUlt then return end
+    if self.lastW + 1000 > GetTickCount() then return end
+    local sdw = myHero:GetSpellData(_W)
+    if sdw.level == 0 or sdw.currentCd > 0 then return end
     if self.menu.windwall.onlyCombo:Value() and not _G.SDK.Orbwalker.Modes[0] then return end
     local minThreat = self.menu.windwall.minThreat:Value()
     local hpPct = myHero.health / myHero.maxHealth * 100
@@ -1342,7 +1383,7 @@ function WindSamurai:SmartWindWall()
     for i = 1, missileCount do
         local missile = Game.Missile(i)
         if missile and missile.valid and missile.isEnemy then
-            local info = DangerousSpells[missile.name]
+            local info = GetDangerousSpellInfo(missile.name)
             if info then
                 local effectiveThreat = info.threat
                 if lowHp then effectiveThreat = effectiveThreat + 3 end
@@ -1375,9 +1416,7 @@ function WindSamurai:SmartWindWall()
             local spell = unit.activeSpell
             if spell and spell.valid and spell.name ~= "" then
                 local spellId = spell.name .. (spell.endTime or 0)
-                if data.lastSpell ~= spellId then
-                    data.lastSpell = spellId
-                    local info = DangerousSpells[spell.name]
+                    local info = GetDangerousSpellInfo(spell.name)
                     if info then
                         local effectiveThreat = info.threat
                         if lowHp then effectiveThreat = effectiveThreat + 3 end
@@ -1386,10 +1425,13 @@ function WindSamurai:SmartWindWall()
                             spellEnabled = self.menu.windwall.spells[spell.name]:Value()
                         end
                         if spellEnabled and (effectiveThreat >= minThreat or lowHp) then
-                            local spellEnd = spell.toPos or spell.placementPos or spell.startPos
+                            local spellEnd = spell.toPos or spell.placementPos
+                            if not spellEnd or Dist(spellEnd, unit.pos) < 50 then
+                                spellEnd = myHero.pos
+                            end
                             local spellStart = spell.startPos or unit.pos
                             local willHit = false
-                            if spell.target == myHero.handle then
+                            if IsSpellTargetingUnit(spell, myHero) then
                                 willHit = true
                             else
                                 local projX, projZ, onSeg = PointOnSegmentProjection(
@@ -1412,7 +1454,6 @@ function WindSamurai:SmartWindWall()
                         end
                     end
                 end
-            end
         end
     end
     if bestUnit and bestCastPos then
