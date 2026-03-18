@@ -1,4 +1,4 @@
-local Version = 5.1
+local Version = 5.2
 local __name__ = "DepressivePrediction"
 local __version__ = Version
 
@@ -1056,18 +1056,45 @@ function UnitTracker:AnalyzeMovementPattern(data, unit, currentTime)
     data.movementConfidence = 0.7
 end
 
+local function PredictPositionAlongPath(path, moveSpeed, time)
+    if not path or #path == 0 then return nil end
+    if #path == 1 then return path[1] end
+
+    local remain = (moveSpeed or 400) * (time or 0)
+    for i = 1, #path - 1 do
+        local fromPos, toPos = path[i], path[i + 1]
+        local segmentLength = Math:GetDistance(fromPos, toPos)
+        if remain <= segmentLength then
+            local direction = Math:Normalized(toPos, fromPos)
+            if direction then
+                return Math:Extended(fromPos, direction, remain)
+            end
+            return fromPos
+        end
+        remain = remain - segmentLength
+    end
+
+    return path[#path]
+end
+
 function UnitTracker:GetPredictedPosition(unit, time)
     local id = unit.networkID
     local data = self.Units[id]
-    
-    if not data or #data.positions < 2 then
-        return Math:Get2D(unit.pos)
-    end
-    
     local currentPos = Math:Get2D(unit.pos)
     if not currentPos then return nil end
-    
+
     time = math_min(time, 2.5)
+    
+    if not data or #data.positions < 2 then
+        if unit.pathing and unit.pathing.hasMovePath then
+            local path = self:GetUnitPath(unit)
+            local predicted = PredictPositionAlongPath(path, unit.ms or 400, time)
+            if predicted then
+                return predicted
+            end
+        end
+        return currentPos
+    end
     
     -- Check special states first
     local specialPos = self:CheckSpecialStates(unit, data, currentPos, time)
@@ -1170,21 +1197,10 @@ function UnitTracker:LinearPrediction(unit, data, currentPos, time)
     -- Try path-based prediction first
     local path = self:GetUnitPath(unit)
     if #path > 1 then
-        local ms = unit.ms or 400
-        local remain = ms * time
-        
-        for i = 1, #path - 1 do
-            local a, b = path[i], path[i + 1]
-            local seg = Math:GetDistance(a, b)
-            if remain <= seg then
-                local dir = Math:Normalized(b, a)
-                if dir then
-                    return Math:Extended(a, dir, remain)
-                end
-            end
-            remain = remain - seg
+        local predicted = PredictPositionAlongPath(path, unit.ms or 400, time)
+        if predicted then
+            return predicted
         end
-        return path[#path]
     end
     
     -- Use smoothed velocity
@@ -1282,7 +1298,13 @@ function UnitTracker:GetUnitPath(unit)
     pcall(function()
         if path.isDashing and path.endPos then
             result[#result + 1] = Math:Get2D(path.endPos)
-        elseif path.pathIndex and path.pathCount then
+        else
+            local endPos = path.endPos and Math:Get2D(path.endPos)
+            if endPos and Math:GetDistance(result[1], endPos) > 20 then
+                result[#result + 1] = endPos
+            end
+
+            if path.pathIndex and path.pathCount then
             for i = path.pathIndex, math_min(path.pathCount - 1, path.pathIndex + 3) do
                 local wp = nil
                 if path.GetWaypoint then
@@ -1291,12 +1313,33 @@ function UnitTracker:GetUnitPath(unit)
                 end
                 if not wp and path[i] then wp = path[i] end
                 if wp and wp.x then
-                    result[#result + 1] = Math:Get2D(wp)
+                    local waypoint = Math:Get2D(wp)
+                    if waypoint and Math:GetDistance(result[#result], waypoint) > 20 then
+                        result[#result + 1] = waypoint
+                    end
                 end
+            end
             end
         end
     end)
+
+    if #result == 1 and unit.posTo then
+        local posTo = Math:Get2D(unit.posTo)
+        if posTo and Math:GetDistance(result[1], posTo) > 20 then
+            result[#result + 1] = posTo
+        end
+    end
     
+    if #result == 1 and path.hasMovePath then
+        local data = self.Units[unit.networkID]
+        if data and data.smoothedVelocity then
+            local velocityDirection = Math:Normalize(data.smoothedVelocity)
+            if velocityDirection then
+                result[#result + 1] = Math:Extended(result[1], velocityDirection, (unit.ms or 400) * 1.5)
+            end
+        end
+    end
+
     if #result == 1 and path.hasMovePath then
         local dir = Math:Get2D(unit.dir) or {x = 0, z = 1}
         result[#result + 1] = Math:Extended(result[1], dir, (unit.ms or 400) * 1.5)
@@ -2010,15 +2053,17 @@ local function ShouldTrackMinion(minion)
     local name = (minion.name and minion.name:lower()) or ""
     local charName = (minion.charName and minion.charName:lower()) or ""
     local shouldTrack = false
+    local neutralByName = IdentifyNeutralByName(charName) or IdentifyNeutralByName(name)
     
     if name:find("dragon") or name:find("baron") or name:find("herald") or
        charName:find("dragon") or charName:find("baron") or charName:find("herald") then
         shouldTrack = true
     elseif name:find("gromp") or name:find("krug") or name:find("blue") or name:find("red") then
         shouldTrack = true
+    elseif neutralByName then
+        shouldTrack = true
     elseif not minion.isAlly and not minion.isEnemy then
-        -- Track neutral minions in Arena (use direct arena check)
-        shouldTrack = Math:IsArenaInternal()
+        shouldTrack = true
     end
     
     UnitTracker.MinionNameCache[id] = shouldTrack
