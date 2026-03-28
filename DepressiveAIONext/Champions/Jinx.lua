@@ -1,4 +1,4 @@
-local VERSION = "2.0"
+local VERSION = "2.1"
 local SCRIPT_NAME = "DepressiveJinx"
 
 if _G.__DEPRESSIVE_NEXT_JINX_LOADED then return end
@@ -797,7 +797,7 @@ function Jinx:GetCurrentRange()
     return self.isFishBones and self.rocketRange or self.minigunRange
 end
 
-
+function Jinx:UpdateExcited()
     local now = GameTimer()
     if not myHero.buffCount then return end
     self.isExcited = false
