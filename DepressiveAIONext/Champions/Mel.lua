@@ -1,19 +1,14 @@
-local VERSION = "0.1"
+local VERSION = "0.2"
 if _G.__DEPRESSIVE_NEXT_MEL_LOADED then return end
 if myHero.charName ~= "Mel" then return end
 _G.__DEPRESSIVE_NEXT_MEL_LOADED = true
 
--- Prediction library load (DepressivePrediction)
-local DepressivePrediction = nil
-local ok, result = pcall(function() return require("DepressivePrediction") end)
-if ok and result then
-    DepressivePrediction = result
-end
+require("GGPrediction")
+local PredictionLoaded = false
 
--- MapPosition (wall detection) assumed loaded by core; fallback attempt
-if not MapPosition or not MapPosition.inWall then
-    pcall(function() require("MapPositionGOS") end)
-end
+DelayAction(function()
+    PredictionLoaded = _G.GGPrediction ~= nil
+end, 1.0)
 
 -- Utility shortcuts
 local MathHuge = math.huge
@@ -221,7 +216,11 @@ function Mel:CreateMenu()
     M.clear:MenuElement({id="qMin", name="Q if hits >= X minions", value=3,min=1,max=7,step=1})
     M.clear:MenuElement({id="mana", name="Min Mana %", value=45,min=0,max=100,identifier="%"})
 
-    -- Prediction menu removed - using simple casting
+    -- Prediction
+    M:MenuElement({type=MENU,id="pred", name="Prediction"})
+    M.pred:MenuElement({name=" ", drop={"Engine: GGPrediction"}})
+    M.pred:MenuElement({id="hcQ", name="Hitchance [Q]", value=1, drop={"Normal","High","Immobile"}})
+    M.pred:MenuElement({id="hcE", name="Hitchance [E]", value=1, drop={"Normal","High","Immobile"}})
 
     M:MenuElement({type=MENU,id="draw", name="Drawing"})
     M.draw:MenuElement({id="ranges", name="Master Toggle", value=true})
@@ -261,41 +260,24 @@ function Mel:CastQ(target)
     if not Ready(_Q) or not target or not IsValid(target) then return false end
     if Game.Timer() - self.lastCastTimes[_Q] < self.castDelay then return false end
     if not self.Menu or not self.Menu.combo or not self.Menu.combo.spells or not self.Menu.combo.spells.useQ or not self.Menu.combo.spells.useQ:Value() then return false end
-    
-    -- Verificar que estamos en rango
     if not InRange(_Q, target) then return false end
-    
-    -- Usar predicción de DepressivePrediction mejorada
-    if DepressivePrediction and type(DepressivePrediction) == "table" and DepressivePrediction.SpellPrediction then
-        local pred = DepressivePrediction.SpellPrediction({
-            Type = DepressivePrediction.SPELLTYPE_LINE,
-            Speed = 2000,
-            Range = 950,
-            Delay = 0.25,
-            Radius = 80, -- Radio más amplio para mejor hit
-            Collision = true,
-            CollisionTypes = {DepressivePrediction.COLLISION_MINION, DepressivePrediction.COLLISION_HERO}
-        })
-        
-        local result = pred:GetPrediction(target, myHero)
-        if result and result.HitChance >= DepressivePrediction.HITCHANCE_NORMAL then
-            -- Verificar que la posición de cast sea válida
-            if result.CastPosition and Dist2D(myHero.pos, result.CastPosition) <= 950 then
-                Control.CastSpell(HK_Q, result.CastPosition)
-                self.lastCastTimes[_Q] = Game.Timer()
-                return true
-            end
-        end
-    else
-        -- Fallback: casting simple hacia el target
-        local targetPos = target.pos
-        if targetPos and Dist2D(myHero.pos, targetPos) <= 950 then
-            Control.CastSpell(HK_Q, targetPos)
-            self.lastCastTimes[_Q] = Game.Timer()
-            return true
-        end
+
+    if not PredictionLoaded then return false end
+
+    local pred = GGPrediction:SpellPrediction({
+        Type = GGPrediction.SPELLTYPE_LINE,
+        Delay = 0.25,
+        Radius = 80,
+        Range = 950,
+        Speed = 2000,
+        Collision = false,
+    })
+    pred:GetPrediction(target, myHero)
+    if pred:CanHit(self.Menu.pred.hcQ:Value() + 1) then
+        Control.CastSpell(HK_Q, pred.CastPosition)
+        self.lastCastTimes[_Q] = Game.Timer()
+        return true
     end
-    
     return false
 end
 
@@ -304,41 +286,24 @@ function Mel:CastE(target)
     if not Ready(_E) or not target or not IsValid(target) then return false end
     if not self.Menu or not self.Menu.combo or not self.Menu.combo.spells or not self.Menu.combo.spells.useE or not self.Menu.combo.spells.useE:Value() then return false end
     if Game.Timer() - self.lastCastTimes[_E] < self.castDelay then return false end
-    
-    -- Verificar que estamos en rango
     if not InRange(_E, target) then return false end
-    
-    -- E es skillshot (Solar Snare) - usar predicción mejorada
-    if DepressivePrediction and type(DepressivePrediction) == "table" and DepressivePrediction.SpellPrediction then
-        local pred = DepressivePrediction.SpellPrediction({
-            Type = DepressivePrediction.SPELLTYPE_LINE,
-            Speed = 1200, -- Velocidad más precisa
-            Range = 1050,
-            Delay = 0.25,
-            Radius = 100, -- Radio más amplio para mejor hit
-            Collision = true,
-            CollisionTypes = {DepressivePrediction.COLLISION_MINION, DepressivePrediction.COLLISION_HERO}
-        })
-        
-        local result = pred:GetPrediction(target, myHero)
-        if result and result.HitChance >= DepressivePrediction.HITCHANCE_NORMAL then
-            -- Verificar que la posición de cast sea válida
-            if result.CastPosition and Dist2D(myHero.pos, result.CastPosition) <= 1050 then
-                Control.CastSpell(HK_E, result.CastPosition)
-                self.lastCastTimes[_E] = Game.Timer()
-                return true
-            end
-        end
-    else
-        -- Fallback: casting simple hacia el target
-        local targetPos = target.pos
-        if targetPos and Dist2D(myHero.pos, targetPos) <= 1050 then
-            Control.CastSpell(HK_E, targetPos)
-            self.lastCastTimes[_E] = Game.Timer()
-            return true
-        end
+
+    if not PredictionLoaded then return false end
+
+    local pred = GGPrediction:SpellPrediction({
+        Type = GGPrediction.SPELLTYPE_LINE,
+        Delay = 0.25,
+        Radius = 100,
+        Range = 1050,
+        Speed = 1200,
+        Collision = false,
+    })
+    pred:GetPrediction(target, myHero)
+    if pred:CanHit(self.Menu.pred.hcE:Value() + 1) then
+        Control.CastSpell(HK_E, pred.CastPosition)
+        self.lastCastTimes[_E] = Game.Timer()
+        return true
     end
-    
     return false
 end
 
