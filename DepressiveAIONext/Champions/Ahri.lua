@@ -1,11 +1,20 @@
-local VERSION = "0.22"
+local VERSION = "0.23"
 if _G.__DEPRESSIVE_NEXT_AHRI_LOADED then return end
 if myHero.charName ~= "Ahri" then return end
 
--- Prediction library load (DepressivePrediction)
-local DepressivePrediction = require("DepressivePrediction")
-if not DepressivePrediction then
-    if print then print("[Ahri] DepressivePrediction not found, using fallback") end
+-- Prediction library load (GGPrediction)
+pcall(require, "GGPrediction")
+
+local function GetGGPredictionLib()
+    local gg = _G.GGPrediction
+    if gg and type(gg.SpellPrediction) == "function" then
+        return gg
+    end
+    return nil
+end
+
+if not GetGGPredictionLib() then
+    if print then print("[Ahri] GGPrediction not found, using fallback") end
 end
 
 -- MapPosition (wall detection) assumed loaded by core; fallback attempt
@@ -132,39 +141,41 @@ local function TotalComboDamage(t)
     return dmg
 end
 
--- Hitchance mapping (using DepressivePrediction)
-local function DepressiveHitchanceOK(needed, got)
-    local map = {2,3,4,5,6} -- Low->Immobile
-    return (got or 0) >= (map[(needed or 1)+1] or 3)
+-- Prediction based casts using GGPrediction
+local function GetGGHitchance(needed)
+    local gg = GetGGPredictionLib()
+    if not gg then return nil end
+    if needed == 4 then return gg.HITCHANCE_IMMOBILE end
+    if needed and needed >= 2 then return gg.HITCHANCE_HIGH end
+    return gg.HITCHANCE_NORMAL
 end
 
--- Prediction based casts using DepressivePrediction
+local function NormalizeGGHitchance(prediction)
+    local gg = GetGGPredictionLib()
+    if not gg or not prediction or not prediction.CastPosition then return 0 end
+    if prediction:CanHit(gg.HITCHANCE_IMMOBILE) then return 6 end
+    if prediction:CanHit(gg.HITCHANCE_HIGH) then return 4 end
+    if prediction:CanHit(gg.HITCHANCE_NORMAL) then return 3 end
+    return 0
+end
+
 local function CastQPred(target, needed)
     if not target then return false end
-    if not DepressivePrediction then return false end
-    
-    local hitchance = DepressivePrediction.HITCHANCE_NORMAL
-    
-    -- Map menu value to prediction constant
-    if needed == 0 then hitchance = DepressivePrediction.HITCHANCE_LOW
-    elseif needed == 1 then hitchance = DepressivePrediction.HITCHANCE_NORMAL
-    elseif needed == 2 then hitchance = DepressivePrediction.HITCHANCE_HIGH
-    elseif needed == 3 then hitchance = DepressivePrediction.HITCHANCE_VERYHIGH
-    elseif needed == 4 then hitchance = DepressivePrediction.HITCHANCE_IMMOBILE
-    end
-    
-    local prediction = DepressivePrediction.SpellPrediction({
-        Type = DepressivePrediction.SPELLTYPE_LINE,
+    local gg = GetGGPredictionLib()
+    if not gg then return false end
+
+    local prediction = gg:SpellPrediction({
+        Type = gg.SPELLTYPE_LINE,
         Speed = 1550,
         Range = 880,
         Delay = 0.25,
         Radius = 90,
         Collision = false
     })
-    
-    local result = prediction:GetPrediction(target, myHero)
-    if result and result.HitChance >= hitchance and result.CastPosition then
-        Control.CastSpell(HK_Q, result.CastPosition)
+
+    prediction:GetPrediction(target, myHero)
+    if prediction.CastPosition and prediction:CanHit(GetGGHitchance(needed)) then
+        Control.CastSpell(HK_Q, prediction.CastPosition)
         return true
     end
     return false
@@ -172,52 +183,45 @@ end
 
 local function CastEPred(target, needed)
     if not target then return false end
-    if not DepressivePrediction then return false end
-    
-    local hitchance = DepressivePrediction.HITCHANCE_NORMAL
-    
-    -- Map menu value to prediction constant
-    if needed == 0 then hitchance = DepressivePrediction.HITCHANCE_LOW
-    elseif needed == 1 then hitchance = DepressivePrediction.HITCHANCE_NORMAL
-    elseif needed == 2 then hitchance = DepressivePrediction.HITCHANCE_HIGH
-    elseif needed == 3 then hitchance = DepressivePrediction.HITCHANCE_VERYHIGH
-    elseif needed == 4 then hitchance = DepressivePrediction.HITCHANCE_IMMOBILE
-    end
-    
-    local prediction = DepressivePrediction.SpellPrediction({
-        Type = DepressivePrediction.SPELLTYPE_LINE,
+    local gg = GetGGPredictionLib()
+    if not gg then return false end
+
+    local prediction = gg:SpellPrediction({
+        Type = gg.SPELLTYPE_LINE,
         Speed = 1600,
         Range = 975,
         Delay = 0.25,
         Radius = 60,
         Collision = true,
-        CollisionTypes = {DepressivePrediction.COLLISION_MINION}
+        CollisionTypes = {gg.COLLISION_MINION}
     })
-    
-    local result = prediction:GetPrediction(target, myHero)
-    if result and result.HitChance >= hitchance and result.CastPosition then
-        Control.CastSpell(HK_E, result.CastPosition)
+
+    prediction:GetPrediction(target, myHero)
+    if prediction.CastPosition and prediction:CanHit(GetGGHitchance(needed)) then
+        Control.CastSpell(HK_E, prediction.CastPosition)
         return true
     end
     return false
 end
 
 local function GetEPredPosition(target)
-    if not target or not DepressivePrediction then return target.pos, 3 end
-    
-    local prediction = DepressivePrediction.SpellPrediction({
-        Type = DepressivePrediction.SPELLTYPE_LINE,
+    if not target then return nil, 0 end
+    local gg = GetGGPredictionLib()
+    if not gg then return target.pos, 3 end
+
+    local prediction = gg:SpellPrediction({
+        Type = gg.SPELLTYPE_LINE,
         Speed = 1600,
         Range = 975,
         Delay = 0.25,
         Radius = 60,
         Collision = true,
-        CollisionTypes = {DepressivePrediction.COLLISION_MINION}
+        CollisionTypes = {gg.COLLISION_MINION}
     })
-    
-    local result = prediction:GetPrediction(target, myHero)
-    if result and result.CastPosition then
-        return result.CastPosition, result.HitChance or 3
+
+    prediction:GetPrediction(target, myHero)
+    if prediction.CastPosition then
+        return prediction.CastPosition, NormalizeGGHitchance(prediction)
     end
     return target.pos, 3
 end
@@ -282,7 +286,7 @@ local lastInstantEFlash = 0
 local scheduledEFlash = nil -- {time, hk, pos}
 local lastCastTimes = {[_Q]=0,[_W]=0,[_E]=0,[_R]=0}
 local CAST_DELAY = 0.55
-local R_CHAIN_DELAY = 1.2
+local R_CHAIN_DELAY = 1.5
 local function ClampFlashPos(targetPos)
     local maxFlash = 400
     local dir = (targetPos - myHero.pos)
@@ -324,68 +328,74 @@ local function TryEFlash(target)
     lastInstantEFlash = now
 end
 
--- R tracking via AhriR buff (stack 1 => active, stack 0 => inactive)
-local lastRBuffState = 0
+-- R tracking via AhriR buff only; recasts are handled from tracked charges.
 local function GetBuffByName(unit, name)
     for i=0, unit.buffCount do
         local b = unit:GetBuff(i)
         if b and b.name and b.name:lower() == name then return b end
     end
 end
+
+local function GetRBuffCharges(buff)
+    if not buff then return nil end
+    local charges = buff.stacks
+    if type(charges) ~= "number" or charges < 0 then
+        charges = buff.count
+    end
+    if type(charges) ~= "number" then return nil end
+    if charges < 0 or charges > 10 then return nil end
+    return math.floor(charges + 0.5)
+end
+
 local function TrackR()
     local selfObj = _G.DepressiveAhri
     if not selfObj then return end
+    local now = Game.Timer()
+    local wasActive = selfObj.rActive
 
     -- Attempt to get buff (common names)
     local buff = GetBuffByName(myHero,"ahrir") or GetBuffByName(myHero,"ahriR") or GetBuffByName(myHero,"AhriR")
+    local buffCharges = GetRBuffCharges(buff)
 
-    -- Determine if R is active by stacks > 0
-    local stacks = 0
-    if buff and buff.duration and buff.duration > 0 then
-        stacks = (buff.stacks or buff.count or 0)
-    end
-    local active = stacks > 0
+    -- Use the AhriR buff as source of truth for recasts.
+    local active = buff and buff.duration and buff.duration > 0
 
-    -- Activation (first cast already used 1 charge, 2 remaining)
-    if active and not selfObj.rActive then
+    if active then
         selfObj.rActive = true
-        selfObj.rChargesRemaining = 2
-        selfObj.rExpireTime = Game.Timer() + (buff and buff.duration or 10)
-        selfObj.rLock = false
+        selfObj.rExpireTime = now + (buff and buff.duration or 10)
+
+        if buffCharges ~= nil then
+            selfObj.rChargesRemaining = buffCharges
+        elseif not wasActive then
+            -- Fallback if this runtime does not expose buff stacks:
+            -- normal activation leaves 2 recasts, a recent reset only grants 1.
+            local recentResetWindow = 4.0
+            local isRecentReactivate = selfObj.lastREndTime > 0 and (now - selfObj.lastREndTime) <= recentResetWindow
+            selfObj.rChargesRemaining = isRecentReactivate and 1 or 2
+        end
+
+        selfObj.rLock = selfObj.rChargesRemaining <= 0
+        return
     end
 
     -- Buff ended (all charges used or expired)
-    if (not active) and selfObj.rActive then
+    if wasActive then
         selfObj.rActive = false
         selfObj.rChargesRemaining = 0
         selfObj.rLock = false
+        selfObj.lastREndTime = now
     end
 
     -- Time expiration
-    if selfObj.rActive and Game.Timer() > selfObj.rExpireTime then
+    if selfObj.rActive and now > selfObj.rExpireTime then
         selfObj.rActive = false
         selfObj.rChargesRemaining = 0
         selfObj.rLock = false
-    end
-
-    -- If for some reason we mark 0 charges while buff continues, block until finished
-    if selfObj.rActive and selfObj.rChargesRemaining <= 0 then
-        selfObj.rLock = true
     end
 end
 
 Callback.Add("Tick", function()
     if not _G.DepressiveAhri or myHero.dead then return end
-    -- R toggleState debug (prints only when value changes)
-    do
-        _G.__AhriLastRToggle = _G.__AhriLastRToggle or nil
-        local sd = myHero:GetSpellData(_R)
-        local ts = sd and sd.toggleState or nil
-        if ts ~= _G.__AhriLastRToggle then
-            _G.__AhriLastRToggle = ts
-            if print then print(string.format("[Ahri] R toggleState = %s", tostring(ts))) end
-        end
-    end
     -- legacy pendingEFlash removed (instant flash now)
     TrackR()
     _G.DepressiveAhri:OnTick()
@@ -401,6 +411,7 @@ function Ahri:__init()
     o.lastRUpdate = 0
     o.rActive = false
     o.rLock = false
+    o.lastREndTime = 0
     o.lastComboTime = 0
     o.eFlashUsed = false
     o.rChargesRemaining = 0
@@ -423,7 +434,6 @@ function Ahri:CreateMenu()
     M.combo:MenuElement({type=MENU,id="spells", name="Spells"})
     M.combo:MenuElement({type=MENU,id="rlogic", name="R Logic"})
     M.combo:MenuElement({type=MENU,id="rsafety", name="R Safety"})
-    M.combo:MenuElement({type=MENU,id="rmanual", name="R Manual"})
     M.combo:MenuElement({type=MENU,id="antimelee", name="Anti-Melee"})
     M.combo:MenuElement({id="mana", name="Min Mana % (Combo)", value=0, min=0, max=100, identifier="%"})
 
@@ -449,12 +459,6 @@ function Ahri:CreateMenu()
     M.combo.rsafety:MenuElement({id="rMinHpToDive", name="Min HP% to ignore safety", value=70, min=0, max=100, step=5, identifier="%"})
     M.combo.rsafety:MenuElement({id="rForceKillWindow", name="Override safety if killable", value=true})
 
-    -- R Manual
-    M.combo.rmanual:MenuElement({id="manualRKey", name="Manual R Key", key=string.byte("T"), toggle=false})
-    M.combo.rmanual:MenuElement({id="escapeRKey", name="Escape R Key", key=string.byte("Z"), toggle=false})
-    M.combo.rmanual:MenuElement({id="mouseRKey", name="R To Mouse Key", key=string.byte("Y"), toggle=false})
-    M.combo.rmanual:MenuElement({id="manualOnly", name="Manual Only (Disable Auto R)", value=false})
-
     -- Anti-Melee
     M.combo.antimelee:MenuElement({id="antiMelee", name="Enable Anti-Melee R", value=true})
     M.combo.antimelee:MenuElement({id="antiMeleeRange", name="Trigger Dist", value=250, min=100, max=450, step=10})
@@ -471,7 +475,6 @@ function Ahri:CreateMenu()
     alias("rKillable", c.rlogic, "rKillable")
     alias("rMaxEnemiesEnd", c.rsafety, "rMaxEnemiesEnd"); alias("rMinAllyRatio", c.rsafety, "rMinAllyRatio")
     alias("rNoMeleeCluster", c.rsafety, "rNoMeleeCluster"); alias("rMinHpToDive", c.rsafety, "rMinHpToDive"); alias("rForceKillWindow", c.rsafety, "rForceKillWindow")
-    alias("manualRKey", c.rmanual, "manualRKey"); alias("escapeRKey", c.rmanual, "escapeRKey")
     alias("antiMelee", c.antimelee, "antiMelee"); alias("antiMeleeRange", c.antimelee, "antiMeleeRange")
     alias("antiMeleeMin", c.antimelee, "antiMeleeMin"); alias("antiMeleeHp", c.antimelee, "antiMeleeHp"); alias("antiMeleePrefer", c.antimelee, "antiMeleePrefer")
 
@@ -492,7 +495,7 @@ function Ahri:CreateMenu()
     M.clear:MenuElement({id="mana", name="Min Mana %", value=45,min=0,max=100,identifier="%"})
 
     M:MenuElement({type=MENU,id="pred", name="Prediction"})
-    M.pred:MenuElement({name=" ", drop={"Using DepressivePrediction"}})
+    M.pred:MenuElement({name=" ", drop={"Using GGPrediction"}})
     M.pred:MenuElement({id="QHit", name="Q Hitchance", value=2, drop={"Low","Normal","High","VeryHigh","Immobile"}})
     M.pred:MenuElement({id="EHit", name="E Hitchance", value=2, drop={"Low","Normal","High","VeryHigh","Immobile"}})
 
@@ -506,7 +509,6 @@ function Ahri:CreateMenu()
     M.draw:MenuElement({id="eFlash", name="E-Flash Ext Range", value=true})
     M.draw:MenuElement({id="bright", name="High Visibility Colors", value=true})
     M.draw:MenuElement({id="debug", name="Debug (print draw issues)", value=false})
-    M.draw:MenuElement({id="rToggle", name="Show R toggleState", value=true})
 
 
     -- Debug / Utility
@@ -550,31 +552,6 @@ function Ahri:OnTick()
     if self.Menu.eflash.enable:Value() and self.Menu.eflash.key:Value() then
         if target and (not self.Menu.eflash.onlyKill:Value() or target.health < TotalComboDamage(target)) then
             TryEFlash(target)
-        end
-    end
-    -- Manual R logic (independent from orbwalker mode)
-    -- Escape key has highest priority
-    if self.Menu and self.Menu.combo and self.Menu.combo.rmanual then
-        local rm = self.Menu.combo.rmanual
-        -- Escape R: best escape dash scoring; ignores auto logic gating
-        if rm.escapeRKey:Value() then
-            if target or self.rActive or Ready(_R) then
-                -- reuse ExecuteR in escape mode; pass current target (maybe nil)
-                self:ExecuteR(target, true)
-                return -- do not process further same tick (avoid double casting)
-            end
-        end
-        -- R to mouse position key
-        if rm.mouseRKey:Value() then
-            self:RToMouse()
-            -- don't return; allow offensive manual below if desired (user can hold both)
-        end
-        -- Offensive manual R: attempt dash following full safety / scoring logic regardless of auto trigger conditions
-        if rm.manualRKey:Value() then
-            if not target then target = GetTarget(1300) end
-            if target then
-                self:ExecuteR(target, false)
-            end
         end
     end
     if mode=="Combo" then self:Combo(target)
@@ -631,7 +608,6 @@ function Ahri:CastW(target)
 end
 
 function Ahri:ShouldAutoR(target)
-    if self.Menu and self.Menu.combo and self.Menu.combo.rmanual and self.Menu.combo.rmanual.manualOnly and self.Menu.combo.rmanual.manualOnly:Value() then return false end
     if not target or not self.Menu.combo.useR:Value() then return false end
     if self.rLock then return false end
     if self.rActive and self.rChargesRemaining<=0 then return false end
@@ -718,79 +694,67 @@ function Ahri:DoAntiMeleeR()
     return false
 end
 
-function Ahri:ExecuteR(target, escape)
+function Ahri:ExecuteR(target)
     if self.rLock then return end
     if (not self.rActive and not Ready(_R)) or (self.rActive and self.rChargesRemaining<=0) then return end
     local needDelay = self.rActive and R_CHAIN_DELAY or CAST_DELAY
     if Game.Timer() - lastCastTimes[_R] < needDelay then return end
     local dashes = target and GetRDashes(target) or {}
     local castPos
-    if escape then
-        local enemies = GetEnemies(); local worst= -1e9
-        for _,d in ipairs(dashes) do
-            local minDist=1e9
-            for _,e in ipairs(enemies) do
-                local dist = Dist2D(d.pos,e.pos); if dist < minDist then minDist=dist end
+    -- Re-score candidates to prefer ending near preferred distance (not too close)
+    local prefer = self.Menu.combo.rPrefer:Value()
+    local bestScore = -math.huge
+    local cfg = self.Menu.combo
+    local maxEnemiesEnd = cfg.rMaxEnemiesEnd:Value()
+    local minAllyRatio = cfg.rMinAllyRatio:Value() / 100 -- allies >= ratio * enemies
+    local blockMeleeCluster = cfg.rNoMeleeCluster:Value()
+    local hpOk = (myHero.health / myHero.maxHealth * 100) >= cfg.rMinHpToDive:Value()
+    local allowKillOverride = cfg.rForceKillWindow:Value()
+    local function CountNearby(pos, team, range)
+        local count=0
+        for i=1,Game.HeroCount() do
+            local h=Game.Hero(i)
+            if h and h.valid and not h.dead and h.isTargetable and h.team==team and Dist2DSqr(pos,h.pos) <= range*range then
+                count = count + 1
             end
-            local score = minDist + (d.crosses and 150 or 0)
-            if score>worst then worst=score; castPos=d.pos end
         end
-    else
-        -- Re-score candidates to prefer ending near preferred distance (not too close)
-        local prefer = self.Menu.combo.rPrefer:Value()
-        local bestScore = -math.huge
-        local cfg = self.Menu.combo
-        local maxEnemiesEnd = cfg.rMaxEnemiesEnd:Value()
-        local minAllyRatio = cfg.rMinAllyRatio:Value() / 100 -- allies >= ratio * enemies
-        local blockMeleeCluster = cfg.rNoMeleeCluster:Value()
-        local hpOk = (myHero.health / myHero.maxHealth * 100) >= cfg.rMinHpToDive:Value()
-        local allowKillOverride = cfg.rForceKillWindow:Value()
-        local function CountNearby(pos, team, range)
-            local count=0
-            for i=1,Game.HeroCount() do
-                local h=Game.Hero(i)
-                if h and h.valid and not h.dead and h.isTargetable and h.team==team and Dist2DSqr(pos,h.pos) <= range*range then
-                    count = count + 1
-                end
+        return count
+    end
+    local function CountMeleeEnemies(pos, range)
+        local c=0
+        for i=1,Game.HeroCount() do
+            local h=Game.Hero(i)
+            if h and h.valid and not h.dead and h.team~=myHero.team and h.isTargetable and Dist2DSqr(pos,h.pos) <= range*range then
+                local er = h.range or 550
+                if er < 350 then c=c+1 end
             end
-            return count
         end
-        local function CountMeleeEnemies(pos, range)
-            local c=0
-            for i=1,Game.HeroCount() do
-                local h=Game.Hero(i)
-                if h and h.valid and not h.dead and h.team~=myHero.team and h.isTargetable and Dist2DSqr(pos,h.pos) <= range*range then
-                    local er = h.range or 550
-                    if er < 350 then c=c+1 end
-                end
+        return c
+    end
+    for _,d in ipairs(dashes) do
+        local distAfter = Dist2D(d.pos, target.pos)
+        local distScore = -math.abs(distAfter - prefer)
+        if distAfter < prefer*0.75 then distScore = distScore - 150 end
+        if d.improve or (cfg.rWall:Value() and d.crosses) then
+            -- Safety filters
+            local enemiesEnd = CountNearby(d.pos, target.team, 600)
+            local alliesEnd = CountNearby(d.pos, myHero.team, 600)
+            local meleeCluster = CountMeleeEnemies(d.pos, 350)
+            local safe = true
+            if maxEnemiesEnd > 0 and enemiesEnd > maxEnemiesEnd and not hpOk then safe=false end
+            if blockMeleeCluster and meleeCluster >=2 and not hpOk then safe=false end
+            if minAllyRatio > 0 and alliesEnd > 0 and enemiesEnd > 0 and (alliesEnd / enemiesEnd) < minAllyRatio and not hpOk then safe=false end
+            -- Override safety if killable and option enabled
+            if not safe and allowKillOverride and self.Menu.combo.rKillable:Value() then
+                local wouldKill = (TotalComboDamage and TotalComboDamage(target) or 0) >= target.health
+                if wouldKill then safe = true end
             end
-            return c
-        end
-        for _,d in ipairs(dashes) do
-            local distAfter = Dist2D(d.pos, target.pos)
-            local distScore = -math.abs(distAfter - prefer)
-            if distAfter < prefer*0.75 then distScore = distScore - 150 end
-            if d.improve or (cfg.rWall:Value() and d.crosses) then
-                -- Safety filters
-                local enemiesEnd = CountNearby(d.pos, target.team, 600)
-                local alliesEnd = CountNearby(d.pos, myHero.team, 600)
-                local meleeCluster = CountMeleeEnemies(d.pos, 350)
-                local safe = true
-                if maxEnemiesEnd > 0 and enemiesEnd > maxEnemiesEnd and not hpOk then safe=false end
-                if blockMeleeCluster and meleeCluster >=2 and not hpOk then safe=false end
-                if minAllyRatio > 0 and alliesEnd > 0 and enemiesEnd > 0 and (alliesEnd / enemiesEnd) < minAllyRatio and not hpOk then safe=false end
-                -- Override safety if killable and option enabled
-                if not safe and allowKillOverride and self.Menu.combo.rKillable:Value() then
-                    local wouldKill = (TotalComboDamage and TotalComboDamage(target) or 0) >= target.health
-                    if wouldKill then safe = true end
-                end
-                if safe then
-                    local wallBonus = (d.crosses and cfg.rWall:Value()) and 20 or 0
-                    local score = distScore + wallBonus - (enemiesEnd*5) + (alliesEnd*3)
-                    if score > bestScore then
-                        bestScore = score
-                        castPos = d.pos
-                    end
+            if safe then
+                local wallBonus = (d.crosses and cfg.rWall:Value()) and 20 or 0
+                local score = distScore + wallBonus - (enemiesEnd*5) + (alliesEnd*3)
+                if score > bestScore then
+                    bestScore = score
+                    castPos = d.pos
                 end
             end
         end
@@ -802,10 +766,7 @@ function Ahri:ExecuteR(target, escape)
         lastCastTimes[_R] = Game.Timer()
         if self.rActive and self.rChargesRemaining>0 then
             self.rChargesRemaining = math.max(0, self.rChargesRemaining - 1)
-            if self.rChargesRemaining<=0 then
-                self.rActive=false
-                self.rLock = true
-            end
+            self.rLock = self.rChargesRemaining <= 0
         end
     end
 end
@@ -821,42 +782,15 @@ function Ahri:Combo(target)
     end
     -- Cast W before attempting any R (requested change). Only if mana ok.
     if comboManaOK then self:CastW(target) end
-    -- Auto logic only here (manual handled globally in OnTick)
+    -- Auto logic handled here.
     if self:ShouldAutoR(target) then
-        self:ExecuteR(target,false)
+        self:ExecuteR(target)
     end
     if comboManaOK then
         self:CastE(target)
         self:CastQ(target)
         -- W already attempted pre-R; try again only if not on cooldown and still not cast (low impact duplicate check handled by cooldown gate)
         self:CastW(target)
-    end
-end
-
--- Cast R toward current mouse position (or cursor), clamped to max dash distance.
-function Ahri:RToMouse()
-    if self.rLock then return end
-    local mouse = (mousePos or _G.mousePos or _G.cursorPos or myHero.pos)
-    if not mouse then return end
-    if (not self.rActive and not Ready(_R)) or (self.rActive and self.rChargesRemaining<=0) then return end
-    local needDelay = self.rActive and R_CHAIN_DELAY or CAST_DELAY
-    if Game.Timer() - lastCastTimes[_R] < needDelay then return end
-    local base = myHero.pos
-    local dx = mouse.x - base.x
-    local dz = (mouse.z or mouse.y) - base.z
-    local len = math.sqrt(dx*dx + dz*dz)
-    if len == 0 then return end
-    local maxR = 450
-    local scale = (len > maxR) and (maxR/len) or 1
-    local castPos = base + Vector(dx*scale, 0, dz*scale)
-    Control.CastSpell(HK_R, castPos)
-    lastCastTimes[_R] = Game.Timer()
-    if self.rActive and self.rChargesRemaining>0 then
-        self.rChargesRemaining = math.max(0, self.rChargesRemaining - 1)
-        if self.rChargesRemaining<=0 then
-            self.rActive=false
-            self.rLock = true
-        end
     end
 end
 
@@ -946,13 +880,6 @@ function Ahri:OnDraw()
         if self.rActive then
             local txt = string.format("R Charges: %d (%.1fs)", self.rChargesRemaining, math.max(0, self.rExpireTime-Game.Timer()))
             if Draw.Text then Draw.Text(txt, 14, myHero.pos2D.x-40, myHero.pos2D.y-15, Col(255,255,200,80)) elseif DrawText then DrawText(txt,14,myHero.pos2D.x-40,myHero.pos2D.y-15,Col(255,255,200,80)) end
-        end
-        if draw.rToggle and draw.rToggle:Value() then
-            local sd = myHero:GetSpellData(_R)
-            local ts = sd and sd.toggleState or "nil"
-            local txt2 = "R toggleState: "..tostring(ts)
-            local yOffset = self.rActive and 0 or -15
-            if Draw.Text then Draw.Text(txt2, 14, myHero.pos2D.x-40, myHero.pos2D.y-30 + yOffset, Col(255,200,255,120)) elseif DrawText then DrawText(txt2,14,myHero.pos2D.x-40,myHero.pos2D.y-30 + yOffset,Col(255,200,255,120)) end
         end
     end)
     if not ok and draw.debug and draw.debug:Value() then
