@@ -1,4 +1,4 @@
-local VERSION = "2.1"
+local VERSION = "2.2"
 local SCRIPT_NAME = "DepressiveJinx"
 
 if _G.__DEPRESSIVE_NEXT_JINX_LOADED then return end
@@ -7,8 +7,6 @@ _G.__DEPRESSIVE_NEXT_JINX_LOADED = true
 _G.DepressiveAIONextLoadedChampion = true
 
 pcall(require, "GGPrediction")
-pcall(require, "DepressivePrediction")
-
 local math_floor  = math.floor
 local math_huge   = math.huge
 local math_max    = math.max
@@ -40,11 +38,10 @@ local HK_R        = HK_R or _R
 local TEAM_ALLY   = myHero.team
 local TEAM_ENEMY  = (TEAM_ALLY == 100 and 200) or 100
 local PRED_ENGINE_GG = 1
-local PRED_ENGINE_DEPRESSIVE = 2
 
 local BASE_AA_RANGE = 525
 local Q_BONUS_RANGE = {100, 125, 150, 175, 200}
-local W_RANGE = 1450
+local W_RANGE = 1500
 local W_SPEED = 3300
 local W_DELAY_BASE = 0.6
 local W_DELAY_MIN = 0.4
@@ -55,13 +52,13 @@ local E_RADIUS = 115
 local E_SPEED = 1100
 local E_ARM_TIME = 0.5
 local E_ROOT_DURATION = 1.5
-local W_BASE_DAMAGE = {10, 70, 130, 190, 250}
-local W_AD_RATIO = 2.0
+local W_BASE_DAMAGE = {10, 60, 110, 160, 210}
+local W_AD_RATIO = 1.4
 local E_BASE_DAMAGE = {70, 120, 170, 220, 270}
-local R_BASE_MIN = {25, 40, 55}
-local R_BASE_MAX = {250, 400, 550}
-local R_AD_MIN = 0.15
-local R_AD_MAX = 1.50
+local R_BASE_MIN = {20, 35, 50}
+local R_BASE_MAX = {200, 350, 500}
+local R_AD_MIN = 0.12
+local R_AD_MAX = 1.20
 local R_MISSING_HP = {0.25, 0.30, 0.35}
 local ROCKET_MANA_COST = 20
 local FISHBONES_SPLASH_RADIUS = 250
@@ -156,6 +153,88 @@ local function IsValidTarget(u, range)
     return not range or Dist(myHero, u) <= range
 end
 
+
+-- ============================================================
+-- Damage validity check — gates vs. untargetable, immortal, immune buffs.
+-- damageType: "AA" (auto-attack only) | "physical" | "magic" | "spell" (any ability)
+-- Returns false if attempting damage would be wasted.
+-- ============================================================
+local UNTARGETABLE_BUFFS = {
+    "kayler",          -- Kayle R
+    "fizze",           -- Fizz E
+    "vladimirsanguinepool", -- Vlad W
+    "zhonyasringshield",-- Zhonya
+    "stopwatch",
+    "chronoshift",     -- Zilean R (also covered by orbwalker but doubled is fine)
+    "undyingrage",     -- Tryndamere R
+    "kindredrnodeathbuff", -- Kindred R
+    "willrevive",      -- Anivia P
+    "zacrebirthready", -- Zac P
+    "untargetable",    -- generic catch-all
+}
+local SPELL_SHIELD_BUFFS = {
+    "sivirshield",     -- Sivir E
+    "nocturneshroudofdarkness", -- Noct W
+    "bansheesveil",
+    "edgeofnight",
+    "morganae",        -- Morgana E (only blocks magic but easier to gate spells entirely)
+}
+local PHYSICAL_IMMUNE_BUFFS = {
+    "jaxcounterstrike", -- Jax E (dodges AAs)
+    "shenwbuff",        -- Shen W (vs basic attacks)
+    "pantheonpassive",  -- Pantheon passive (next instance)
+}
+local BLIND_BUFFS = {
+    "blind",
+    "teemoblind",
+}
+
+local function HasBuffByName(unit, name)
+    if not unit or not unit.buffCount then return false end
+    local now = (Game.Timer or function() return 0 end)()
+    for i = 0, unit.buffCount - 1 do
+        local b = unit:GetBuff(i)
+        if b and b.count and b.count > 0 and b.name and b.expireTime and b.expireTime > now then
+            local nm = string.lower(b.name)
+            if string.find(nm, name, 1, true) then return true end
+        end
+    end
+    return false
+end
+
+local function CanTakeDamage(target, damageType)
+    if not target or not target.valid or target.dead then return false end
+    -- Hard untargetable: native flags
+    if target.isTargetable == false then return false end
+    if target.isImmortal then
+        -- Some immortals (atakhan, fountain) shouldn't be blanket-skipped
+        if target.charName and string.lower(target.charName) ~= "sru_atakhan" then
+            return false
+        end
+    end
+    -- Untargetable buffs (Kayle R / Fizz E / Vlad W / Zhonya / etc.)
+    for i = 1, #UNTARGETABLE_BUFFS do
+        if HasBuffByName(target, UNTARGETABLE_BUFFS[i]) then return false end
+    end
+    -- Damage type specific gates
+    if damageType == "AA" then
+        -- Blind makes AAs do 0 damage
+        for i = 1, #BLIND_BUFFS do
+            if HasBuffByName(myHero, BLIND_BUFFS[i]) then return false end
+        end
+        -- AA dodgers on the target
+        for i = 1, #PHYSICAL_IMMUNE_BUFFS do
+            if HasBuffByName(target, PHYSICAL_IMMUNE_BUFFS[i]) then return false end
+        end
+    elseif damageType == "spell" or damageType == "physical" or damageType == "magic" then
+        -- Spell shields block the next spell entirely
+        for i = 1, #SPELL_SHIELD_BUFFS do
+            if HasBuffByName(target, SPELL_SHIELD_BUFFS[i]) then return false end
+        end
+    end
+    return true
+end
+
 local function Ready(slot)
     return Game.CanUseSpell(slot) == 0
 end
@@ -184,12 +263,14 @@ local function GetMinionCacheDuration()
 end
 
 local function GetRangeKey(range)
-    return tostring(math_floor((range or 0) + 0.5))
+    return math_floor((range or 0) + 0.5)
 end
 
 local function GetPositionKey(pos, range)
     local p = pos.pos or pos
-    return math_floor(p.x / 50) .. ":" .. math_floor((p.z or p.y) / 50) .. ":" .. GetRangeKey(range)
+    return math_floor(p.x / 50) * 10000000000
+         + math_floor((p.z or p.y) / 50) * 10000
+         + GetRangeKey(range)
 end
 
 local function RefreshEnemyHeroCache()
@@ -242,11 +323,18 @@ local function RefreshCollisionMinionCache()
     PerfCache.lineCollision = {}
 end
 
+local _orbwalkerAttackFn = nil
 local function IsOrbwalkerAttacking()
-    if _G.SDK and _G.SDK.Orbwalker and _G.SDK.Orbwalker.IsAutoAttacking then
-        local ok, r = pcall(function() return _G.SDK.Orbwalker:IsAutoAttacking() end)
-        if ok then return r end
+    if not _orbwalkerAttackFn then
+        local ow = _G.SDK and _G.SDK.Orbwalker
+        if ow and ow.IsAutoAttacking then
+            _orbwalkerAttackFn = function() return ow:IsAutoAttacking() end
+        else
+            return false
+        end
     end
+    local ok, r = pcall(_orbwalkerAttackFn)
+    if ok then return r end
     return false
 end
 
@@ -346,24 +434,14 @@ local function GetMinionCount(range, pos)
     return count
 end
 
-local CC_TYPES = {
-    [5] = true,
-    [8] = true,
-    [9] = true,
-    [11] = true,
-    [22] = true,
-    [24] = true,
-    [28] = true,
-    [29] = true,
-    [30] = true
-}
+local CC_TYPES = {[5]=true,[8]=true,[12]=true,[22]=true,[23]=true,[25]=true,[29]=true,[30]=true,[31]=true,[33]=true,[34]=true,[35]=true} -- immobilizing CCs only
 
 local function GetBuff(unit, buffName)
     if not unit or not unit.buffCount then
         return nil
     end
 
-    for i = 0, unit.buffCount do
+    for i = 0, unit.buffCount - 1 do
         local b = unit:GetBuff(i)
         if b and b.count > 0 and b.name == buffName then
             return b
@@ -385,12 +463,8 @@ local function IsImmobile(unit)
         return cached.value, cached.duration
     end
 
-    if not unit or not unit.buffCount then
-        return false, 0
-    end
-
     local best = 0
-    for i = 0, unit.buffCount do
+    for i = 0, unit.buffCount - 1 do
         local b = unit:GetBuff(i)
         if b and b.count > 0 and b.expireTime and b.expireTime > now and CC_TYPES[b.type] then
             best = math_max(best, b.expireTime - now)
@@ -428,8 +502,12 @@ local function GetWDamage(target)
 end
 
 local function GetRSpeed(target)
+    -- returns effective avg speed so that d / speed == true travel time
+    -- wiki: 1700 for first 1350u, 2200 afterwards
     local d = Dist(myHero, target)
-    return d > 1350 and (1350 * 1700 + (d - 1350) * 2200) / d or 1700
+    if d <= 1350 then return 1700 end
+    local t = 1350 / 1700 + (d - 1350) / 2200
+    return d / t
 end
 
 local function GetRDamage(target)
@@ -459,11 +537,18 @@ local function IsLineBlocked(source, target, width)
     RefreshCollisionMinionCache()
     local srcPos = source.pos or source
     local tgtPos = target.pos or target
-    local key = GetPositionKey(srcPos, width) .. ":" .. GetPositionKey(tgtPos, width)
-    local cached = PerfCache.lineCollision[key]
+    local srcKey = GetPositionKey(srcPos, width)
+    local tgtKey = GetPositionKey(tgtPos, width)
+    local bucket = PerfCache.lineCollision[srcKey]
     local now = GameTimer()
-    if cached and now - cached.tick < COLLISION_CACHE_DURATION then
-        return cached.value
+    if bucket then
+        local cached = bucket[tgtKey]
+        if cached and now - cached.tick < COLLISION_CACHE_DURATION then
+            return cached.value
+        end
+    else
+        bucket = {}
+        PerfCache.lineCollision[srcKey] = bucket
     end
     local blocked = false
     for i = 1, #PerfCache.collisionMinions.all do
@@ -473,7 +558,7 @@ local function IsLineBlocked(source, target, width)
             break
         end
     end
-    PerfCache.lineCollision[key] = {tick = now, value = blocked}
+    bucket[tgtKey] = {tick = now, value = blocked}
     return blocked
 end
 
@@ -482,11 +567,18 @@ local function IsRBlockedByChampion(source, target, width)
     local srcPos = source.pos or source
     local tgtPos = target.pos or target
     local targetId = target.networkID or 0
-    local key = GetPositionKey(srcPos, width) .. ":" .. GetPositionKey(tgtPos, width) .. ":" .. tostring(targetId)
-    local cached = PerfCache.championCollision[key]
+    local srcKey = GetPositionKey(srcPos, width)
+    local tgtKey = GetPositionKey(tgtPos, width) * 1000000 + (targetId % 1000000)
+    local bucket = PerfCache.championCollision[srcKey]
     local now = GameTimer()
-    if cached and now - cached.tick < COLLISION_CACHE_DURATION then
-        return cached.value
+    if bucket then
+        local cached = bucket[tgtKey]
+        if cached and now - cached.tick < COLLISION_CACHE_DURATION then
+            return cached.value
+        end
+    else
+        bucket = {}
+        PerfCache.championCollision[srcKey] = bucket
     end
     local blocked = false
     for i = 1, #PerfCache.heroes.all do
@@ -496,7 +588,7 @@ local function IsRBlockedByChampion(source, target, width)
             break
         end
     end
-    PerfCache.championCollision[key] = {tick = now, value = blocked}
+    bucket[tgtKey] = {tick = now, value = blocked}
     return blocked
 end
 
@@ -508,7 +600,7 @@ local ADC_LIST = {
 }
 
 local function GetTarget(range, isFishBones)
-    local key = GetRangeKey(range) .. ":" .. tostring(isFishBones and 1 or 0)
+    local key = GetRangeKey(range) * 2 + (isFishBones and 1 or 0)
     local now = GameTimer()
     local cached = PerfCache.target[key]
     if cached and now - cached.tick < TARGET_CACHE_DURATION and IsValidTarget(cached.target, range) then
@@ -580,7 +672,7 @@ function Jinx:LoadMenu()
     self.Menu = MenuElement({type = MENU, id = "DepressiveJinx", name = SCRIPT_NAME})
     self.Menu:MenuElement({name = " ", drop = {"Version " .. VERSION}})
     self.Menu:MenuElement({type = MENU, id = "pred", name = "Prediction"})
-    self.Menu.pred:MenuElement({id = "engine", name = "Prediction Engine", drop = {"GGPrediction", "DepressivePrediction"}, value = PRED_ENGINE_GG})
+    self.Menu.pred:MenuElement({id = "engine", name = "Prediction Engine", drop = {"GGPrediction"}, value = PRED_ENGINE_GG})
     self.Menu.pred:MenuElement({id = "wHitChance", name = "W Hit Chance", value = 3, min = 1, max = 6, step = 1})
     self.Menu.pred:MenuElement({id = "rHitChance", name = "R Hit Chance", value = 2, min = 1, max = 6, step = 1})
 
@@ -655,14 +747,7 @@ function Jinx:LoadCallbacks()
 end
 
 function Jinx:GetSelectedPredictionEngine()
-    local selected = self.Menu and self.Menu.pred and self.Menu.pred.engine and self.Menu.pred.engine:Value() or PRED_ENGINE_GG
-    if selected == PRED_ENGINE_DEPRESSIVE then
-        if _G.DepressivePrediction and type(_G.DepressivePrediction.GetPrediction) == "function" then return PRED_ENGINE_DEPRESSIVE end
-        if _G.GGPrediction and type(_G.GGPrediction.SpellPrediction) == "function" then return PRED_ENGINE_GG end
-    else
-        if _G.GGPrediction and type(_G.GGPrediction.SpellPrediction) == "function" then return PRED_ENGINE_GG end
-        if _G.DepressivePrediction and type(_G.DepressivePrediction.GetPrediction) == "function" then return PRED_ENGINE_DEPRESSIVE end
-    end
+    if _G.GGPrediction and type(_G.GGPrediction.SpellPrediction) == "function" then return PRED_ENGINE_GG end
     return 0
 end
 
@@ -715,33 +800,9 @@ function Jinx:GetPredictedCastPosition(target, spellKey)
         return nil, 0
     end
 
-    local function fromDepressive()
-        if not (_G.DepressivePrediction and type(_G.DepressivePrediction.GetPrediction) == "function") then return nil, 0 end
-        local pred = _G.DepressivePrediction.GetPrediction(target, {
-            type = "linear",
-            speed = speed,
-            range = range,
-            delay = delay,
-            radius = radius,
-            collision = collision,
-            collisionTypes = collision and {_G.DepressivePrediction.COLLISION_MINION} or {}
-        })
-        if pred then
-            local castPos = pred.castPos or pred.CastPosition
-            if castPos then
-                return Vec(castPos.x, castPos.y or myHero.pos.y, castPos.z), pred.hitChance or pred.HitChance or 0
-            end
-        end
-        return nil, 0
-    end
-
     local castPos, hitChance
-    if engine == PRED_ENGINE_DEPRESSIVE then
-        castPos, hitChance = fromDepressive()
-        if not castPos then castPos, hitChance = fromGG() end
-    else
+    if engine == PRED_ENGINE_GG then
         castPos, hitChance = fromGG()
-        if not castPos then castPos, hitChance = fromDepressive() end
     end
 
     if not castPos then
@@ -802,17 +863,24 @@ function Jinx:UpdateExcited()
     if not myHero.buffCount then return end
     self.isExcited = false
     self.excitedStacks = 0
-    for i = 0, myHero.buffCount do
+    -- Get Excited lasts 6s max; match only the kill-triggered buff,
+    -- and reject any buff whose remaining > 7 (that's a persistent indicator, not the real buff)
+    for i = 0, (myHero.buffCount or 0) - 1 do
         local b = myHero:GetBuff(i)
         if b and b.count > 0 and b.expireTime and b.expireTime > now and b.name then
             local nm = string_lower(b.name)
-            if string_find(nm, "jinxpassive", 1, true)
+            local isExcitedBuff =
+                string_find(nm, "jinxpassivekill", 1, true)
                 or string_find(nm, "getexcited", 1, true)
-                or string_find(nm, "jinxpassivekill", 1, true) then
-                self.isExcited = true
-                self.excitedExpire = b.expireTime
-                self.excitedStacks = b.count
-                return
+                or nm == "jinxpassive_cherry"
+            if isExcitedBuff then
+                local remaining = b.expireTime - now
+                if remaining > 0 and remaining <= 7 then
+                    self.isExcited = true
+                    self.excitedExpire = b.expireTime
+                    self.excitedStacks = b.count
+                    return
+                end
             end
         end
     end
@@ -1029,42 +1097,36 @@ function Jinx:ExecuteR()
     local minRange = self.Menu.ult.minRange:Value()
     local maxRange = self.Menu.ult.maxRange:Value()
     local overkill = self.Menu.ult.overkill:Value()
+    local multiR = self.Menu.ult.multiR:Value()
+    local multiCount = multiR and self.Menu.ult.multiCount:Value() or 0
+    local aaRange = overkill and self:GetCurrentRange() or 0
     local enemies = GetEnemyHeroes(maxRange)
+
+    local killTarget, multiTarget = nil, nil
 
     for i = 1, #enemies do
         local e = enemies[i]
         local d = Dist(myHero, e)
         if d >= minRange and d <= maxRange then
-            local rDmg = GetRDamage(e)
-            if rDmg >= e.health then
-
+            if not killTarget and GetRDamage(e) >= e.health then
+                local skip = false
                 if overkill then
-                    local aaRange = self:GetCurrentRange() + (e.boundingRadius or 0)
-                    if d <= aaRange + 50 then
-                        local aaDmg = GetAADamage(e)
-                        if e.health <= aaDmg * 3 then
-                            goto skipR
-                        end
+                    local effAA = aaRange + (e.boundingRadius or 0)
+                    if d <= effAA + 50 and e.health <= GetAADamage(e) * 3 then
+                        skip = true
                     end
                 end
-                self:CastR(e)
-                return
+                if not skip then killTarget = e end
             end
-            ::skipR::
+            if multiR and not multiTarget and GetEnemyCount(400, e) >= multiCount then
+                multiTarget = e
+            end
+            if killTarget then break end
         end
     end
 
-    if self.Menu.ult.multiR:Value() then
-        local multiCount = self.Menu.ult.multiCount:Value()
-        for i = 1, #enemies do
-            local e = enemies[i]
-            local d = Dist(myHero, e)
-            if d >= minRange and GetEnemyCount(400, e) >= multiCount then
-                self:CastR(e)
-                return
-            end
-        end
-    end
+    if killTarget then self:CastR(killTarget)
+    elseif multiTarget then self:CastR(multiTarget) end
 end
 
 function Jinx:SemiR()
@@ -1078,20 +1140,19 @@ end
 
 function Jinx:KillSteal()
     local mode = ActiveMode ~= "None" and ActiveMode or GetMode()
-    if mode == "Combo" then return end
 
     if self.Menu.ks.useW:Value() and Ready(_W) and not IsOrbwalkerAttacking() then
-        for _, e in ipairs(GetEnemyHeroes(W_RANGE)) do
-            if GetWDamage(e) >= e.health then
-                if not IsLineBlocked(myHero, e, W_RADIUS) then
-                    self:CastW(e)
-                    return
-                end
+        local enemies = GetEnemyHeroes(W_RANGE)
+        for i = 1, #enemies do
+            local e = enemies[i]
+            if GetWDamage(e) >= e.health and not IsLineBlocked(myHero, e, W_RADIUS) then
+                self:CastW(e)
+                return
             end
         end
     end
 
-    if self.Menu.ks.useR:Value() and Ready(_R) then
+    if mode ~= "Combo" and self.Menu.ks.useR:Value() and Ready(_R) then
         local minR = self.Menu.ult.minRange:Value()
         local maxR = self.Menu.ult.maxRange:Value()
         local enemies = GetEnemyHeroes(maxR)
@@ -1123,15 +1184,15 @@ function Jinx:OnPostAttack()
     local currentRange = self:GetCurrentRange() + (target.boundingRadius or 0)
 
     if Ready(_W) then
-        if mode == "Combo" and self.Menu.combo.useW:Value() and Dist(myHero, target) > currentRange then
+        local outOfAA = Dist(myHero, target) > currentRange
+        if not outOfAA then return end
+        if mode == "Combo" and self.Menu.combo.useW:Value() and ManaPercent() >= self.Menu.combo.comboMana:Value() then
             self:CastW(target)
             return
         end
         if mode == "Harass" and self.Menu.harass.useW:Value() and ManaPercent() >= self.Menu.harass.harassMana:Value() then
-            if Dist(myHero, target) > currentRange then
-                self:CastW(target)
-                return
-            end
+            self:CastW(target)
+            return
         end
     end
 end
@@ -1140,6 +1201,7 @@ function Jinx:Combo()
     if ManaPercent() < self.Menu.combo.comboMana:Value() then return end
 
     local target = GetTarget(self.rocketRange + 100, self.isFishBones)
+    if target and not CanTakeDamage(target, "spell") then target = nil end
     if not target then return end
 
     if self.Menu.combo.useQ:Value() then
@@ -1179,18 +1241,19 @@ end
 function Jinx:Clear()
     if not Ready(_Q) then return end
 
-    if self.Menu.clear.rocketAOE:Value() and ManaPercent() >= self.Menu.clear.clearMana:Value() then
-        if not self.isFishBones then
-            local minCount = self.Menu.clear.minMinions:Value()
-            local count = GetMinionCount(self.minigunRange + 50, myHero.pos)
-            if count >= minCount then
-                self:SwapQ()
-            end
-        end
+    local rocketAOE = self.Menu.clear.rocketAOE:Value()
+    local clearMana = self.Menu.clear.clearMana:Value()
+    local minCount = self.Menu.clear.minMinions:Value()
+    local manaOK = ManaPercent() >= clearMana
+    local count = GetMinionCount(self.minigunRange + 50, myHero.pos)
+
+    if rocketAOE and manaOK and not self.isFishBones and count >= minCount then
+        self:SwapQ()
+        return
     end
 
     if self.isFishBones then
-        if ManaPercent() < self.Menu.clear.clearMana:Value() or not self.Menu.clear.rocketAOE:Value() then
+        if not rocketAOE or not manaOK or count < minCount then
             self:SwapQ()
         end
     end
@@ -1257,7 +1320,12 @@ function Jinx:OnTick()
     elseif mode == "Flee" then self:Flee()
 
     elseif mode == "None" or mode == "LastHit" then
+        if self.rocketPokeMode then self.rocketPokeMode = false end
         if self.isFishBones and Ready(_Q) then self:SwapQ() end
+    end
+
+    if self.rocketPokeMode and mode ~= "Combo" and mode ~= "Harass" then
+        self.rocketPokeMode = false
     end
 end
 
@@ -1281,8 +1349,18 @@ function Jinx:OnDraw()
         DrawCircle3D(myHero.pos, W_RANGE, 1, RGBA(100, 100, 100, 255))
     end
 
+    local _cachedSP = nil
+    local _spComputed = false
+    local function getSP()
+        if not _spComputed then
+            _cachedSP = myHero.pos:To2D()
+            _spComputed = true
+        end
+        return _cachedSP
+    end
+
     if self.Menu.draw.weapon:Value() and Draw and Draw.Text then
-        local sp = myHero.pos:To2D()
+        local sp = getSP()
         if sp and sp.onScreen then
             local txt, col
             if self.isFishBones then
@@ -1297,7 +1375,7 @@ function Jinx:OnDraw()
     end
 
     if self.Menu.draw.excited:Value() and self.isExcited and Draw and Draw.Text then
-        local sp = myHero.pos:To2D()
+        local sp = getSP()
         if sp and sp.onScreen then
             local remaining = math_max(0, self.excitedExpire - GameTimer())
             Draw.Text(string_format("GET EXCITED! %.1fs", remaining), 18, sp.x - 55, sp.y + 48, RGBA(255, 255, 0, 200))
