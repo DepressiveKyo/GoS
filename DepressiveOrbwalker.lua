@@ -1,5 +1,5 @@
 local __name__ = "DepressiveOrbwalker"
-local __version__ = 1.7
+local __version__ = 1.8
 
 if _G.DepressiveOrbUpdate then
 	return
