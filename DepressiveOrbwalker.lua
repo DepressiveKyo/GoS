@@ -110,7 +110,9 @@ do
 end
 
 Callback.Add("Tick", function()
-	for _, updater in ipairs(DepressiveOrbUpdate.Callbacks) do
+	local cbs = DepressiveOrbUpdate.Callbacks
+	for i = 1, #cbs do
+		local updater = cbs[i]
 		if updater.Step > 0 then
 			updater:OnTick()
 		end
@@ -130,9 +132,6 @@ then
 	return
 end
 
---#region headers
-
--- OPTIMIZACIÓN: Localizar todas las funciones de math en el scope local
 local math_huge = math.huge
 local math_pi = math.pi
 local math_ceil = assert(math.ceil)
@@ -148,7 +147,6 @@ local table_sort = assert(table.sort)
 local table_remove = assert(table.remove)
 local table_insert = assert(table.insert)
 
--- OPTIMIZACIÓN: Localizar variables globales frecuentemente usadas
 local myHero = myHero
 local os = os
 local math = math
@@ -185,15 +183,9 @@ local GameObjectCount = Game.ObjectCount
 local GameTurretCount = Game.TurretCount
 local GameMinionCount = Game.MinionCount
 
--- OPTIMIZACIÓN: Constantes matemáticas precalculadas
 local DEG_TO_RAD = math_pi / 180.0
 local RAD_TO_DEG = 180.0 / math_pi
 
---#endregion
-
---#region methods
-
--- OPTIMIZACIÓN: IsInRange sin crear tablas intermedias
 local function IsInRange(p1, p2, range)
 	local pos1, pos2
 	if p1.pos then pos1 = p1.pos else pos1 = p1 end
@@ -207,7 +199,6 @@ local function IsInRange(p1, p2, range)
 	return dx * dx + dy * dy <= range * range
 end
 
--- OPTIMIZACIÓN: GetDistance con sqrt local
 local function GetDistance(p1, p2)
 	local pos1, pos2
 	if p1.pos then pos1 = p1.pos else pos1 = p1 end
@@ -221,7 +212,6 @@ local function GetDistance(p1, p2)
 	return math_sqrt(dx * dx + dy * dy)
 end
 
--- OPTIMIZACIÓN: GetDistanceSq para comparaciones de rango (evita sqrt)
 local function GetDistanceSq(p1, p2)
 	local pos1, pos2
 	if p1.pos then pos1 = p1.pos else pos1 = p1 end
@@ -235,7 +225,6 @@ local function GetDistanceSq(p1, p2)
 	return dx * dx + dy * dy
 end
 
--- OPTIMIZACIÓN: Polar con constante precalculada
 local function Polar(v1)
 	local x = v1.x
 	local z = v1.z or v1.y
@@ -301,15 +290,34 @@ end
 local function GetControlPos(a, b, c)
 	local pos
 	if a and b and c then
-		-- Interprets as (x, z, unused) for 3D world coordinates
-		-- The y (height) will be determined at conversion time using myHero.pos.y
-		pos = { x = a, y = nil, z = b }  -- Note: y is nil, will use myHero.pos.y when needed
+		pos = { x = a, y = nil, z = b }
 	elseif a and b then
 		pos = { x = a, y = b }
 	elseif a then
 		pos = a.pos or a
 	end
 	return pos
+end
+
+local function ResolveHandle(unitOrHandle)
+	if type(unitOrHandle) == "userdata" then
+		return unitOrHandle.handle
+	end
+	return unitOrHandle
+end
+
+local function ResolveObject(unitOrHandle, handles)
+	if type(unitOrHandle) == "userdata" then
+		return unitOrHandle
+	end
+	return handles[unitOrHandle]
+end
+
+local function GetAttackFlightTime(attacker, targetPos, speed)
+	if speed and speed > 0 then
+		return GetDistance(attacker.pos, targetPos) / speed
+	end
+	return 0
 end
 
 local function CastKey(key)
@@ -323,48 +331,7 @@ local function CastKey(key)
 end
 
 local function GetBuffTypes(menu)
-	--[[enum class BuffType {
-		Internal = 0,
-		Aura = 1,
-		CombatEnchancer = 2,
-		CombatDehancer = 3,
-		SpellShield = 4,
-		Stun = 5,
-		Invisibility = 6,
-		Silence = 7,
-		Taunt = 8,
-		Berserk = 9,
-		Polymorph = 10,
-		Slow = 11,
-		Snare = 12,
-		Damage = 13,
-		Heal = 14,
-		Haste = 15,
-		SpellImmunity = 16,
-		PhysicalImmunity = 17,
-		Invulnerability = 18,
-		AttackSpeedSlow = 19,
-		NearSight = 20,
-		Fear = 22,
-		Charm = 23,
-		Poison = 24,
-		Suppression = 25,
-		Blind = 26,
-		Counter = 27,
-		Currency = 21,
-		Shred = 28,
-		Flee = 29,
-		Knockup = 30,
-		Knockback = 31,
-		Disarm = 32,
-		Grounded = 33,
-		Drowsy = 34,
-		Asleep = 35,
-		Obscured = 36,
-		ClickProofToEnemies = 37,
-		Unkillable = 38
-	};
-	--]]
+
 	return {
 		[5] = menu.Stun:Value(),
 		[12] = menu.Snare:Value(),
@@ -378,8 +345,6 @@ local function GetBuffTypes(menu)
 		[32] = menu.Disarm:Value(),
 	}
 end
-
---#endregion
 
 local ChampionInfo, Cached, Menu, Color, Action, Buff, Damage, Data, Spell, SummonerSpell, Item, Object, Target, Orbwalker, Movement, Cursor, Health, Attack, EvadeSupport, SmoothMouse
 
@@ -396,49 +361,39 @@ local ORBWALKER_MODE_LASTHIT = 4
 local ORBWALKER_MODE_FLEE = 5
 local ORBWALKER_MODE_SPACING = 6
 
--- Auto Safe Reset configuration (always enabled)
-local AUTO_SAFE_RESET_TIMEOUT = 2000 -- ms
+local AUTO_SAFE_RESET_TIMEOUT = 2000
 
---#region FPS Optimization System
 local FPSOptimizer = {
-    -- Configuración de optimización
     enabled = true,
     targetFPS = 60,
     currentFPS = 60,
     frameTime = 0,
     lastFrameTime = 0,
-    
-    -- Contadores y timers
+
     tickCounter = 0,
     lastTickTime = 0,
-    
-    -- Intervalos dinámicos (en milisegundos)
-    tickInterval = 16,      -- ~60 FPS
-    cacheInterval = 100,    -- Cache refresh rate
-    
-    -- Flags de estado
+
+    tickInterval = 16,
+    cacheInterval = 100,
+
     highLoadMode = false,
     skipNextTick = false,
     skipNextDraw = false,
-    
-    -- OPTIMIZACIÓN: Pool de tablas para evitar garbage collection
+
     _heroPool = {},
     _minionPool = {},
     _objectPool = {},
-    
-    -- Cache de objetos para reducir llamadas API
+
     cachedHeroes = {},
     cachedMinions = {},
     cachedObjects = {},
     lastCacheUpdate = 0,
-    
-    -- Sistema de caché inteligente basado en modos
+
     smartCacheEnabled = true,
     currentOrbwalkerMode = ORBWALKER_MODE_NONE,
     lastModeCheck = 0,
-    modeCheckInterval = 50, -- ms
-    
-    -- Configuración de caché por modo
+    modeCheckInterval = 50,
+
     cacheConfig = {
         [ORBWALKER_MODE_COMBO] = {
             cacheHeroes = true,
@@ -481,16 +436,15 @@ local FPSOptimizer = {
             cacheRange = 1500
         }
     },
-    
+
     GetCurrentOrbwalkerMode = function(self)
         local currentTime = GetTickCount()
         if currentTime - self.lastModeCheck < self.modeCheckInterval then
             return self.currentOrbwalkerMode
         end
-        
+
         self.lastModeCheck = currentTime
-        
-        -- Detectar modo actual del orbwalker (OPTIMIZADO: acceso directo)
+
         if Orbwalker and Orbwalker.Modes then
             local modes = Orbwalker.Modes
             if modes[ORBWALKER_MODE_COMBO] then
@@ -513,44 +467,46 @@ local FPSOptimizer = {
         else
             self.currentOrbwalkerMode = ORBWALKER_MODE_NONE
         end
-        
+
         return self.currentOrbwalkerMode
     end,
-    
+
     GetCacheConfig = function(self)
         local mode = self:GetCurrentOrbwalkerMode()
         return self.cacheConfig[mode] or self.cacheConfig[ORBWALKER_MODE_NONE]
     end,
-    
+
     Update = function(self)
         local currentTime = GetTickCount()
-        
-        -- Calcular FPS actual
+
         if self.lastFrameTime > 0 then
             self.frameTime = currentTime - self.lastFrameTime
             self.currentFPS = math_min(1000 / math_max(self.frameTime, 1), 120)
         end
         self.lastFrameTime = currentTime
-        
-        -- Ajustar intervalos basado en FPS
+
         if self.currentFPS < 30 then
-            -- FPS bajo - modo de alta carga
             self.highLoadMode = true
-            self.tickInterval = 33    -- ~30 FPS
-            self.cacheInterval = 200  -- Menos actualizaciones de cache
+            self.tickInterval = 33
+            self.cacheInterval = 200
         elseif self.currentFPS < 45 then
-            -- FPS medio
             self.highLoadMode = true
-            self.tickInterval = 25    -- ~40 FPS
+            self.tickInterval = 25
             self.cacheInterval = 150
         else
-            -- FPS alto - modo normal
             self.highLoadMode = false
-            self.tickInterval = 16    -- ~60 FPS
+            self.tickInterval = 16
             self.cacheInterval = 100
         end
+
+        local pingMs = (Game.Latency and Game.Latency() or 0)
+        if pingMs >= 120 then
+            self.tickInterval = math_max(10, self.tickInterval - 6)
+        elseif pingMs >= 70 then
+            self.tickInterval = math_max(12, self.tickInterval - 3)
+        end
     end,
-    
+
     ShouldTick = function(self)
         local currentTime = GetTickCount()
         if currentTime - self.lastTickTime >= self.tickInterval then
@@ -560,75 +516,72 @@ local FPSOptimizer = {
         end
         return false
     end,
-    
+
     ShouldUpdateCache = function(self)
         local currentTime = GetTickCount()
         return currentTime - self.lastCacheUpdate >= self.cacheInterval
     end,
-    
-    -- OPTIMIZACIÓN: Limpiar tabla sin crear nueva (más eficiente para GC)
+
     WipeTable = function(self, t)
         for i = #t, 1, -1 do
             t[i] = nil
         end
     end,
-    
+
     UpdateObjectCache = function(self)
-        if not self:ShouldUpdateCache() then
+        local currentTime = GetTickCount()
+        if currentTime - self.lastCacheUpdate < self.cacheInterval then
             return
         end
-        
-        local currentTime = GetTickCount()
         self.lastCacheUpdate = currentTime
-        
+
         local config = self:GetCacheConfig()
         local myPos = myHero.pos
-        local cacheRangeSq = config.cacheRange * config.cacheRange  -- Pre-calcular rango al cuadrado
-        
-        -- Cache heroes solo si está habilitado para el modo actual
+        local cacheRangeSq = config.cacheRange * config.cacheRange
+
+        local heroes = self.cachedHeroes
         if config.cacheHeroes then
-            -- OPTIMIZACIÓN: Limpiar tabla sin crear nueva
-            self:WipeTable(self.cachedHeroes)
+            self:WipeTable(heroes)
             local heroCount = GameHeroCount()
+            local hc = 0
             for i = 1, heroCount do
                 local hero = GameHero(i)
                 if hero and hero.valid and not hero.dead and hero.isEnemy then
-                    -- Always cache heroes regardless of range (important for long range spells)
-                    table_insert(self.cachedHeroes, hero)
+                    hc = hc + 1
+                    heroes[hc] = hero
                 end
             end
         else
-            -- Limpiar cache de heroes si no está habilitado
-            self:WipeTable(self.cachedHeroes)
+            self:WipeTable(heroes)
         end
-        
-        -- Cache minions solo si está habilitado para el modo actual
+
+        local minions = self.cachedMinions
         if config.cacheMinions then
-            self:WipeTable(self.cachedMinions)
+            self:WipeTable(minions)
             local minionCount = GameMinionCount()
+            local mc = 0
             for i = 1, minionCount do
                 local minion = GameMinion(i)
                 if minion and minion.valid and not minion.dead and minion.isEnemy then
-                    -- Usar GetDistanceSq para evitar cálculo de sqrt (más rápido)
                     if GetDistanceSq(minion.pos, myPos) <= cacheRangeSq then
-                        table_insert(self.cachedMinions, minion)
+                        mc = mc + 1
+                        minions[mc] = minion
                     end
                 end
             end
         else
-            -- Limpiar cache de minions si no está habilitado
             self:WipeTable(self.cachedMinions)
         end
     end,
-    
+
     GetCachedHeroes = function(self)
         local config = self:GetCacheConfig()
         if config.cacheHeroes then
             return self.cachedHeroes
         end
-        return self._heroPool -- Retorna tabla vacía reutilizable
+        return self._heroPool
     end,
-    
+
     GetCachedMinions = function(self)
         local config = self:GetCacheConfig()
         if config.cacheMinions then
@@ -636,50 +589,46 @@ local FPSOptimizer = {
         end
         return self._minionPool
     end,
-    
-    -- Optimización de loops pesados con chunking
+
     OptimizeLoop = function(self, collection, maxProcessPerTick)
         maxProcessPerTick = maxProcessPerTick or (self.highLoadMode and 3 or 10)
-        
+
         local collectionSize = #collection
         if collectionSize <= maxProcessPerTick then
             return collection
         end
-        
-        -- Procesar solo una parte de la colección por tick
+
         local chunks = math_ceil(collectionSize / maxProcessPerTick)
         local startIdx = ((self.tickCounter - 1) % chunks) * maxProcessPerTick + 1
         local endIdx = math_min(startIdx + maxProcessPerTick - 1, collectionSize)
-        
-        -- OPTIMIZACIÓN: Reutilizar tabla del pool
+
         local optimizedCollection = self._objectPool
         self:WipeTable(optimizedCollection)
-        
+
         for i = startIdx, endIdx do
             local item = collection[i]
             if item then
                 table_insert(optimizedCollection, item)
             end
         end
-        
+
         return optimizedCollection
     end,
-    
-    -- Función para obtener información del modo actual (para debugging)
+
     GetModeInfo = function(self)
         local mode = self:GetCurrentOrbwalkerMode()
         local config = self:GetCacheConfig()
         local modeNames = {
             [ORBWALKER_MODE_NONE] = "NONE",
             [ORBWALKER_MODE_COMBO] = "COMBO",
-            [ORBWALKER_MODE_HARASS] = "HARASS", 
+            [ORBWALKER_MODE_HARASS] = "HARASS",
             [ORBWALKER_MODE_LANECLEAR] = "LANECLEAR",
             [ORBWALKER_MODE_JUNGLECLEAR] = "JUNGLECLEAR",
             [ORBWALKER_MODE_LASTHIT] = "LASTHIT",
             [ORBWALKER_MODE_FLEE] = "FLEE",
             [ORBWALKER_MODE_SPACING] = "SPACING"
         }
-        
+
         return {
             mode = modeNames[mode] or "UNKNOWN",
             cacheHeroes = config.cacheHeroes,
@@ -690,7 +639,6 @@ local FPSOptimizer = {
         }
     end
 }
---#endregion
 
 local SORT_AUTO = 1
 local SORT_CLOSEST = 2
@@ -711,7 +659,6 @@ local ItemKeys = { HK_ITEM_1, HK_ITEM_2, HK_ITEM_3, HK_ITEM_4, HK_ITEM_5, HK_ITE
 local LastChatOpenTimer = 0
 
 ChampionInfo = {
-
 	GwenMistObject = nil,
 	GwenMistPos = nil,
 	GwenMistEndTime = 0,
@@ -720,15 +667,14 @@ ChampionInfo = {
 	AzirSoldiers = {},
 
 	OnLoad = function(self) end,
-
 	DrawObjects = function(self)
 		local text = {}
 		local mePos = myHero.pos
-		-- OPTIMIZACIÓN: Constantes precalculadas
-		local drawRangeSq = 1690000  -- 1300 * 1300
-		local textMergeRangeSq = 2500  -- 50 * 50
+
+		local drawRangeSq = 1690000
+		local textMergeRangeSq = 2500
 		local objectCount = GameObjectCount()
-		
+
 		for i = 1, objectCount do
 			local obj = GameObject(i)
 			if obj then
@@ -762,8 +708,8 @@ ChampionInfo = {
 		local mePos = myHero.pos
 		if obj then
 			local pos = obj.pos
-			local drawRangeSq = 1300 * 1300  -- Pre-calcular rango al cuadrado
-			local textMergeRangeSq = 50 * 50  -- Pre-calcular rango de merge al cuadrado
+			local drawRangeSq = 1300 * 1300
+			local textMergeRangeSq = 50 * 50
 			if pos and GetDistanceSq(mePos, pos) <= drawRangeSq then
 				Draw.Circle(pos, 10)
 				local pos2D = pos:To2D()
@@ -790,7 +736,7 @@ ChampionInfo = {
 		local enemy = nil
 		local enemies = Object:GetEnemyHeroes()
 		local myPos = myHero.pos
-		local debugRangeSq = 1000 * 1000  -- Pre-calcular rango al cuadrado
+		local debugRangeSq = 1000 * 1000
 		for i = 1, #enemies do
 			if GetDistanceSq(enemies[i].pos, myPos) <= debugRangeSq then
 				enemy = enemies[i]
@@ -802,18 +748,13 @@ ChampionInfo = {
 				self:DetectGwenMist(myHero)
 			end
 			self:DrawObject(self.GwenMistObject)
-			--print(GetDistance(enemy.pos, self.GwenMistObject.pos))
-			--self:DrawObjects()
 		elseif enemy then
-			--print(GetDistance(enemy.pos, myHero.pos))
 		end
 		if enemy then
-			--print("Gwen is targetable to dummyTarget?: " .. tostring(self:CustomIsTargetable(myHero, enemy)))
 		end
 	end,
 
 	OnTick = function(self)
-		--self:GwenDebug()
 		if Object.IsAzir then
 			self:DetectAzirSoldiers()
 		end
@@ -825,7 +766,7 @@ ChampionInfo = {
 					if not self:IsGwenMistValid() then
 						self:DetectGwenMist(enemy)
 					end
-					--print(GetDistance(self.GwenMistObject.pos, ally.pos))
+
 					if self.GwenMistObject and
 					GetDistance(self.GwenMistObject.pos,
 					ally.pos) >= 425 then
@@ -853,25 +794,23 @@ ChampionInfo = {
 	end,
 
 	DetectGwenMist = function(self, unit)
-		-- Optimización FPS: Limitar frecuencia de detección
 		local currentTime = GetTickCount()
 		if self.lastGwenMistDetection and currentTime - self.lastGwenMistDetection < 200 then
 			return
 		end
 		self.lastGwenMistDetection = currentTime
-		
+
 		local unitPos = unit.pos
 		local count = GameObjectCount()
 		if count and count > 0 and count < 100000 then
-			-- Optimización FPS: Limitar objetos procesados
 			local maxObjects = FPSOptimizer.highLoadMode and 20 or 100
 			local processed = 0
-			
-			for i = 1, math.min(count, maxObjects) do
+
+			for i = 1, math_min(count, maxObjects) do
 				if processed >= maxObjects then
 					break
 				end
-				
+
 				local o = GameObject(i)
 				if o then
 					local pos = o.pos
@@ -902,7 +841,7 @@ ChampionInfo = {
 		if activeSpell and activeSpell.valid then
 			if activeSpell.name == "AzirWSpawnSoldier" then
 				local myPos = myHero.pos
-				local detectRangeSq = 1000 * 1000  -- Pre-calcular rango al cuadrado
+				local detectRangeSq = 1000 * 1000
 				for i = 1, GameObjectCount() do
 					local obj = GameObject(i)
 					if obj and obj.name == "AzirSoldier" and GetDistanceSq(myPos, obj.pos) <= detectRangeSq then
@@ -916,12 +855,12 @@ ChampionInfo = {
 	IsInAzirSoldierRange = function(self, obj)
 		local result = false
 		local commandRange = 780
-		if(myHero.range == 575) then -- Lethal Tempo grants 50 attack range. Hacky fix.
+		if(myHero.range == 575) then
 			commandRange = 830
 		end
 		local myPos = myHero.pos
-		local commandRangeSq = commandRange * commandRange  -- Pre-calcular rango al cuadrado
-		local objRangeSq = 350 * 350  -- Pre-calcular rango al cuadrado
+		local commandRangeSq = commandRange * commandRange
+		local objRangeSq = 350 * 350
 		for i = 1, #self.AzirSoldiers do
 			local soldier = self.AzirSoldiers[i]
 			if
@@ -939,7 +878,6 @@ ChampionInfo = {
 }
 
 Cached = {
-
 	OtherMinions = {
 		["apheliosturret"] = true,
 		["fiddlestickseffigy"] = true,
@@ -986,7 +924,7 @@ Cached = {
 
 	WndMsg = function(self, msg, wParam)
 		local oKeys = {}
-		--Fetch hotkeys for orbwalker modes
+
 		if(Orbwalker.MenuKeys) then
 			oKeys = {}
 			if Orbwalker.MenuKeys[ORBWALKER_MODE_COMBO][1] then
@@ -1012,15 +950,13 @@ Cached = {
 			end
 		end
 
-		--If we press an orbwalker hotkey, reset our buffer so we immediately cache new minions (we only do this once per button press to prevent lag)
 		for _, key in pairs(oKeys) do
 			if (msg == KEY_DOWN and wParam == key) then
 				self.TempCacheBuffer = {m = GameTimer(), w = GameTimer(), t = GameTimer(), p = GameTimer()}
 				return
 			end
 		end
-		
-		-- Interrupt smooth movement on user input (debounced)
+
 		local WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MOUSEMOVE = 0x0201, 0x0204, 0x0200
 		if msg == WM_LBUTTONDOWN or msg == WM_RBUTTONDOWN or msg == WM_MOUSEMOVE then
 			if MenuSmoothMouse and MenuSmoothMouse:Value() and SmoothMouse and SmoothMouse.IsMoving and SmoothMouse:IsMoving() then
@@ -1036,11 +972,9 @@ Cached = {
 	end,
 
 	Reset = function(self)
-		-- Actualizar FPSOptimizer y cache de objetos
 		FPSOptimizer:Update()
 		FPSOptimizer:UpdateObjectCache()
-		
-		-- OPTIMIZACIÓN: Limpiar buffs usando next() (más eficiente que pairs + tabla temporal)
+
 		local buffs = self.Buffs
 		local k = next(buffs)
 		while k do
@@ -1048,8 +982,7 @@ Cached = {
 			buffs[k] = nil
 			k = nextK
 		end
-		
-		-- OPTIMIZACIÓN: Limpiar tablas usando índice inverso directamente
+
 		if self.HeroesSaved then
 			local heroes = self.Heroes
 			for i = #heroes, 1, -1 do
@@ -1133,11 +1066,9 @@ Cached = {
 	end,
 
 	GetHeroes = function(self)
-		-- Sistema de caché inteligente basado en modo del orbwalker
 		if FPSOptimizer.enabled and FPSOptimizer.smartCacheEnabled then
 			local config = FPSOptimizer:GetCacheConfig()
-			
-			-- Si el modo actual no requiere cachear heroes, retornar solo extra heroes
+
 			if not config.cacheHeroes then
 				local result = {}
 				for i = 1, #self.ExtraHeroes do
@@ -1145,37 +1076,34 @@ Cached = {
 				end
 				return result
 			end
-			
-			-- Usar cache del FPSOptimizer si está disponible y actualizado
+
 			if not FPSOptimizer:ShouldUpdateCache() and #FPSOptimizer.cachedHeroes > 0 then
 				local result = {}
 				for i = 1, #FPSOptimizer.cachedHeroes do
 					local hero = FPSOptimizer.cachedHeroes[i]
 					table_insert(result, hero)
 				end
-				-- Agregar heroes extra cacheados
+
 				for i = 1, #self.ExtraHeroes do
 					table_insert(result, self.ExtraHeroes[i])
 				end
 				return result
 			end
 		end
-		
-		-- Fallback al sistema original si el cache no está disponible
+
 		if not self.HeroesSaved then
 			self.HeroesSaved = true
 			self.ExtraHeroesSaved = true
 			local count = GameHeroCount()
 			if count and count > 0 and count < 1000 then
-				-- Optimización: Procesar en chunks si hay muchos heroes
 				local maxProcess = FPSOptimizer.highLoadMode and 3 or count
 				local processed = 0
-				
+
 				for i = 1, count do
 					if processed >= maxProcess then
 						break
 					end
-					
+
 					local o = GameHero(i)
 					if o and o.valid and o.visible and o.isTargetable and not o.dead then
 						table_insert(self.Heroes, o)
@@ -1221,16 +1149,12 @@ Cached = {
 	end,
 
 	GetMinions = function(self)
-		-- Sistema de caché inteligente basado en modo del orbwalker
 		if FPSOptimizer.enabled and FPSOptimizer.smartCacheEnabled then
 			local config = FPSOptimizer:GetCacheConfig()
-			
-			-- Si el modo actual no requiere cachear minions, retornar solo extra units
-			-- PERO siempre incluir minions enemigos para detección de colisiones de hechizos
+
 			if not config.cacheMinions then
 				local result = {}
-				-- Asegurar que incluimos minions enemigos para detección de colisiones
-				-- Esto es crítico para que GGPrediction funcione correctamente
+
 				local count = GameMinionCount()
 				if count and count > 0 then
 					for i = 1, count do
@@ -1242,50 +1166,44 @@ Cached = {
 						end
 					end
 				end
-				-- Agregar unidades extra
+
 				for i = 1, #self.ExtraUnits do
 					table_insert(result, self.ExtraUnits[i])
 				end
 				return result
 			end
-			
-			-- Usar cache del FPSOptimizer si está disponible y actualizado
+
 			if not FPSOptimizer:ShouldUpdateCache() and #FPSOptimizer.cachedMinions > 0 then
 				local result = {}
 				for i = 1, #FPSOptimizer.cachedMinions do
 					table_insert(result, FPSOptimizer.cachedMinions[i])
 				end
-				-- Agregar unidades extra
+
 				for i = 1, #self.ExtraUnits do
 					table_insert(result, self.ExtraUnits[i])
 				end
 				return result
 			end
 		end
-		
-		-- Fallback al sistema original
+
 		if not self.MinionsSaved then
 			self.MinionsSaved = true
 			self.ExtraUnitsSaved = true
 			local cachedMinions = self:FetchCachedMinions()
 			local count = #cachedMinions
 			if count and count > 0 and count < 1000 then
-				-- Optimización: Procesar en chunks si hay muchos minions
-				-- PERO nunca limitar minions enemigos para detección de colisiones
 				local maxProcess = FPSOptimizer.highLoadMode and 10 or count
 				local processed = 0
 				local enemyMinionCount = 0
-				
+
 				for i = 1, count do
 					local o = cachedMinions[i]
 					if o and o.valid and o.visible and o.isTargetable and not o.dead then
 						if not o.isImmortal or o.charName:lower() == "sru_atakhan" then
-							-- Siempre incluir minions enemigos (necesarios para detección de colisiones)
 							if o.isEnemy then
 								table_insert(self.Minions, o)
 								enemyMinionCount = enemyMinionCount + 1
 							elseif processed < maxProcess then
-								-- Limitar solo minions aliados si es necesario
 								table_insert(self.Minions, o)
 								processed = processed + 1
 							end
@@ -1394,7 +1312,7 @@ Cached = {
 
 		return self.TempCachedWards
 	end,
-	
+
 	GetPlants = function(self)
 		if not self.PlantsSaved then
 			self.PlantsSaved = true
@@ -1459,9 +1377,8 @@ Cached = {
 		return self.Buffs[id] or {}
 	end,
 }
--- stylua: ignore start
-Menu = {
 
+Menu = {
     Main = nil,
     Target = nil,
     Orbwalker = nil,
@@ -1479,7 +1396,7 @@ Menu = {
 		self.Target:MenuElement({id = 'mindistance', name = 'mindistance', value = 400, min = 100, max = 600, step=25 })
 		self.Target:MenuElement({id = 'maxdistance', name = 'maxdistance', value = 800, min = 100, max = 1500, step=25 })
 		self.Target:MenuElement({id = 'distmultiplier', name = 'distance multiplier', value = 0.5, min = 0, max = 1, step=0.01 })
-		-- Smart Target Selector options
+
 		self.Target:MenuElement({id = 'SmartAI', name = 'Smart AI', type = MENU})
 		self.Target.SmartAI:MenuElement({id = 'UseDamageCalc', name = 'Use Damage Calculation to detect killable targets', value = false})
 		self.Target.SmartAI:MenuElement({id = 'MinHpPercent', name = 'Low HP percent (fallback)', value = 25, min = 0, max = 100, step = 1})
@@ -1505,12 +1422,14 @@ Menu = {
         self.Orbwalker.General:MenuElement({id = 'AttackPlants', name = 'Attack Plants(LaneClear Mode)', value = false})
         self.Orbwalker.General:MenuElement({id = 'HarassFarm', name = 'Farm In Harass Mode', value = true})
         self.Orbwalker.General:MenuElement({id = 'AttackResetting', name = 'Attack Resetting', value = true})
+        self.Orbwalker.General:MenuElement({id = 'UnderMouseCast', name = 'Under-mouse Force Attack', value = false})
+        self.Orbwalker.General:MenuElement({id = 'UnderMouseKey', name = 'Under-mouse Force Key', key = string.byte('C')})
         self.Orbwalker.General:MenuElement({id = 'FastKiting', name = 'Fast Kiting', value = true})
         self.Orbwalker.General:MenuElement({id = 'LaneClearHeroes', name = 'LaneClear Heroes', value = true})
         self.Orbwalker.General:MenuElement({id = 'AttackRange', name = 'AARange = RealRange - X', value = 35, min = 0, max = 35, step = 1})
         self.Orbwalker.General:MenuElement({id = 'HoldRadius', name = 'Hold Radius', value = 0, min = 0, max = 250, step = 10})
         self.Orbwalker.General:MenuElement({id = 'ExtraWindUpTime', name = 'Extra WindUpTime', value = 0, min = -25, max = 75, step = 5})
-	-- Attack Cancel (post-AA spell cast) options
+
 	self.Orbwalker.General:MenuElement({id = 'CancelQ', name = 'Cancel: Cast Q after AA', value = false})
 	self.Orbwalker.General:MenuElement({id = 'CancelW', name = 'Cancel: Cast W after AA', value = false})
 	self.Orbwalker.General:MenuElement({id = 'CancelE', name = 'Cancel: Cast E after AA', value = false})
@@ -1563,7 +1482,6 @@ Menu = {
 	self.Main.FPSOptimization.SmartCacheConfig:MenuElement({id = 'LastHitCacheMinions', name = 'Cache Minions in LastHit', value = true, callback = function(value) FPSOptimizer.cacheConfig[ORBWALKER_MODE_LASTHIT].cacheMinions = value end})
     end,
 }
--- stylua: ignore end
 
 Menu:CreateMain()
 Menu:CreateTarget()
@@ -1571,9 +1489,7 @@ Menu:CreateOrbwalker()
 Menu:CreateDrawings()
 Menu:CreateGeneral()
 
--- Inicializar configuraciones del sistema de caché inteligente
 if Menu.Main.FPSOptimization and Menu.Main.FPSOptimization.SmartCacheConfig then
-    -- Sincronizar valores del menú con la configuración del FPSOptimizer
     Menu.Main.FPSOptimization.SmartCacheConfig.ComboCacheHeroes:Value(FPSOptimizer.cacheConfig[ORBWALKER_MODE_COMBO].cacheHeroes)
     Menu.Main.FPSOptimization.SmartCacheConfig.ComboCacheMinions:Value(FPSOptimizer.cacheConfig[ORBWALKER_MODE_COMBO].cacheMinions)
     Menu.Main.FPSOptimization.SmartCacheConfig.HarassCacheHeroes:Value(FPSOptimizer.cacheConfig[ORBWALKER_MODE_HARASS].cacheHeroes)
@@ -1598,16 +1514,15 @@ Color = {
 	Range = Draw.Color(150, 49, 210, 0),
 	EnemyRange = Draw.Color(150, 255, 0, 0),
 	Cursor = Draw.Color(255, 0, 255, 0),
+	PrepHitable = Draw.Color(255, 100, 200, 255),
 	drawcolor1 = Draw.Color(150, 255, 255, 255),
 	drawcolor2 = Draw.Color(150, 239, 159, 55),
 }
 
---#region FPS Optimization Utilities
--- Throttle expensive draw operations
 local DrawThrottle = {
 	lastDrawTime = {},
-	throttleDelay = 16, -- 1000ms / 60fps
-	
+	throttleDelay = 16,
+
 	CanDraw = function(self, key)
 		local now = GetTickCount()
 		if self.lastDrawTime[key] == nil or (now - self.lastDrawTime[key]) >= self.throttleDelay then
@@ -1618,10 +1533,7 @@ local DrawThrottle = {
 	end,
 }
 
---#endregion
-
 Action = {
-
 	Tasks = {},
 
 	OnTick = function(self)
@@ -1645,7 +1557,6 @@ Action = {
 }
 
 Buff = {
-
 	GetBuffDuration = function(self, unit, name)
 		name = name:lower()
 		local result = 0
@@ -1798,7 +1709,7 @@ Buff = {
 		end
 		return result
 	end,
-	
+
 	GetBuffStartTime = function(self, unit, name)
 		name = name:lower()
 		local result = 0
@@ -1831,7 +1742,6 @@ Buff = {
 }
 
 Damage = {
-
 	BaseTurrets = {
 		["SRUAP_Turret_Order3"] = true,
 		["SRUAP_Turret_Order4"] = true,
@@ -1883,7 +1793,7 @@ Damage = {
 				local level = args.From:GetSpellData(_W).level
 				if level > 0 then
 					args.RawMagical = args.RawMagical + (35 * level - 5) + 0.6 * args.From.ap
-				end	
+				end
 			end
 		end,
 		["Ziggs"] = function(args)
@@ -2043,12 +1953,8 @@ Damage = {
 				args.RawMagical = args.RawMagical + 40
 			end
 		end,
-		-- [3085] = function(args)
-			-- args.RawMagical = args.RawMagical + 30
-		-- end,
+
 		[3091] = function(args)
-			-- local t = { 15, 15, 15, 15, 15, 15, 15, 15, 25, 35, 45, 55, 65, 75, 76.25, 77.5, 78.75, 80 }
-			-- args.RawMagical = args.RawMagical + t[math_max(math_min(args.From.levelData.lvl, 18), 1)]
 			args.RawMagical = args.RawMagical + 45
 		end,
 		[3115] = function(args)
@@ -2060,35 +1966,13 @@ Damage = {
 		[3302] = function(args)
 			args.RawMagical = args.RawMagical + 30
 		end,
-		-- [6670] = function(args)
-			-- if args.TargetIsMinion then
-				-- args.RawPhysical = args.RawPhysical + 20
-			-- end
-		-- end,
-		-- [2015] = function(args)
-			-- if Buff:GetBuffStacks(args.From, "itemstatikshankcharge") == 100 then
-				-- args.RawMagical = args.RawMagical + 60
-			-- end
-		-- end,
-		-- [3087] = function(args)
-			-- if Buff:GetBuffStacks(args.From, "itemstatikshankcharge") == 100 then
-				-- if args.TargetIsMinion then
-					-- args.RawMagical = args.RawMagical + 150
-				-- else
-					-- args.RawMagical = args.RawMagical + 90
-				-- end
-			-- end
-		-- end,
+
 		[3094] = function(args)
 			if Buff:GetBuffStacks(args.From, "itemstatikshankcharge") == 100 then
 				args.RawMagical = args.RawMagical + 40
 			end
 		end,
-		-- [3095] = function(args)
-			-- if Buff:GetBuffStacks(args.From, "itemstatikshankcharge") == 100 then
-				-- args.RawMagical = args.RawMagical + 100
-			-- end
-		-- end,
+
 		[6699] = function(args)
 			if Buff:GetBuffStacks(args.From, "itemstatikshankcharge") == 100 then
 				args.RawPhysical = args.RawPhysical + 100
@@ -2109,11 +1993,7 @@ Damage = {
 				args.RawPhysical = args.RawPhysical + 2.0 * args.From.baseDamage
 			end
 		end,
-		-- [3508] = function(args)
-			-- if Buff:HasBuff(args.From, "3508buff") then
-				-- args.RawPhysical = args.RawPhysical + 1.4 * args.From.baseDamage + 0.2 * args.From.bonusDamage
-			-- end
-		-- end,
+
 		[3100] = function(args)
 			if Buff:HasBuff(args.From, "lichbane") then
 				args.RawMagical = args.RawMagical + 0.75 * args.From.baseDamage + 0.4 * args.From.ap
@@ -2141,11 +2021,11 @@ Damage = {
 					+ (1 + (10 / 17) * (level - 1)) / 100 * args.Target.maxHealth
 			else
 				if args.Target.health < 60 + (90 / 17) * (level - 1) + args.From.ap * 0.18 then
-					args.RawMagical = 9999 --(Execute targets, < this health)
+					args.RawMagical = 9999
 				end
 			end
 			if args.Target.team == 300 then
-				args.RawMagical = math.min(300, args.RawMagical)
+				args.RawMagical = math_min(300, args.RawMagical)
 			end
 		end,
 		["Jhin"] = function(args)
@@ -2153,7 +2033,7 @@ Damage = {
 				args.CriticalStrike = true
 				args.CalculatedPhysical = args.CalculatedPhysical
 					+ math_min(0.25, 0.1 + 0.05 * math_ceil(args.From.levelData.lvl / 5))
-						* (args.Target.maxHealth - args.Target.health)*0.66 --shortcut for dealing with crit multipliers
+						* (args.Target.maxHealth - args.Target.health)*0.66
 			end
 		end,
 		["Lux"] = function(args)
@@ -2250,7 +2130,7 @@ Damage = {
 			penetrationFlat = from.armorPen
 			penetrationPercent = from.armorPenPercent
 			bonusPenetrationPercent = from.bonusArmorPenPercent
-			-- Minions return wrong percent values.
+
 			if fromIsMinion then
 				penetrationFlat = 0
 				penetrationPercent = 0
@@ -2282,7 +2162,7 @@ Damage = {
 			resistance = resistance - penetrationFlat
 		end
 		local percentMod = 1
-		-- Penetration cant reduce resistance below 0.
+
 		if resistance >= 0 then
 			percentMod = percentMod * (100 / (100 + resistance))
 		else
@@ -2314,9 +2194,8 @@ Damage = {
 		}
 		if from.charName=="Jhin" then
 			local levelAD = { 1.04, 1.05, 1.06, 1.07, 1.08, 1.09, 1.1, 1.11, 1.12, 1.14, 1.16, 1.2, 1.24, 1.28, 1.32, 1.36, 1.40, 1.44}
-			local JhinAD= ((((59+4.7*(myHero.levelData.lvl-1)*(0.7025+(0.0175*(myHero.levelData.lvl-1)))))*(levelAD[math.max(math.min(myHero.levelData.lvl, 18), 1)]+myHero.critChance*0.3+0.25*(myHero.attackSpeed-1)))+myHero.bonusDamage)
+			local JhinAD= ((((59+4.7*(myHero.levelData.lvl-1)*(0.7025+(0.0175*(myHero.levelData.lvl-1)))))*(levelAD[math_max(math_min(myHero.levelData.lvl, 18), 1)]+myHero.critChance*0.3+0.25*(myHero.attackSpeed-1)))+myHero.bonusDamage)
 			args.RawTotal=JhinAD
-
 		end
 
 		self:SetHeroStaticDamage(args)
@@ -2382,7 +2261,7 @@ Damage = {
 					args.DamageType == DAMAGE_TYPE_MAGICAL
 				)
 		end
-		-- Focus passive from Doran items and Tear of the Goddess
+
 		if args.TargetIsMinion and args.Target.maxHealth > 6 then
 			if Item:HasItem(from, 1054) or Item:HasItem(from, 1056) or Item:HasItem(from, 3070) then
 				args.CalculatedPhysical = args.CalculatedPhysical + 5
@@ -2410,9 +2289,7 @@ Damage = {
 				end
 				return self:GetHeroAutoAttackDamage(from, target, self:GetStaticAutoAttackDamage(from, targetIsMinion))*1.33
 			end
---[[ 			if myHero.hudAmmo==1 then
-				print(self:GetHeroAutoAttackDamage(from, target, self:GetStaticAutoAttackDamage(from, targetIsMinion)))
-			end ]]
+
 			return self:GetHeroAutoAttackDamage(from, target, self:GetStaticAutoAttackDamage(from, targetIsMinion))
 		end
 
@@ -2429,7 +2306,7 @@ Damage = {
 		end
 		if from.charName=="Jhin" then
 			local levelAD = { 1.04, 1.05, 1.06, 1.07, 1.08, 1.09, 1.1, 1.11, 1.12, 1.14, 1.16, 1.2, 1.24, 1.28, 1.32, 1.36, 1.40, 1.44}
-			local JhinAD= ((((59+4.7*(myHero.levelData.lvl-1)*(0.7025+(0.0175*(myHero.levelData.lvl-1)))))*(levelAD[math.max(math.min(myHero.levelData.lvl, 18), 1)]+myHero.critChance*0.3+0.25*(myHero.attackSpeed-1)))+myHero.bonusDamage)
+			local JhinAD= ((((59+4.7*(myHero.levelData.lvl-1)*(0.7025+(0.0175*(myHero.levelData.lvl-1)))))*(levelAD[math_max(math_min(myHero.levelData.lvl, 18), 1)]+myHero.critChance*0.3+0.25*(myHero.attackSpeed-1)))+myHero.bonusDamage)
 			return self:CalculateDamage(from, target, DAMAGE_TYPE_PHYSICAL, JhinAD, false, true)
 		end
 
@@ -2444,8 +2321,6 @@ Damage = {
 			percentMod = 0.86
 		elseif from.charName == "XinZhao" then
 			baseCriticalDamage = baseCriticalDamage - (0.875 - 0.125 * from:GetSpellData(_W).level)
-		-- elseif from.charName == "Yasuo" then
-			-- percentMod = 0.9
 		elseif from.charName == "Yunara" then
 			baseCriticalDamage = baseCriticalDamage * (1.1 + 0.001 * from.ap)
 		end
@@ -2454,7 +2329,6 @@ Damage = {
 }
 
 Data = {
-
 	JungleTeam = 300,
 	AllyTeam = myHero.team,
 	EnemyTeam = 300 - myHero.team,
@@ -2584,12 +2458,11 @@ Data = {
 			return (name == "RenataQ" or name == "RenataE" or name == "RenataR")
 				and spell.castEndTime - Game.Timer() > 0.05
 		end,
-		
+
 		["Caitlyn"] = function(spell)
 			local name = spell.name
 			if (name == "CaitlynQ" or name == "CaitlynE" or name == "CaitlynW" or name == "CaitlynR")and spell.endTime - Game.Timer() > 0.04 then
-				--print(Game.Timer())
-			end 
+			end
 			return (name == "CaitlynQ" or name == "CaitlynE" or name == "CaitlynW" or name == "CaitlynR")and spell.endTime - Game.Timer() > 0.04
 		end,
 	},
@@ -2705,7 +2578,6 @@ Data = {
 		end,
 	},
 
-	--25.14
 	HEROES = {
 		Aatrox = { 3, true, 0.651 },
 		Ahri = { 4, false, 0.668 },
@@ -2910,7 +2782,7 @@ Data = {
 		["BlueCardPreAttack"] = true,
 		["RedCardPreAttack"] = true,
 		["GoldCardPreAttack"] = true,
-		-- 9.9 patch
+
 		["RenektonSuperExecute"] = true,
 		["RenektonExecute"] = true,
 		["XinZhaoQThrust1"] = true,
@@ -2951,10 +2823,7 @@ Data = {
 					Buff:GetBuffDuration(target, "caitlynwsight") > 0.75
 					or Buff:HasBuff(target, "eternals_caitlyneheadshottracker")
 				)
-			then --Buff:GetBuffDuration(enemy, "eternals_caitlyneheadshottracker") > 0.75
-				--print(Game.Timer())
-			
-				--	print(Buff:GetBuffDuration(target, "caitlynwsight"), Buff:HasBuff(target, "eternals_caitlyneheadshottracker"))
+			then
 				return 425
 			end
 			return 0
@@ -2983,12 +2852,12 @@ Data = {
 		["Kindred"] = {{ Slot = _Q, Key = HK_Q }},
 		["KSante"] = {
 			{ Slot = _E, Key = HK_E, CanCancel = true, OnCast = true },
-			{ Slot = _Q, Key = HK_Q }  
+			{ Slot = _Q, Key = HK_Q }
 		},
 		["Leona"] = {{ Slot = _Q, Key = HK_Q }},
 		["Lucian"] = {{ Slot = _E, Key = HK_E, OnCast = true, CanCancel = true, Buff = { ["lucianpassivebuff"] = true }}},
 		["MasterYi"] = {{ Slot = _W, Key = HK_W }},
-		--["Mordekaiser"] = {{ Slot = _Q, Key = HK_Q }},
+
 		["Nautilus"] = {{ Slot = _W, Key = HK_W }},
 		["Nidalee"] = {{ Slot = _Q, Key = HK_Q, Name = "Takedown" }},
 		["Nasus"] = {{ Slot = _Q, Key = HK_Q }},
@@ -2996,8 +2865,7 @@ Data = {
 		["RekSai"] = {{ Slot = _Q, Key = HK_Q, Name = "RekSaiQ" }},
 		["Renekton"] = {{ Slot = _W, Key = HK_W }},
 		["Rengar"] = {{ Slot = _Q, Key = HK_Q }},
-		--["Riven"] = {{ Slot = _Q, Key = HK_Q }},
-		-- RIVEN BUFFS ["Riven"] = {'riventricleavesoundone', 'riventricleavesoundtwo', 'riventricleavesoundthree'},
+
 		["Sejuani"] = {{ Slot = _E, Key = HK_E, ReadyCheck = true, ActiveCheck = true, SpellName = "SejuaniE2" }},
 		["Shyvana"] = {{ Slot = _Q, Key = HK_Q }},
 		["Sivir"] = {{ Slot = _W, Key = HK_W }},
@@ -3017,19 +2885,20 @@ Data = {
 		if not self.AttackResets then
 			return
 		end
-	
+
 		local championAttackResets = self.AttackResets[myHero.charName]
 		if not championAttackResets then
 			return
 		end
-	
-		for _, attackReset in ipairs(championAttackResets) do
+
+		for _cAri = 1, #championAttackResets do
+			local attackReset = championAttackResets[_cAri]
 			local AttackResetKey = attackReset.Key
 			local AttackResetActiveSpell = attackReset.ActiveCheck
 			local AttackResetIsReady = attackReset.ReadyCheck
 			local AttackResetName = attackReset.Name
 			local AttackResetSpellName = attackReset.SpellName
-	
+
 			if
 				not self.AttackResetSuccess
 				and not Control.IsKeyDown(8)
@@ -3147,14 +3016,12 @@ Data = {
 						and GameTimer() - startTime < 0.5
 						and GetTickCount() > self.AttackResetTimer + 1000
 					then
-						--print('Reset Cast, Buff ' .. tostring(os.clock()))
 						self.AttackResetSuccess = true
 						self.AttackResetTimeout = GetTickCount()
 						self.AttackResetTimer = GetTickCount()
 						return true
 					end
 					if self.AttackResetSuccess and GetTickCount() > self.AttackResetTimeout + 200 then
-						--print('Reset Timeout')
 						self.AttackResetSuccess = false
 					end
 					return false
@@ -3162,20 +3029,19 @@ Data = {
 			elseif Buff:ContainsBuffs(myHero, self.AttackResetBuff)  then
 				if not self.AttackResetSuccess then
 					self.AttackResetSuccess = true
-					--print('Reset Buff')
+
 					return true
 				end
 				return false
 			end
 			if self.AttackResetSuccess then
-				--print('Remove Reset')
 				self.AttackResetSuccess = false
 			end
 			return false
 		end
 		if self.AttackResetSuccess then
 			self.AttackResetSuccess = false
-			--print("AA RESET STOP !")
+
 			return true
 		end
 		return false
@@ -3313,7 +3179,6 @@ if Data.AttackReset ~= nil then
 end
 
 Spell = {
-
 	QTimer = 0,
 	WTimer = 0,
 	ETimer = 0,
@@ -3451,7 +3316,6 @@ Spell = {
 		end,
 
 			ShouldWait = function(self)
-				-- Convertir a milisegundos para consistencia con Health:ShouldWait
 				return GetTickCount() < self.ShouldWaitTime + 1000
 			end,
 
@@ -3464,7 +3328,7 @@ Spell = {
 					self.IsLastHitable = true
 				elseif Health:GetPrediction(target, myHero:GetSpellData(self.spell).cd + (time * 3)) <= damage then
 					almostLastHitable = true
-					-- Usar GetTickCount() para consistencia con ShouldWait en Health
+
 					self.ShouldWaitTime = GetTickCount()
 				end
 				return {
@@ -3522,9 +3386,7 @@ Spell = {
 					for i = 1, #targets do
 						local unit = targets[i]
 						if unit.alive then
-							--self.SpellPrediction:GetPrediction(unit, myHero)
 							if Control.CastSpell(self.HK, unit.pos) then
-								--if self.SpellPrediction:CanHit() and Control.CastSpell(self.HK, self.SpellPrediction.CastPosition) then
 								self.LastHitHandle = unit.handle
 								Orbwalker:SetAttack(false)
 								Action:Add(function()
@@ -3540,9 +3402,7 @@ Spell = {
 					for i = 1, #targets do
 						local unit = targets[i]
 						if unit.alive then
-							--self.SpellPrediction:GetPrediction(unit, myHero)
 							if Control.CastSpell(self.HK, unit.pos) then
-								--if self.SpellPrediction:CanHit() and Control.CastSpell(self.HK, self.SpellPrediction.CastPosition) then
 								self.LaneClearHandle = unit.handle
 							end
 						end
@@ -3599,22 +3459,21 @@ _G.Control.KeyDown = function(key)
 			end
 		end
 	end
---	print(key..Game.Timer())
+
 	Spell.ControlKeyDown(key)
 end
 
 SummonerSpell = {
-
 	SpellNames = {
-		"SummonerHeal", --1 heal
-		"SummonerHaste", --2 ghost
-		"SummonerBarrier", --3 barrier
-		"SummonerExhaust", --4 exhaust
-		"SummonerFlash", --5 flash
-		"SummonerTeleport", --6 teleport
-		"SummonerSmite", --7 smite
-		"SummonerBoost", --8 cleanse
-		"SummonerDot", --9 ignite
+		"SummonerHeal",
+		"SummonerHaste",
+		"SummonerBarrier",
+		"SummonerExhaust",
+		"SummonerFlash",
+		"SummonerTeleport",
+		"SummonerSmite",
+		"SummonerBoost",
+		"SummonerDot",
 	},
 
 	Spell = {
@@ -3631,22 +3490,17 @@ SummonerSpell = {
 	CleanseStartTime = GetTickCount(),
 
 	OnTick = function(self)
-		-- SummonerSpells functionality removed
 		return
 	end,
 }
 
--- SummonerSpells functionality removed
-
 Item = {
-
 	ItemQss = { 6035, 3139, 3140 },
 	CachedItems = {},
 	Hotkey = nil,
 	CleanseStartTime = GetTickCount(),
 
 	OnTick = function(self)
-		-- Items functionality removed
 		return
 	end,
 
@@ -3680,12 +3534,8 @@ Item = {
 	end,
 }
 
--- Items functionality removed
-
 Object = {
-
 	UndyingBuffs = {
-		--["zhonyasringshield"] = true,
 		["kindredrnodeathbuff"] = true,
 		["ChronoShift"] = true,
 		["UndyingRage"] = true,
@@ -3711,7 +3561,6 @@ Object = {
 	IsNasus = myHero.charName == "Nasus",
 	OnLoad = function(self)
 		for i = 1, GameObjectCount() do
-
 			local object = GameObject(i)
 			if object and (object.type == Obj_AI_Barracks or object.type == Obj_AI_Nexus) then
 				if object.isEnemy then
@@ -3790,7 +3639,7 @@ Object = {
 			end
 		end
 	end
-		-- anivia passive, olaf R, ... if unit.isImmortal and not Buff:HasBuff(unit, 'willrevive') and not Buff:HasBuff(unit, 'zacrebirthready') then return true end
+
 		return false
 	end,
 
@@ -3850,21 +3699,18 @@ Object = {
 
 	GetEnemyMinions = function(self, range, bbox, immortal)
 		local result = {}
-		-- Para detección de colisiones, necesitamos todos los minions, no solo los cercanos
-		-- Si el rango es muy grande (como para detección de colisiones), usar caché completo
+
 		local cachedminions = Cached:GetMinions()
-		-- Si no hay suficientes minions en el caché o el rango es muy grande, buscar directamente
+
 		if range and range > 1500 then
-			-- Rango grande sugiere detección de colisiones, buscar todos los minions enemigos
 			local count = GameMinionCount()
 			if count and count > 0 then
 				local myPos = myHero.pos
-				local rangeSq = range and (range + (bbox and 100 or 0)) * (range + (bbox and 100 or 0)) or nil  -- Aproximación para evitar calcular boundingRadius en cada iteración
+				local rangeSq = range and (range + (bbox and 100 or 0)) * (range + (bbox and 100 or 0)) or nil
 				for i = 1, count do
 					local obj = GameMinion(i)
 					if obj and obj.valid and obj.visible and obj.isTargetable and not obj.dead and obj.isEnemy then
 						if not immortal or not obj.isImmortal then
-							-- Verificar rango dinámicamente usando GetDistanceSq (más rápido)
 							if not range then
 								table_insert(result, obj)
 							else
@@ -3879,7 +3725,6 @@ Object = {
 				end
 			end
 		else
-			-- Para rangos pequeños, usar el caché (más eficiente)
 			local myPos = myHero.pos
 			for i = 1, #cachedminions do
 				local obj = cachedminions[i]
@@ -3887,7 +3732,6 @@ Object = {
 					if not range then
 						table_insert(result, obj)
 					else
-						-- Usar GetDistanceSq para comparaciones más rápidas
 						local objRadius = bbox and obj.boundingRadius or 0
 						local totalRangeSq = (range + objRadius) * (range + objRadius)
 						local objDistanceSq = obj.distance and (obj.distance * obj.distance) or GetDistanceSq(myPos, obj.pos)
@@ -4135,15 +3979,12 @@ Object:OnEnemyHeroLoad(function(args)
 end)
 
 Target = {
-
 	SelectionTick = 0,
 	Selected = nil,
 	CurrentSort = nil,
 	CurrentSortMode = 0,
 	CurrentDamage = nil,
---	lastNetProc=0,
---	lastCaitWProc=0,
-	--lastCaitWEnemy=nil,
+
 	ActiveStackBuffs = { "BraumMark" },
 
 	StackBuffs = {
@@ -4172,7 +4013,7 @@ Target = {
 	WndMsg = function(self, msg, wParam)
 		if msg == WM_LBUTTONDOWN and self.MenuCheckSelected:Value() and GetTickCount() > self.SelectionTick + 100 then
 			self.Selected = nil
-			local maxRangeSq = 150 * 150  -- Pre-calcular rango máximo al cuadrado
+			local maxRangeSq = 150 * 150
 			local numSq = maxRangeSq
 			local pos = Vector(mousePos)
 			local enemies = Object:GetEnemyHeroes()
@@ -4191,21 +4032,19 @@ Target = {
 	end,
 
 	OnDraw = function(self)
-		-- OPTIMIZACIÓN: Early exits
 		if not self.MenuDrawSelected:Value() then
 			return
 		end
-		
+
 		local selected = self.Selected
 		if not selected then
 			return
 		end
-		
+
 		if not Object:IsValid(selected) then
 			return
 		end
-		
-		-- OPTIMIZACIÓN: Screen check para evitar dibujar fuera de pantalla
+
 		local pos = selected.pos
 		if pos then
 			local pos2D = pos:To2D()
@@ -4374,16 +4213,14 @@ Target = {
 		local enemiesaa = {}
 		for i = 1, #enemies do
 			local enemy = enemies[i]
-			--print(myHero.range)
+
 			local extraRange = enemy.boundingRadius
-			if	Object.IsCaitlyn then		
+			if	Object.IsCaitlyn then
 				if _G.CTRLCait==nil	and (
 						Buff:GetBuffDuration(enemy, "caitlynwsight") > 0.75
 						or Buff:HasBuff(enemy, "eternals_caitlyneheadshottracker")
 					)
 				then
-					--	print(Game.Timer())
-					--	print(Buff:GetBuffDuration(enemy, "caitlynwsight"), Buff:HasBuff(enemy, "eternals_caitlyneheadshottracker"))
 					extraRange = extraRange + 425
 				end
 
@@ -4402,12 +4239,13 @@ Target = {
 			end
 			if Menu.Orbwalker.General.AttackBarrel:Value() and enemy.charName == "Gangplank" then
 				local validBarrels = {}
-				for _, obj in ipairs(Cached:GetPlants()) do
+				local _plants = Cached:GetPlants()
+				for _pi = 1, #_plants do local obj = _plants[_pi]
 					if obj and obj.charName:lower() == "gangplankbarrel" then
 						table.insert(validBarrels, obj)
 					end
 				end
-				for _, barrel in ipairs(validBarrels) do
+				for _bi = 1, #validBarrels do local barrel = validBarrels[_bi]
 					if barrel then
 						if barrel.health <= 1 and barrel.distance <= attackRange + barrel.boundingRadius then
 							return barrel
@@ -4429,12 +4267,10 @@ Target = {
 	end,
 }
 
--- stylua: ignore start
 Object:OnEnemyHeroLoad(function(args)
     local priority = Data:GetHeroPriority(args.charName) or 1
     Target.MenuPriorities:MenuElement({id = args.charName, name = args.charName, value = priority, min = 1, max = 5, step = 1})
 end)
--- stylua: ignore end
 
 if Target.StackBuffs[myHero.charName] then
 	for i, buffName in pairs(Target.StackBuffs[myHero.charName]) do
@@ -4447,9 +4283,9 @@ Target.SortModes = {
 		local mindist= Menu.Target.mindistance:Value()
 		local maxdist= Menu.Target.maxdistance:Value()
 		local distmultiplier=Menu.Target.distmultiplier:Value()
-		local aMultiplier = 1.75 - (Target:GetPriority(a) * 0.15) +(distmultiplier*(math.max(math.min(a.distance,maxdist),mindist)/math.max(math.min(b.distance,maxdist),mindist)))
-		local bMultiplier = 1.75 - (Target:GetPriority(b) * 0.15) +(distmultiplier*(math.max(math.min(b.distance,maxdist),mindist)/math.max(math.min(a.distance,maxdist),mindist)))
-		
+		local aMultiplier = 1.75 - (Target:GetPriority(a) * 0.15) +(distmultiplier*(math_max(math_min(a.distance,maxdist),mindist)/math_max(math_min(b.distance,maxdist),mindist)))
+		local bMultiplier = 1.75 - (Target:GetPriority(b) * 0.15) +(distmultiplier*(math_max(math_min(b.distance,maxdist),mindist)/math_max(math_min(a.distance,maxdist),mindist)))
+
 		local aDef, bDef = 0, 0
 		if Target.CurrentDamage == DAMAGE_TYPE_MAGICAL then
 			local magicPen, magicPenPercent = myHero.magicPen, myHero.magicPenPercent
@@ -4463,8 +4299,6 @@ Target.SortModes = {
 		return (a.health * aMultiplier * ((100 + aDef) / 100)) - a.ap - (a.totalDamage * a.attackSpeed * 2)
 			< (b.health * bMultiplier * ((100 + bDef) / 100)) - b.ap - (b.totalDamage * b.attackSpeed * 2)
 	end,
-	
-	
 
 	[SORT_CLOSEST] = function(a, b)
 		return a.distance < b.distance
@@ -4535,8 +4369,7 @@ Target.SortModes = {
 	end,
 
 	[SORT_SMART] = function(a, b)
-		-- Smart AI: Favor killable enemies within reach. Otherwise prefer closest.
-		local params = Target.MenuPriorities -- not used; keep compatibility
+		local params = Target.MenuPriorities
 		local rangeOffset = Menu.Target.SmartAI.RangeOffset:Value()
 		local reach = myHero.range + myHero.boundingRadius + rangeOffset
 		local function isKillable(unit)
@@ -4557,10 +4390,9 @@ Target.SortModes = {
 		elseif not aKill and bKill then
 			return false
 		elseif aKill and bKill then
-			-- Both killable: pick lower health first
 			return a.health < b.health
 		end
-		-- Otherwise, prefer closest
+
 		return a.distance < b.distance
 	end,
 }
@@ -4569,7 +4401,6 @@ Target.CurrentSortMode = Target.MenuTableSortMode:Value()
 Target.CurrentSort = Target.SortModes[Target.CurrentSortMode]
 
 Health = {
-
 	ExtraFarmDelay = Menu.Orbwalker.Farming.ExtraFarmDelay,
 	MenuDrawings = Menu.Main.Drawings,
 	IsLastHitable = false,
@@ -4593,6 +4424,8 @@ Health = {
 	CachedMinions = {},
 	TargetsHealth = {},
 	AttackersDamage = {},
+	InFlightMissiles = {},
+	InFlightDamage = {},
 	Spells = {},
 	LastHitHandle = 0,
 	LaneClearHandle = 0,
@@ -4603,7 +4436,6 @@ Health = {
 
 	OnTick = function(self)
 		local attackRange, structures, pos, speed, windup, time, anim
-		-- RESET ALL
 		if self.ShouldRemoveObjects then
 			self.ShouldRemoveObjects = false
 			self.AllyTurret = nil
@@ -4624,7 +4456,6 @@ Health = {
 			self.CachedWards = {}
 			self.CachedPlants = {}
 		end
-		-- SPELLS
 		for i = 1, #self.Spells do
 			self.Spells[i]:Reset()
 		end
@@ -4634,11 +4465,10 @@ Health = {
 		self.IsLastHitable = false
 		self.ShouldRemoveObjects = true
 		self.StaticAutoAttackDamage = Damage:GetStaticAutoAttackDamage(myHero, true)
-		-- SET OBJECTS
-		-- Cachear posición y rangos para evitar accesos repetitivos
+
 		local myPos = myHero.pos
 		attackRange = myHero.range + myHero.boundingRadius
-		local filterRangeSq = 2000 * 2000  -- Pre-calcular rango al cuadrado para filtrado
+		local filterRangeSq = 2000 * 2000
 		local cachedminions = Cached:GetMinions()
 		for i = 1, #cachedminions do
 			local obj = cachedminions[i]
@@ -4660,8 +4490,7 @@ Health = {
 				table_insert(self.CachedPlants, obj)
 			end
 		end
-		-- Pre-calcular rangos al cuadrado para comparaciones más rápidas
-		local attackRangeSq = attackRange * attackRange
+
 		for i = 1, #self.CachedMinions do
 			local obj = self.CachedMinions[i]
 			local handle = obj.handle
@@ -4739,35 +4568,68 @@ Health = {
 				end
 			end
 		end
-	-- ON ATTACK
-	local timer = GameTimer()
-	local handles = self.Handles
-	local activeAttacks = self.ActiveAttacks
-	for handle, obj in pairs(handles) do
-		local s = obj.activeSpell
-		if s and s.valid and s.isAutoAttack then
-			local endTime = s.endTime
-			local speed = s.speed
-			local animation = s.animation
-			local windup = s.windup
-			local target = s.target
-			if endTime and speed and animation and windup and target and endTime > timer then
-				activeAttacks[handle] = {
-					Speed = speed,
-					EndTime = endTime,
-					AnimationTime = animation,
-					WindUpTime = windup,
-					StartTime = endTime - animation,
-					Target = target,
-				}
+		local timer = GameTimer()
+		local handles = self.Handles
+		local activeAttacks = self.ActiveAttacks
+		for handle, obj in pairs(handles) do
+			local s = obj.activeSpell
+			if s and s.valid and s.isAutoAttack then
+				local endTime = s.endTime
+				local animation = s.animation
+				local windup = s.windup
+				local targetHandle = ResolveHandle(s.target)
+				if endTime and animation and windup and targetHandle and endTime > timer then
+					activeAttacks[handle] = {
+						Speed = s.speed or 0,
+						EndTime = endTime,
+						AnimationTime = animation,
+						WindUpTime = windup,
+						StartTime = endTime - animation,
+						Target = targetHandle,
+					}
+				end
 			end
 		end
-	end
-		-- SET FARM MINIONS
+		for handle, obj in pairs(self.AllyMinionsHandles) do
+			if obj and obj.valid and obj.visible and obj.alive then
+				handles[handle] = obj
+				local s = obj.activeSpell
+				if s and s.valid and s.isAutoAttack then
+					local endTime = s.endTime
+					local animation = s.animation
+					local windup = s.windup
+					local targetHandle = ResolveHandle(s.target)
+					if endTime and animation and windup and targetHandle and endTime > timer then
+						activeAttacks[handle] = {
+							Speed = s.speed or 0,
+							EndTime = endTime,
+							AnimationTime = animation,
+							WindUpTime = windup,
+							StartTime = endTime - animation,
+							Target = targetHandle,
+						}
+					end
+				elseif obj.attackData and obj.attackData.target then
+					local ad = obj.attackData
+					local targetHandle = ResolveHandle(ad.target)
+					if ad.endTime and ad.animationTime and ad.windUpTime and targetHandle and timer - ad.endTime < 1.25 then
+						activeAttacks[handle] = {
+							Speed = ad.projectileSpeed or 0,
+							EndTime = ad.endTime,
+							AnimationTime = ad.animationTime,
+							WindUpTime = ad.windUpTime,
+							StartTime = ad.endTime - ad.animationTime,
+							Target = targetHandle,
+						}
+					end
+				end
+			end
+		end
+		self:UpdateMissiles()
 		pos = myHero.pos
 		speed = Attack:GetProjectileSpeed()
 		windup = Attack:GetWindup()
-		time = windup - self.ExtraFarmDelay:Value() * 0.001 --why is this -getlatency here? i isbjorn might try removing it -- - Data:GetLatency()
+		time = windup - self.ExtraFarmDelay:Value() * 0.001
 		anim = Attack:GetAnimation()
 		for i = 1, #self.EnemyMinionsInAttackRange do
 			local target = self.EnemyMinionsInAttackRange[i]
@@ -4782,31 +4644,28 @@ Health = {
 			)
 		end
 
-		-- SPELLS
 		for i = 1, #self.Spells do
 			self.Spells[i]:Tick()
 		end
 	end,
 
 	OnDraw = function(self)
-		-- OPTIMIZACIÓN: Early exit si los draws están deshabilitados
 		local drawings = self.MenuDrawings
 		if not drawings.Enabled:Value() or not drawings.LastHittableMinions:Value() then
 			return
 		end
-		
+
 		local farmMinions = self.FarmMinions
 		local farmCount = #farmMinions
-		
-		-- OPTIMIZACIÓN: Early exit si no hay minions
+
 		if farmCount == 0 then
 			return
 		end
-		
-		-- OPTIMIZACIÓN: Cachear colores fuera del loop
+
 		local colorLastHit = Color.LastHitable
 		local colorAlmost = Color.AlmostLastHitable
-		
+		local colorPrep = Color.PrepHitable
+
 		for i = 1, farmCount do
 			local args = farmMinions[i]
 			local minion = args.Minion
@@ -4818,6 +4677,8 @@ Health = {
 						local radius = math_max(65, minion.boundingRadius)
 						if args.LastHitable then
 							Draw.Circle(pos, radius, 1, colorLastHit)
+						elseif args.PrepHitable then
+							Draw.Circle(pos, radius, 1, colorPrep)
 						elseif args.AlmostLastHitable then
 							Draw.Circle(pos, radius, 1, colorAlmost)
 						end
@@ -4827,44 +4688,123 @@ Health = {
 		end
 	end,
 
-	GetPrediction = function(self, target, time)
-		local timer, handle, health
-		timer = GameTimer()
-		handle = target.handle
-		-- Validar que el target sigue siendo válido
-		if not Object:IsValid(target) then
+	UpdateMissiles = function(self)
+		local timer = GameTimer()
+		self.InFlightDamage = {}
+		for nid, m in pairs(self.InFlightMissiles) do
+			if timer >= m.landTime + 0.3 then
+				self.InFlightMissiles[nid] = nil
+			end
+		end
+		if Game.MissileCount and Game.Missile then
+			local count = Game.MissileCount()
+			local handles = self.Handles
+			for i = 1, count do
+				local mis = Game.Missile(i)
+				if mis and mis.missileData then
+					local md = mis.missileData
+					local nid = mis.networkID or 0
+					if nid > 0 and not self.InFlightMissiles[nid] then
+						local ownerHandle = ResolveHandle(md.owner)
+						local targetHandle = ResolveHandle(md.target)
+						local ownerObj = ownerHandle == myHero.handle and myHero or ResolveObject(md.owner, handles)
+						local targetObj = ResolveObject(md.target, handles)
+						if ownerHandle and targetHandle and ownerObj and targetObj and md.speed and md.speed > 0 then
+							local missileName = md.name or ""
+							local isBasicAttack = missileName == "" or missileName:lower():find("basicattack")
+							if isBasicAttack and ownerObj.team == Data.AllyTeam and targetObj.team == Data.EnemyTeam then
+								local damage = Damage:GetAutoAttackDamage(ownerObj, targetObj) or 0
+								if damage > 0 then
+									self.InFlightMissiles[nid] = {
+										ownerHandle = ownerHandle,
+										targetHandle = targetHandle,
+										landTime = timer + (GetDistance(mis.pos, targetObj.pos) / md.speed),
+										damage = damage,
+									}
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+		for nid, m in pairs(self.InFlightMissiles) do
+			if m.landTime > timer then
+				local bucket = self.InFlightDamage[m.targetHandle]
+				if not bucket then
+					bucket = {}
+					self.InFlightDamage[m.targetHandle] = bucket
+				end
+				bucket[#bucket + 1] = {
+					landTime = m.landTime,
+					damage = m.damage,
+					ownerHandle = m.ownerHandle,
+				}
+			end
+		end
+	end,
+
+	GetInFlightDamageBefore = function(self, targetHandle, beforeTime)
+		local bucket = self.InFlightDamage[targetHandle]
+		if not bucket then
 			return 0
 		end
+		local timer = GameTimer()
+		local total = 0
+		for i = 1, #bucket do
+			local m = bucket[i]
+			local activeAttack = self.ActiveAttacks[m.ownerHandle]
+			local isTrackedByActiveAttack = activeAttack and activeAttack.Target == targetHandle
+			if not isTrackedByActiveAttack and m.landTime > timer and m.landTime - timer < beforeTime then
+				total = total + m.damage
+			end
+		end
+		return total
+	end,
+
+	HasInFlightMissileBefore = function(self, ownerHandle, targetHandle, beforeTime)
+		local bucket = self.InFlightDamage[targetHandle]
+		if not bucket then
+			return false
+		end
+		local timer = GameTimer()
+		for i = 1, #bucket do
+			local m = bucket[i]
+			if m.ownerHandle == ownerHandle and m.landTime > timer and m.landTime - timer < beforeTime then
+				return true
+			end
+		end
+		return false
+	end,
+
+	GetPrediction = function(self, target, time)
+		local timer, pos, team, handle, health, attackers
+		timer = GameTimer()
+		pos = target.pos
+		handle = target.handle
 		if self.TargetsHealth[handle] == nil then
 			self.TargetsHealth[handle] = target.health + Data:GetTotalShield(target)
 		end
 		health = self.TargetsHealth[handle]
-		local activeAttacks = self.ActiveAttacks
-		local handles = self.Handles
-		local attackersDamage = self.AttackersDamage
-		local targetPos = target.pos -- Usar posición actual del target
-		for attackerHandle, attack in pairs(activeAttacks) do
-			local attacker = handles[attackerHandle]
-			if attacker and attacker.valid and attacker.visible and attacker.alive and attack.Target == handle then
+		for attackerHandle, attack in pairs(self.ActiveAttacks) do
+			local c = 0
+			local attacker = self.Handles[attackerHandle]
+			if attacker and attack.Target == handle then
 				local speed, startT, flyT, endT, damage
 				speed = attack.Speed
-				if speed <= 0 then
-					speed = 2000 -- Velocidad por defecto si no está definida
-				end
 				startT = attack.StartTime
-				flyT = GetDistance(attacker.pos, targetPos) / speed
+				flyT = speed > 0 and GetDistance(attacker.pos, pos) / speed or 0
 				endT = (startT + attack.WindUpTime + flyT) - timer
 				if endT > 0 and endT < time then
-					if attackersDamage[attackerHandle] == nil then
-						attackersDamage[attackerHandle] = {}
+					c = c + 1
+					if self.AttackersDamage[attackerHandle] == nil then
+						self.AttackersDamage[attackerHandle] = {}
 					end
-					if attackersDamage[attackerHandle][handle] == nil then
-						attackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(attacker, target)
+					if self.AttackersDamage[attackerHandle][handle] == nil then
+						self.AttackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(attacker, target)
 					end
-					damage = attackersDamage[attackerHandle][handle]
-					if damage and damage > 0 then
-						health = health - damage
-					end
+					damage = self.AttackersDamage[attackerHandle][handle]
+					health = health - damage
 				end
 			end
 		end
@@ -4872,127 +4812,91 @@ Health = {
 	end,
 
 	LocalGetPrediction = function(self, target, time)
-		local timer, handle, health, turretAttacked
+		local timer, pos, team, handle, health, attackers, turretAttacked
 		turretAttacked = false
 		timer = GameTimer()
+		pos = target.pos
 		handle = target.handle
-		-- Validar que el target sigue siendo válido
-		if not Object:IsValid(target) then
-			return 0, false
-		end
 		if self.TargetsHealth[handle] == nil then
 			self.TargetsHealth[handle] = target.health + Data:GetTotalShield(target)
 		end
 		health = self.TargetsHealth[handle]
 		local handles = {}
-		local activeAttacks = self.ActiveAttacks
-		local selfHandles = self.Handles
-		local attackersDamage = self.AttackersDamage
-		local allyTurretHandle = self.AllyTurretHandle
-		local targetPos = target.pos -- Usar posición actual del target
-		for attackerHandle, attack in pairs(activeAttacks) do
-			local attacker = selfHandles[attackerHandle]
+		for attackerHandle, attack in pairs(self.ActiveAttacks) do
+			local attacker = self.Handles[attackerHandle]
 			if attacker and attacker.valid and attacker.visible and attacker.alive and attack.Target == handle then
-				-- Validar que tenemos todos los datos necesarios
-				if attack.WindUpTime and attack.AnimationTime then
-					local speed, startT, flyT, endT, damage
-					speed = attack.Speed
-					if speed <= 0 then
-						speed = 2000 -- Velocidad por defecto si no está definida
+				local speed, startT, flyT, endT, damage
+				speed = attack.Speed
+				startT = attack.StartTime
+				flyT = speed > 0 and GetDistance(attacker.pos, pos) / speed or 0
+				endT = (startT + attack.WindUpTime + flyT) - timer
+				if endT < 0 and timer - attack.EndTime < 1.25 then
+					endT = attack.WindUpTime + flyT
+					endT = timer > attack.EndTime and endT or endT + (attack.EndTime - timer)
+					startT = timer > attack.EndTime and timer or attack.EndTime
+				end
+				if endT > 0 and endT < time then
+					handles[attackerHandle] = true
+					if self.AttackersDamage[attackerHandle] == nil then
+						self.AttackersDamage[attackerHandle] = {}
 					end
-					startT = attack.StartTime
-					flyT = GetDistance(attacker.pos, targetPos) / speed
-					endT = (startT + attack.WindUpTime + flyT) - timer
-					-- laneClear - manejar ataques recientemente completados
-					if endT < 0 and attack.EndTime and timer - attack.EndTime < 1.25 then
-						endT = attack.WindUpTime + flyT
-						endT = timer > attack.EndTime and endT or endT + (attack.EndTime - timer)
-						startT = timer > attack.EndTime and timer or attack.EndTime
+					if self.AttackersDamage[attackerHandle][handle] == nil then
+						self.AttackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(attacker, target)
 					end
-					if endT > 0 and endT < time then
-						handles[attackerHandle] = true
-						-- damage
-						if attackersDamage[attackerHandle] == nil then
-							attackersDamage[attackerHandle] = {}
+					damage = self.AttackersDamage[attackerHandle][handle]
+					local c = 1
+					while endT < time do
+						if attackerHandle == self.AllyTurretHandle then
+							turretAttacked = true
+						else
+							health = health - damage
 						end
-						if attackersDamage[attackerHandle][handle] == nil then
-							attackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(attacker, target)
-						end
-						damage = attackersDamage[attackerHandle][handle]
-						if damage and damage > 0 then
-							-- laneClear
-							local c = 1
-							local maxIterations = 10
-							local predictedHealth = health
-							while endT < time and c <= maxIterations do
-								if attackerHandle == allyTurretHandle then
-									turretAttacked = true
-								else
-									predictedHealth = predictedHealth - damage
-								end
-								endT = (startT + attack.WindUpTime + flyT + c * attack.AnimationTime) - timer
-								c = c + 1
-							end
-							if c <= maxIterations then
-								health = predictedHealth
-							else
-							-- Si excedimos iteraciones, recalcular desde health base con predicción conservadora
-							local timeRemaining = math_max(0, time - endT)
-							local estimatedHits = math_ceil(timeRemaining / (attack.AnimationTime or 1))
-							health = health - (damage * math_min(estimatedHits, 5))
-							end
+						endT = (startT + attack.WindUpTime + flyT + c * attack.AnimationTime) - timer
+						c = c + 1
+						if c > 10 then
+							health = self.TargetsHealth[handle]
+							break
 						end
 					end
 				end
 			end
 		end
-		-- laneClear - predicción de minions aliados
-		local allyMinionsHandles = self.AllyMinionsHandles
-		for attackerHandle, obj in pairs(allyMinionsHandles) do
+		for attackerHandle, obj in pairs(self.AllyMinionsHandles) do
 			if handles[attackerHandle] == nil and obj and obj.valid and obj.visible and obj.alive then
 				local aaData = obj.attackData
-				if aaData and aaData.target and aaData.projectileSpeed and aaData.windUpTime and aaData.animationTime then
-					local isMoving = obj.pathing.hasMovePath
-					local targetInRange = self.Handles[aaData.target] ~= nil
-					if (not targetInRange or isMoving or self.ActiveAttacks[attackerHandle] == nil) then
-						local objPos = obj.pos
-						local distance = GetDistance(objPos, targetPos)
-						local range = Data:GetAutoAttackRange(obj, target)
-						local extraRange = isMoving and 250 or 0
-						if distance < range + extraRange then
-							local speed, flyT, endT, damage
-							speed = aaData.projectileSpeed
-							if speed <= 0 then
-								speed = 2000 -- Velocidad por defecto
+				local isMoving = obj.pathing.hasMovePath
+				if
+					aaData == nil
+					or aaData.target == nil
+					or self.Handles[aaData.target] == nil
+					or isMoving
+					or self.ActiveAttacks[attackerHandle] == nil
+				then
+					local distance = GetDistance(obj.pos, pos)
+					local range = Data:GetAutoAttackRange(obj, target)
+					local extraRange = isMoving and 250 or 0
+					if distance < range + extraRange then
+						local speed, flyT, endT, damage
+						speed = aaData.projectileSpeed
+						distance = distance > range and range or distance
+						flyT = speed > 0 and distance / speed or 0
+						endT = aaData.windUpTime + flyT
+						if endT < time then
+							if self.AttackersDamage[attackerHandle] == nil then
+								self.AttackersDamage[attackerHandle] = {}
 							end
-							distance = distance > range and range or distance
-							flyT = distance / speed
-							endT = aaData.windUpTime + flyT
-							if endT < time then
-								if self.AttackersDamage[attackerHandle] == nil then
-									self.AttackersDamage[attackerHandle] = {}
-								end
-								if self.AttackersDamage[attackerHandle][handle] == nil then
-									self.AttackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(obj, target)
-								end
-								damage = self.AttackersDamage[attackerHandle][handle]
-								if damage and damage > 0 then
-									local c = 1
-									local maxIterations = 10
-									local predictedHealth = health
-									while endT < time and c <= maxIterations do
-										predictedHealth = predictedHealth - damage
-										endT = aaData.windUpTime + flyT + c * aaData.animationTime
-										c = c + 1
-									end
-									if c <= maxIterations then
-										health = predictedHealth
-									else
-										-- Estimación conservadora si excedimos iteraciones
-										local timeRemaining = math_max(0, time - endT)
-										local estimatedHits = math_ceil(timeRemaining / (aaData.animationTime or 1))
-										health = health - (damage * math_min(estimatedHits, 5))
-									end
+							if self.AttackersDamage[attackerHandle][handle] == nil then
+								self.AttackersDamage[attackerHandle][handle] = Damage:GetAutoAttackDamage(obj, target)
+							end
+							damage = self.AttackersDamage[attackerHandle][handle]
+							local c = 1
+							while endT < time do
+								health = health - damage
+								endT = aaData.windUpTime + flyT + c * aaData.animationTime
+								c = c + 1
+								if c > 10 then
+									health = self.TargetsHealth[handle]
+									break
 								end
 							end
 						end
@@ -5008,21 +4912,7 @@ Health = {
 		timer = GameTimer()
 		handle = target.handle
 		currentHealth = target.health + Data:GetTotalShield(target)
-		-- Actualizar TargetsHealth solo si:
-		-- 1. Es nil (primera vez)
-		-- 2. El health actual es significativamente mayor (regeneración/heal, con tolerancia de 5 HP)
-		-- Esto preserva la predicción de daño acumulado mientras maneja regeneración
-		local storedHealth = self.TargetsHealth[handle]
-		if storedHealth == nil then
-			self.TargetsHealth[handle] = currentHealth
-		elseif currentHealth > storedHealth + 5 then
-			-- Health aumentó significativamente (regeneración o heal)
-			self.TargetsHealth[handle] = currentHealth
-		elseif currentHealth < storedHealth - target.maxHealth * 0.1 then
-			-- Health bajó más del 10% del max health, probablemente recibió daño no rastreado
-			-- Actualizar para evitar predicciones incorrectas
-			self.TargetsHealth[handle] = currentHealth
-		end
+		self.TargetsHealth[handle] = currentHealth
 		health = self:GetPrediction(target, time)
 		lastHitable = false
 		almostLastHitable = false
@@ -5031,7 +4921,7 @@ Health = {
 		if (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(target)) then
 			damage=({50, 67, 84, 101, 118})[myHero:GetSpellData(_W).level] + 0.6 * myHero.ap
 		end
-		-- unkillable
+
 		if health < 0 then
 			unkillable = true
 			for i = 1, #self.OnUnkillableC do
@@ -5047,8 +4937,8 @@ Health = {
 				Time = time,
 			}
 		end
-		-- lasthitable
-		if health <= damage then
+
+		if health - damage < 0 then
 			lastHitable = true
 			self.IsLastHitable = true
 			return {
@@ -5061,33 +4951,41 @@ Health = {
 				Time = time,
 			}
 		end
-		-- almost lasthitable
+
+		if self.StrictLastHit and self.StrictLastHit:Value() then
+			return {
+				LastHitable = lastHitable,
+				Unkillable = unkillable,
+				AlmostLastHitable = false,
+				PredictedHP = health,
+				Minion = target,
+				AlmostAlmost = false,
+				Time = time,
+			}
+		end
 		local turretAttack, extraTime, almostHealth, almostAlmostHealth, turretAttacked
 		turretAttack = self.AllyTurret ~= nil and self.AllyTurret.attackData or nil
 		extraTime = (1.5 - anim) * 0.3
 		extraTime = extraTime < 0 and 0 or extraTime
-		almostHealth, turretAttacked = self:LocalGetPrediction(target, anim + time + extraTime) -- + 0.25
+		almostHealth, turretAttacked = self:LocalGetPrediction(target, anim + time + extraTime)
 		if (target.charName == "SRU_ChaosMinionSiege" or target.charName == "SRU_OrderMinionSiege") then
 			almostHealth, turretAttacked = self:LocalGetPrediction(target, anim + time*1.4 + extraTime)
 		end
 		if almostHealth < 0 then
---[[ 			if (target.charName == "SRU_ChaosMinionSiege" or target.charName == "SRU_OrderMinionSiege") then
-				print("Siege Minionalmost")
-			end ]]
 			almostLastHitable = true
 			self.ShouldWaitTime = GetTickCount()
-		elseif almostHealth <= damage then
+		elseif almostHealth - damage < 0 then
 			almostLastHitable = true
 		elseif currentHealth ~= almostHealth then
 			almostAlmostHealth, turretAttacked = self:LocalGetPrediction(
 				target,
-				1.25 * anim + 1.25 * time + extraTime -- removed +0.5 just to test
+				1.25 * anim + 1.25 * time + extraTime
 			)
-			if almostAlmostHealth <= damage then
+			if almostAlmostHealth - damage < 0 then
 				almostalmost = true
 			end
 		end
-		-- under turret, turret attackdata: 1.20048 0.16686 1200
+
 		if
 			turretAttacked
 			or (turretAttack and turretAttack.target == handle)
@@ -5100,35 +4998,73 @@ Health = {
 				)
 			)
 		then
-			local nearTurret, isTurretTarget, maxHP, startTime, windUpTime, flyTime, turretDamage, turretHits
-			nearTurret = true
-			isTurretTarget = turretAttack and turretAttack.target == handle or false
-			maxHP = target.maxHealth
-			if turretAttack and turretAttack.endTime then
-				startTime = turretAttack.endTime - 1.20048
-			else
-				startTime = timer
+			local nearTurret = true
+			local isTurretTarget = turretAttack and turretAttack.target == handle or false
+
+			local turretAnimTime = (turretAttack and turretAttack.animationTime and turretAttack.animationTime > 0)
+				and turretAttack.animationTime or 1.20048
+			local turretWindUp = (turretAttack and turretAttack.windUpTime and turretAttack.windUpTime > 0)
+				and turretAttack.windUpTime or 0.16686
+			local turretProjSpeed = (turretAttack and turretAttack.projectileSpeed and turretAttack.projectileSpeed > 0)
+				and turretAttack.projectileSpeed or 1200
+			local turretStartTime = (turretAttack and turretAttack.endTime)
+				and (turretAttack.endTime - turretAnimTime) or timer
+			local turretFlyTime = (self.AllyTurret and self.AllyTurret.valid)
+				and (GetDistance(self.AllyTurret.pos, target.pos) / turretProjSpeed) or 0
+			local turretDamage = (self.AllyTurret and self.AllyTurret.valid)
+				and Damage:GetAutoAttackDamage(self.AllyTurret, target) or 0
+
+			local prepHitable = false
+			if turretDamage > 0 and self.AllyTurret and self.AllyTurret.valid then
+				local myDamage = damage
+				local turretArrival = turretStartTime + turretWindUp + turretFlyTime
+				local simHealth = currentHealth
+				if turretArrival > timer then
+					simHealth = self:LocalGetPrediction(target, turretArrival - timer)
+				end
+
+				while turretArrival < timer and turretArrival + turretAnimTime * 10 > timer do
+					turretArrival = turretArrival + turretAnimTime
+				end
+
+				for shot = 1, 6 do
+					local arrivalTime = turretArrival + (shot - 1) * turretAnimTime
+					local timeFromNow = arrivalTime - timer
+					if timeFromNow < 0 then
+						simHealth = simHealth - turretDamage
+					elseif timeFromNow < 8.0 then
+						local healthAfterShot = simHealth - turretDamage
+						if healthAfterShot > 0 and healthAfterShot <= myDamage then
+							if not lastHitable and simHealth > myDamage then
+								local healthAfterMyHit = simHealth - myDamage
+								if healthAfterMyHit > 0 then
+									local healthAfterMyHitAndTurret = healthAfterMyHit - turretDamage
+									if healthAfterMyHitAndTurret > 0 and healthAfterMyHitAndTurret <= myDamage then
+										prepHitable = true
+									end
+								end
+							end
+						elseif healthAfterShot <= 0 and simHealth > myDamage then
+							local healthAfterMyHit = simHealth - myDamage
+							if healthAfterMyHit > 0 and healthAfterMyHit > turretDamage then
+								local afterBoth = healthAfterMyHit - turretDamage
+								if afterBoth > 0 and afterBoth <= myDamage then
+									prepHitable = true
+								end
+							end
+						end
+						simHealth = simHealth - turretDamage
+					end
+					if simHealth <= 0 then break end
+				end
 			end
-			windUpTime = 0.16686
-			if self.AllyTurret and self.AllyTurret.valid then
-				flyTime = GetDistance(self.AllyTurret.pos, target.pos) / 1200
-			else
-				flyTime = 0
+
+			local turretHits = 0
+			if turretDamage > 0 and target.maxHealth > 0 then
+				turretHits = math_ceil(target.maxHealth / turretDamage)
+				turretHits = math_min(turretHits, 10) - 1
 			end
-			if self.AllyTurret and self.AllyTurret.valid then
-				turretDamage = Damage:GetAutoAttackDamage(self.AllyTurret, target)
-			else
-				turretDamage = 0
-			end
-			-- Calcular hits de torre de forma más eficiente y segura
-			if turretDamage > 0 and maxHP > 0 then
-				turretHits = math_ceil(maxHP / turretDamage)
-				-- Limitar a máximo 10 hits para evitar cálculos erróneos
-				turretHits = math_min(turretHits, 10)
-				turretHits = turretHits - 1
-			else
-				turretHits = 0
-			end
+
 			return {
 				LastHitable = lastHitable,
 				Unkillable = unkillable,
@@ -5137,14 +5073,14 @@ Health = {
 				Minion = target,
 				AlmostAlmost = almostalmost,
 				Time = time,
-				-- turret
+				PrepHitable = prepHitable,
 				NearTurret = nearTurret,
 				IsTurretTarget = isTurretTarget,
 				TurretHits = turretHits,
 				TurretDamage = turretDamage,
-				TurretFlyDelay = flyTime,
-				TurretStart = startTime,
-				TurretWindup = windUpTime,
+				TurretFlyDelay = turretFlyTime,
+				TurretStart = turretStartTime,
+				TurretWindup = turretWindUp,
 			}
 		end
 		return {
@@ -5155,6 +5091,7 @@ Health = {
 			Minion = target,
 			AlmostAlmost = almostalmost,
 			Time = time,
+			PrepHitable = false,
 		}
 	end,
 
@@ -5182,58 +5119,26 @@ Health = {
 		return #self.EnemyWardsInAttackRange > 0 and self.EnemyWardsInAttackRange[1] or nil
 	end,
 
-	-- Función auxiliar para obtener prioridad del tipo de minion
-	GetMinionPriority = function(self, charName)
-		-- Cannon minion (Siege) - Prioridad 1 (máxima)
-		if charName == "SRU_ChaosMinionSiege" or charName == "SRU_OrderMinionSiege" then
-			return 1
-		-- Melee minion - Prioridad 2
-		elseif charName == "SRU_ChaosMinionMelee" or charName == "SRU_OrderMinionMelee" then
-			return 2
-		-- Caster minion (Ranged) - Prioridad 3
-		elseif charName == "SRU_ChaosMinionRanged" or charName == "SRU_OrderMinionRanged" then
-			return 3
-		end
-		-- Otros tipos de minions - Prioridad 4
-		return 4
-	end,
-
 	GetLastHitTarget = function(self)
-		local bestTarget = nil
-		local bestPriority = math_huge
-		local bestHP = math_huge
-		
+		local min = 10000000
+		local result = nil
 		for i = 1, #self.FarmMinions do
 			local minion = self.FarmMinions[i]
-			if minion and Object:IsValid(minion.Minion) and minion.LastHitable then
-				local isInRange = Data:IsInAutoAttackRange(myHero, minion.Minion) 
-					or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(minion.Minion))
-				if isInRange then
-					local charName = minion.Minion.charName
-					local priority = self:GetMinionPriority(charName)
-					local predictedHP = minion.PredictedHP or math_huge
-					
-					-- Priorizar por tipo de minion primero, luego por HP más bajo
-					local shouldSelect = false
-					if priority < bestPriority then
-						-- Tipo de minion con mayor prioridad
-						shouldSelect = true
-					elseif priority == bestPriority and predictedHP < bestHP then
-						-- Mismo tipo, pero menos HP (más cerca de morir)
-						shouldSelect = true
-					end
-					
-					if shouldSelect then
-						bestTarget = minion.Minion
-						bestPriority = priority
-						bestHP = predictedHP
-						self.LastHitHandle = bestTarget.handle
-					end
+			if
+				Object:IsValid(minion.Minion)
+				and minion.LastHitable
+				and (minion.PredictedHP < min or (minion.Minion.charName == "SRU_ChaosMinionSiege" or minion.Minion.charName == "SRU_OrderMinionSiege"))
+				and (Data:IsInAutoAttackRange(myHero, minion.Minion) or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(minion.Minion)))
+			then
+				min = minion.PredictedHP
+				result = minion.Minion
+				self.LastHitHandle = result.handle
+				if minion.Minion.charName == "SRU_ChaosMinionSiege" or minion.Minion.charName == "SRU_OrderMinionSiege" then
+					break
 				end
 			end
 		end
-		
-		return bestTarget
+		return result
 	end,
 
 	GetHarassTarget = function(self)
@@ -5272,50 +5177,18 @@ Health = {
 	end,
 
 	GetLaneMinion = function(self)
-		-- Primero verificar si hay minions lasthitable (no debería llegar aquí si GetLaneClearTarget funciona bien, pero por seguridad)
-		if self.IsLastHitable then
-			local lastHitTarget = self:GetLastHitTarget()
-			if lastHitTarget ~= nil then
-				return lastHitTarget
-			end
-		end
-		
-		-- Buscar minion para lane clear, priorizando por tipo y HP
-		local bestMinion = nil
-		local bestPriority = math_huge
-		local bestHP = math_huge
-		
+		local laneMinion = nil
+		local num = 10000
 		for i = 1, #self.FarmMinions do
 			local minion = self.FarmMinions[i]
-			if minion and Object:IsValid(minion.Minion) then
-				local isInRange = Data:IsInAutoAttackRange(myHero, minion.Minion) 
-					or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(minion.Minion))
-				if isInRange then
-					-- Ignorar minions que están casi lasthitable (deben ser manejados por lasthit)
-					if not minion.AlmostAlmost and not minion.AlmostLastHitable then
-						local charName = minion.Minion.charName
-						local priority = self:GetMinionPriority(charName)
-						local predictedHP = minion.PredictedHP or math_huge
-						
-						-- Priorizar por tipo de minion, luego por HP más bajo para clear más rápido
-						local shouldSelect = false
-						if priority < bestPriority then
-							shouldSelect = true
-						elseif priority == bestPriority and predictedHP < bestHP then
-							shouldSelect = true
-						end
-						
-						if shouldSelect then
-							bestMinion = minion.Minion
-							bestPriority = priority
-							bestHP = predictedHP
-						end
-					end
+			if Data:IsInAutoAttackRange(myHero, minion.Minion) or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(minion.Minion)) then
+				if minion.PredictedHP < num and not minion.AlmostAlmost and not minion.AlmostLastHitable then
+					num = minion.PredictedHP
+					laneMinion = minion.Minion
 				end
 			end
 		end
-		
-		return bestMinion
+		return laneMinion
 	end,
 
 	GetLaneClearTarget = function(self)
@@ -5323,61 +5196,56 @@ Health = {
 		local LaneClearHeroes = Menu.Orbwalker.General.LaneClearHeroes:Value()
 		local structure = #self.EnemyStructuresInAttackRange > 0 and self.EnemyStructuresInAttackRange[1] or nil
 		local other = #self.EnemyWardsInAttackRange > 0 and self.EnemyWardsInAttackRange[1] or nil
-		
-		-- PRIORIDAD 1: SIEMPRE priorizar lasthit antes de clear durante laneclear
-		if self.IsLastHitable then
-			local lastHitTarget = self:GetLastHitTarget()
-			if lastHitTarget ~= nil then
-				return lastHitTarget
-			end
-		end
-		
-		-- PRIORIDAD 2: Estructuras (torres, inhibidores, etc.)
 		if structure ~= nil then
 			if not LastHitPriority then
 				return structure
 			end
-			-- Si LastHitPriority está activo, esperar un poco antes de atacar estructura
-			if not self:ShouldWait() then
+			if self.IsLastHitable then
+				return self:GetLastHitTarget()
+			end
+			if other ~= nil then
+				return other
+			end
+			if LastHitPriority and not self:ShouldWait() then
 				return structure
 			end
-		end
-		
-		-- PRIORIDAD 3: Wards enemigas
-		if other ~= nil then
-			return other
-		end
-		
-		-- PRIORIDAD 4: Héroes enemigos (solo si LaneClearHeroes está activo)
-		if LaneClearHeroes then
-			local hero = Target:GetComboTarget()
-			if hero ~= nil then
-				-- Solo atacar héroe si no hay LastHitPriority o si no estamos esperando
-				if not LastHitPriority or not self:ShouldWait() then
+		else
+			if not LastHitPriority and LaneClearHeroes then
+				local hero = Target:GetComboTarget()
+				if hero ~= nil then
 					return hero
 				end
 			end
+			if self.IsLastHitable then
+				return self:GetLastHitTarget()
+			end
+			if self:ShouldWait() then
+				return nil
+			end
+			if LastHitPriority and LaneClearHeroes then
+				local hero = Target:GetComboTarget()
+				if hero ~= nil then
+					return hero
+				end
+			end
+			local plants = self:GetPlantsTarget()
+			if plants ~= nil then
+				return plants
+			end
+			local laneMinion = self:GetLaneMinion()
+			if laneMinion ~= nil then
+				self.LaneClearHandle = laneMinion.handle
+				return laneMinion
+			end
+			if other ~= nil then
+				return other
+			end
 		end
-		
-		-- PRIORIDAD 5: Lane clear normal (solo si no hay lasthit disponible)
-		-- Esperar un poco si hay minions casi lasthitable
-		if self:ShouldWait() then
-			return nil
-		end
-		
-		-- Buscar minion para lane clear
-		local laneMinion = self:GetLaneMinion()
-		if laneMinion ~= nil then
-			self.LaneClearHandle = laneMinion.handle
-			return laneMinion
-		end
-		
 		return nil
 	end,
 }
 
 Movement = {
-
 	MoveTimer = 0,
 
 	GetHumanizer = function(self)
@@ -5420,10 +5288,9 @@ do
 				return false
 			end
 		if target then
-				-- Prefer the user-configured AttackTKey; fallback to right-click if not set
 				local k = nil
 				if AttackKey and type(AttackKey.Key) == 'function' then
-					local ok, v = pcall(function() return AttackKey:Key() end)
+					local ok, v = pcall(AttackKey.Key, AttackKey)
 					if ok and v and v ~= 0 then k = v end
 				end
 				if not k or k == 0 then k = MOUSEEVENTF_RIGHTDOWN end
@@ -5442,9 +5309,6 @@ do
 			end
 		local pos = GetControlPos(a, b, c)
 		if pos then
-			-- Permitir hechizos dirigidos a unidades (target unit spells) incluso cuando Cursor.Step > 0
-			-- Estos hechizos no requieren precisión de cursor porque el juego automáticamente apunta al target
-			-- Ejemplos: Yasuo E, Irelia Q, Akali R, etc.
 			local isTargetUnitSpell = (not b and a and a.pos ~= nil)
 			if Cursor.Step > 0 and not isTargetUnitSpell then
 				return false
@@ -5456,10 +5320,9 @@ do
 
 			if a and (a.x or a[1]) then
 				if (GetDistance(Game.mousePos(), pos)) < 2 then
-					--return false
-				end	
+				end
 			end
-			
+
 			if not b and a.pos then
 				Cursor:Add(key, a)
 			else
@@ -5514,7 +5377,6 @@ local MenuSmoothSpeed = Menu.Main.SmoothSpeed
 local MenuSmoothAcceleration = Menu.Main.SmoothAcceleration
 local MenuSmoothRandomness = Menu.Main.SmoothRandomness
 
--- Smooth Mouse Movement System - OPTIMIZED FOR MINIMAL DELAY
 SmoothMouse = {
     isMoving = false,
     startPos = {x = 0, y = 0},
@@ -5524,16 +5386,15 @@ SmoothMouse = {
     totalDistance = 0,
     speed = 3.5,
     acceleration = 1.2,
-    movementType = "normal", -- "toTarget", "return", "normal"
-    onCompleteCallback = nil, -- Función a ejecutar cuando termine el movimiento
+    movementType = "normal",
+    onCompleteCallback = nil,
 	lastCursorSetTick = 0,
-	minSetIntervalMs = 3, -- OPTIMIZED: 3ms rate limit (~333 Hz) para mejor responsividad
-	minTeleportDistance = 3, -- OPTIMIZED: Reduced from 5 para más precisión en distancias cortas
-    
-    -- Bezier curve control points for natural movement
+	minSetIntervalMs = 3,
+	minTeleportDistance = 3,
+
     controlPoint1 = {x = 0, y = 0},
     controlPoint2 = {x = 0, y = 0},
-    
+
 	Start = function(self, targetX, targetY, movementType, onComplete)
         local currentCursor = Game.cursorPos()
         self.startPos.x = currentCursor.x
@@ -5545,26 +5406,21 @@ SmoothMouse = {
         self.startTime = GetTickCount()
         self.movementType = movementType or "normal"
         self.onCompleteCallback = onComplete
-        
-        -- Calculate distance
+
         local dx = targetX - self.startPos.x
         local dy = targetY - self.startPos.y
-        self.totalDistance = math.sqrt(dx * dx + dy * dy)
-        
-        -- Set speed and acceleration from menu
-	self.speed = math_max(0.5, MenuSmoothSpeed:Value()) -- OPTIMIZED: Allow faster speeds
-	self.acceleration = math_max(0.8, MenuSmoothAcceleration:Value()) -- OPTIMIZED: Allow better control
-        
-        -- OPTIMIZED: Hacer los movimientos al target significativamente más rápidos
+        self.totalDistance = math_sqrt(dx * dx + dy * dy)
+
+	self.speed = math_max(0.5, MenuSmoothSpeed:Value())
+	self.acceleration = math_max(0.8, MenuSmoothAcceleration:Value())
+
 		if movementType == "toTarget" then
-			self.speed = self.speed * 1.8 -- OPTIMIZED: Increased from 1.35 for better responsivity
+			self.speed = self.speed * 1.8
 		elseif movementType == "return" then
-			self.speed = self.speed * 0.9 -- OPTIMIZED: Return slightly slower for stability
+			self.speed = self.speed * 0.9
 		end
 
-		-- OPTIMIZED: Para distancias pequeñas usar teleport directo (más rápido)
 		if self.totalDistance <= self.minTeleportDistance then
-            -- Direct instant move for very small distances
             Control.SetCursorPos(targetX, targetY)
             self.isMoving = false
             if self.onCompleteCallback then
@@ -5575,132 +5431,120 @@ SmoothMouse = {
             self:GenerateControlPoints()
         end
     end,
-    
+
     GenerateControlPoints = function(self)
 	local randomness = math_max(0, math_min(MenuSmoothRandomness:Value(), 20))
         local dx = self.targetPos.x - self.startPos.x
         local dy = self.targetPos.y - self.startPos.y
-        
-        -- Create natural curved path
+
         local perpX = -dy / self.totalDistance
         local perpY = dx / self.totalDistance
-        
-        -- Add randomness to control points
+
         local random1 = (math_random(-randomness, randomness) / 100.0) * self.totalDistance
         local random2 = (math_random(-randomness, randomness) / 100.0) * self.totalDistance
-        
+
         self.controlPoint1.x = self.startPos.x + dx * 0.25 + perpX * random1
         self.controlPoint1.y = self.startPos.y + dy * 0.25 + perpY * random1
-        
+
         self.controlPoint2.x = self.startPos.x + dx * 0.75 + perpX * random2
         self.controlPoint2.y = self.startPos.y + dy * 0.75 + perpY * random2
     end,
-    
-    -- Cubic Bezier interpolation
+
     BezierLerp = function(self, t)
         local invT = 1.0 - t
         local invT2 = invT * invT
         local invT3 = invT2 * invT
         local t2 = t * t
         local t3 = t2 * t
-        
-        local x = invT3 * self.startPos.x + 
+
+        local x = invT3 * self.startPos.x +
                  3 * invT2 * t * self.controlPoint1.x +
                  3 * invT * t2 * self.controlPoint2.x +
                  t3 * self.targetPos.x
-                 
-        local y = invT3 * self.startPos.y + 
+
+        local y = invT3 * self.startPos.y +
                  3 * invT2 * t * self.controlPoint1.y +
                  3 * invT * t2 * self.controlPoint2.y +
                  t3 * self.targetPos.y
-                 
+
         return {x = x, y = y}
     end,
-    
+
     Update = function(self)
         if not self.isMoving then
             return false
         end
-        
+
         local elapsed = GetTickCount() - self.startTime
         local baseTime = self.totalDistance / self.speed
-		-- Safety: avoid division by zero; if baseTime <= 0 interpret as completed
+
 		local normalizedTime
-		if baseTime <= 0 or baseTime ~= baseTime then -- check NaN or zero
+		if baseTime <= 0 or baseTime ~= baseTime then
 			normalizedTime = 1
 		else
-			-- Apply acceleration curve (starts slow, speeds up, then slows down)
 			normalizedTime = elapsed / baseTime
 		end
-        
-        -- OPTIMIZED: Early termination check with buffer for precision
+
 	if normalizedTime >= 0.99 then
-            -- Movement essentially complete - snap to target
-            Control.SetCursorPos(math.floor(self.targetPos.x), math.floor(self.targetPos.y))
+            Control.SetCursorPos(math_floor(self.targetPos.x), math_floor(self.targetPos.y))
             self.isMoving = false
-            
-            -- Execute callback if provided
+
             if self.onCompleteCallback then
                 self.onCompleteCallback()
-                self.onCompleteCallback = nil -- Clear callback after execution
+                self.onCompleteCallback = nil
             end
-            
+
             return true
         end
-        
-        -- Ease-in-out function for natural acceleration
+
         local t = normalizedTime
         if self.acceleration > 1.0 then
-            t = t < 0.5 and 
+            t = t < 0.5 and
                 (self.acceleration * t * t) / (2 * ((self.acceleration - 1) * t + 1)) or
                 1 - (self.acceleration * (1 - t) * (1 - t)) / (2 * ((self.acceleration - 1) * (1 - t) + 1))
         end
-        
-        -- Calculate position using Bezier curve
+
         local pos = self:BezierLerp(math_min(t, 1.0))
-        
-		-- OPTIMIZED: Aggressive rate-limiting with adaptive timing
+
 		local now = GetTickCount()
 		if (now - self.lastCursorSetTick) >= self.minSetIntervalMs then
-			Control.SetCursorPos(math.floor(pos.x + 0.5), math.floor(pos.y + 0.5)) -- Better rounding
+			Control.SetCursorPos(math_floor(pos.x + 0.5), math_floor(pos.y + 0.5))
 			self.lastCursorSetTick = now
 		end
         self.currentPos = pos
-        
-        return false -- Still moving
+
+        return false
     end,
-    
+
     IsMoving = function(self)
         return self.isMoving
     end,
-    
+
 	Stop = function(self)
 		self.isMoving = false
-		self.onCompleteCallback = nil -- Clear callback when stopping
+		self.onCompleteCallback = nil
     end
 }
 
 Cursor = {
-
 	Step = 0,
 	SmoothMovementActive = false,
-	OriginalCursorPosition = nil, -- posición original inmutable durante la acción
+	OriginalCursorPosition = nil,
 	LastStepTick = 0,
 
 	Add = function(self, key, castPos)
-		-- If chat is open, do not queue cursor actions
 		if GameIsChatOpen() then
 			return false
 		end
 		if type(key) == "table" then
             self.Keys = key
         else
-            self.Keys = { key }  -- store it in a table format for consistency
+            self.Keys = { key }
         end
-		-- Capturar posición original del cursor SOLO si no existe aún (no recapturar en trayecto)
+
 		local currentCursorPos = Game.cursorPos()
 		if not self.OriginalCursorPosition and currentCursorPos and currentCursorPos.x and currentCursorPos.y then
-			self.OriginalCursorPosition = { x = math.floor(currentCursorPos.x), y = math.floor(currentCursorPos.y) }
+			self.OriginalCursorPosition = { x = math_floor(currentCursorPos.x), y = math_floor(currentCursorPos.y) }
 			self.CursorPos = { x = self.OriginalCursorPosition.x, y = self.OriginalCursorPosition.y }
 		end
 		self.CastPos = castPos
@@ -5710,11 +5554,11 @@ Cursor = {
 			self.IsMouseClick = key == MOUSEEVENTF_RIGHTDOWN
 			self.Timer = GetTickCount() + MenuDelay:Value()
 			self.SmoothMovementActive = false
-			self:StepSetToCastPos() -- Now handles both smooth and direct movement
+			self:StepSetToCastPos()
 			if not self.SmoothMovementActive then
 				self:StepPressKey()
 			end
-			-- Mark last step tick to watch for stuck state
+
 			self.LastStepTick = GetTickCount()
 		end
 	end,
@@ -5726,23 +5570,19 @@ Cursor = {
 		end
 	end,
 
-	-- Function to stop smooth movement immediately
 	StopSmoothMovement = function(self)
 		if self.SmoothMovementActive then
 			SmoothMouse:Stop()
 			self.SmoothMovementActive = false
-			-- No limpiar OriginalCursorPosition aquí; se limpia al finalizar StepSetToCursorPos
 		end
 	end,
 
-	-- Force cancel any active cursor action and reset state
 	ForceReset = function(self)
-		-- Stop smooth movement and clear flags
 		if self.SmoothMovementActive then
 			SmoothMouse:Stop()
 			self.SmoothMovementActive = false
 		end
-		-- Reset step, original position and timer
+
 		self.Step = 0
 		self.OriginalCursorPosition = nil
 		self.CursorPos = nil
@@ -5750,16 +5590,14 @@ Cursor = {
 		self.Timer = 0
 		self.Keys = nil
 		self.LastStepTick = 0
-		-- Release potential stuck mouse press and notify operator
+
 		pcall(function()
 			Control.mouse_event(MOUSEEVENTF_RIGHTUP)
 			Control.mouse_event(MOUSEEVENTF_LEFTUP)
 		end)
-		-- Debug prints removed: ForceReset runs silently now
 	end,
 
 	StepSetToCastPos = function(self)
-		-- Do not proceed when chat is open
 		if GameIsChatOpen() then
 			self.Step = 0
 			self.OriginalCursorPosition = nil
@@ -5776,61 +5614,47 @@ Cursor = {
 				pos.y=pos.y-((25/1440)*Game.Resolution().y)
 			end
 		else
-			-- Check if we have 3D coordinates (x, z)
 			if self.CastPos.z ~= nil then
-				-- 3D world coordinates: use myHero.pos.y as height reference
 				pos = Vector(self.CastPos.x, myHero.pos.y, self.CastPos.z):To2D()
 			else
-				-- 2D screen coordinates or pre-calculated position
 				pos = Vector({ x = self.CastPos.x, y = self.CastPos.y })
 			end
 		end
 		self.correctedCastPos = pos
-		-- whenever we set a new target, refresh last step tick
+
 		self.LastStepTick = GetTickCount()
-		
-		-- OPTIMIZED: Check distance to current cursor for smart movement
+
 		local cursorPos = Game.cursorPos()
-		local distToCursor = math.sqrt((pos.x - cursorPos.x)^2 + (pos.y - cursorPos.y)^2)
-		
-		-- Always use smooth movement if enabled
+		local distToCursor = math_sqrt((pos.x - cursorPos.x)^2 + (pos.y - cursorPos.y)^2)
+
 				if MenuSmoothMouse:Value() then
-			-- OPTIMIZED: Use slower/no smooth for very small distances
 			if distToCursor <= 10 then
-				-- Very close: teleport directly
 				Control.SetCursorPos(pos.x, pos.y)
-				-- Use wait state to verify before executing action
+
 				self.Timer = GetTickCount() + MenuDelay:Value() + 30
 				self.Step = 1
 				else
-				-- Use smooth movement for longer distances
 				SmoothMouse:Start(pos.x, pos.y, "toTarget", function()
-					-- Instead of executing action directly when movement completes, switch to WAIT state
-					-- This ensures we verify the cursor is actually at the target position before pressing key
+
 					self.SmoothMovementActive = false
 					self.Step = 1
-					self.Timer = GetTickCount() + MenuDelay:Value() + 50 -- small safety margin
+					self.Timer = GetTickCount() + MenuDelay:Value() + 50
 					self.LastStepTick = GetTickCount()
 				end)
 				self.SmoothMovementActive = true
 			end
 		else
-			-- Direct teleport only if smooth is disabled
 			Control.SetCursorPos(pos.x, pos.y)
 		end
 	end,
 
 	StepPressKey = function(self)
-		-- Always transition to WAIT state before pressing key, so the StepWaitForResponse can verify
-		-- cursor pos and apply any final reinforcement (reposition) before executing.
-		self.Timer = GetTickCount() + MenuDelay:Value() + 30 -- small safety margin
+		self.Timer = GetTickCount() + MenuDelay:Value() + 30
 		self.Step = 1
 		self.LastStepTick = GetTickCount()
 	end,
 
-	-- Nueva función para ejecutar la acción directamente
 	ExecuteAction = function(self)
-		-- If chat opened while waiting, cancel the execution
 		if GameIsChatOpen() then
 			self.Step = 0
 			self.SmoothMovementActive = false
@@ -5838,11 +5662,11 @@ Cursor = {
 			self.CursorPos = nil
 			return
 		end
-		-- Reset smooth movement flag
+
 		if self.SmoothMovementActive then
 			self.SmoothMovementActive = false
 		end
-		
+
 		if self.CastPos.type then
 			if self.CastPos.type ~= Obj_AI_Hero or self.CastPos.charName == "GangplankBarrel" then
 				if Control.IsKeyDown(HK_TCO) then
@@ -5850,15 +5674,12 @@ Cursor = {
 				end
 			end
 		end
-		
-		-- Ejecutar acción inmediatamente sin verificaciones
-		-- A direct execution after the wait: double-check cursor is where we expect
+
 		local expected = self.correctedCastPos
 		if expected and expected.x and expected.y then
 			local cursorPos = Game.cursorPos()
-			if cursorPos and (math.sqrt((cursorPos.x - expected.x)^2 + (cursorPos.y - expected.y)^2) > 4) then
-				-- Reinforce exact cursor position before executing
-				Control.SetCursorPos(math.floor(expected.x + 0.5), math.floor(expected.y + 0.5))
+			if cursorPos and (math_sqrt((cursorPos.x - expected.x)^2 + (cursorPos.y - expected.y)^2) > 4) then
+				Control.SetCursorPos(math_floor(expected.x + 0.5), math_floor(expected.y + 0.5))
 			end
 		end
 
@@ -5866,8 +5687,8 @@ Cursor = {
 			Control.mouse_event(MOUSEEVENTF_RIGHTDOWN)
 			Control.mouse_event(MOUSEEVENTF_RIGHTUP)
 		else
-			for _, key in ipairs(self.Keys) do
-				-- Ejecutar sin verificar posición del cursor
+			for _ki = 1, #self.Keys do local key = self.Keys[_ki]
+
 				if Control.IsKeyDown(key) and myHero.activeSpell.isCharging then
 					Control.KeyUp(key)
 				else
@@ -5876,29 +5697,25 @@ Cursor = {
 				end
 			end
 		end
-		
-		-- Pasar directamente al retorno
+
 		self.Step = 2
 		self.LastStepTick = GetTickCount()
 	end,
 
 	StepWaitForResponse = function(self)
-		-- Wait until the cursor is at the correctedCastPos, or timeout
 		local expected = self.correctedCastPos
 		if not expected or not expected.x or not expected.y then
-			-- No expected pos: execute directly
 			self:ExecuteAction()
 			return
 		end
 		local cursorPos = Game.cursorPos()
 		local dist = 9999
 		if cursorPos then
-			dist = math.sqrt((cursorPos.x - expected.x)^2 + (cursorPos.y - expected.y)^2)
+			dist = math_sqrt((cursorPos.x - expected.x)^2 + (cursorPos.y - expected.y)^2)
 		end
 	local now = GetTickCount()
 	local timeout = self.Timer or (now + MenuDelay:Value() + 50)
 
-		-- If within small threshold, or timer exceeded, execute the action
 		local threshold = 5
 		if dist <= threshold then
 			self:ExecuteAction()
@@ -5906,55 +5723,45 @@ Cursor = {
 		end
 
 	if now >= timeout then
-			-- Timeout reached - try to reinforce cursor position once
-			Control.SetCursorPos(math.floor(expected.x + 0.5), math.floor(expected.y + 0.5))
-			-- Allow a short additional delay to let OS/game register the pos, then execute
+			Control.SetCursorPos(math_floor(expected.x + 0.5), math_floor(expected.y + 0.5))
+
 			self.Timer = now + 30
 			if now >= self.Timer then
 				self:ExecuteAction()
 			end
 			return
 		end
-		-- If configured, reinforce cursor position multiple times while waiting
+
 		if MenuMultipleTimes:Value() then
 			self._lastReinforce = self._lastReinforce or 0
 			if now - self._lastReinforce > 20 then
-				Control.SetCursorPos(math.floor(expected.x + 0.5), math.floor(expected.y + 0.5))
+				Control.SetCursorPos(math_floor(expected.x + 0.5), math_floor(expected.y + 0.5))
 				self._lastReinforce = now
 			end
 		end
 	end,
 
 	StepSetToCursorPos = function(self)
-		-- Esta función maneja el retorno del mouse a la posición original
-		-- Si smoothness está activado, usa movimiento suave para retornar
-		
-		-- Usar SIEMPRE la posición original inmutable si está disponible
 		local returnPos = self.OriginalCursorPosition or self.CursorPos
 		if not returnPos or not returnPos.x or not returnPos.y then
-			-- Sin posición válida, finalizar sin mover
 			self.Step = 0
 			return
 		end
-		
-		-- OPTIMIZED: Check distance for smart return behavior
+
 		local cursorPos = Game.cursorPos()
-		local distToReturn = math.sqrt((returnPos.x - cursorPos.x)^2 + (returnPos.y - cursorPos.y)^2)
-		
+		local distToReturn = math_sqrt((returnPos.x - cursorPos.x)^2 + (returnPos.y - cursorPos.y)^2)
+
 		if MenuSmoothMouse:Value() then
-			-- OPTIMIZED: Skip smooth return for very small distances
 			if distToReturn <= 15 then
-				-- Already close to original position: instant return
 				Control.SetCursorPos(returnPos.x, returnPos.y)
 				self.Step = 0
 				self.OriginalCursorPosition = nil
 				self.CursorPos = nil
 			else
-				-- Usar movimiento suave para retornar a la posición original del cursor
 				SmoothMouse:Start(returnPos.x, returnPos.y, "return", function()
-					-- Cuando termine el retorno, finalizar el proceso
+
 					self.Step = 0
-					-- Limpiar posición original SOLO al finalizar el retorno
+
 					self.OriginalCursorPosition = nil
 					self.CursorPos = nil
 					self.LastStepTick = GetTickCount()
@@ -5962,65 +5769,57 @@ Cursor = {
 				self.SmoothMovementActive = true
 			end
 		else
-			-- Retorno instantáneo (método tradicional)
 			Control.SetCursorPos(returnPos.x, returnPos.y)
 			self.Step = 0
 			self.OriginalCursorPosition = nil
 			self.CursorPos = nil
 		end
 		self.Timer = GetTickCount() + MenuDelay:Value()
-		-- Update LastStepTick used for watchdog
+
 		self.LastStepTick = GetTickCount()
-		-- No cambiar Step aquí si usamos smoothness, el callback lo hará
+
 		if not MenuSmoothMouse:Value() then
 			self.Step = 3
 		end
 	end,
 
 	StepWaitForReady = function(self)
-		-- Si no hay movimiento suave activo, finalizar inmediatamente
 		if not (self.SmoothMovementActive and SmoothMouse:IsMoving()) then
 			if self.SmoothMovementActive then
 				self.SmoothMovementActive = false
 			end
 			self.Step = 0
 		end
-		-- Si hay movimiento suave, el callback se encargará de cambiar el Step
 	end,
 
 	OnTick = function(self)
-		-- Update smooth mouse movement
 		if SmoothMouse:IsMoving() then
 			SmoothMouse:Update()
 		end
 
-		-- If Data:Stop is signaled (chat open / evade / not top), ensure we reset any pending cursor action
 		if Data and Data:Stop() and self.Step and self.Step > 0 then
 			self:ForceReset()
 			Movement.MoveTimer = 0
 			return
 		end
-		-- Watchdog: recover from stuck Step states
+
 		if self.Step and self.Step > 0 then
 			local now = GetTickCount()
 			local safeResetEnabled = true
 			local timeout = AUTO_SAFE_RESET_TIMEOUT
-			-- Extra safety: if the game loses focus or chat opens, force reset immediately
+
 			if GameIsChatOpen() or (not GameIsOnTop()) then
 				self:ForceReset()
 				Movement.MoveTimer = 0
 				return
 			end
 			if safeResetEnabled and self.LastStepTick and self.LastStepTick > 0 and (now - self.LastStepTick) >= timeout then
-				-- Reset everything gracefully
 				self:ForceReset()
-				-- Reset movement timer to ensure immediate new actions
+
 				Movement.MoveTimer = 0
 			end
 		end
-		-- Evitar recapturas de cursor mientras hay movimiento suave activo
-		-- self.OriginalCursorPosition se define en Add y se limpia al final del retorno
-		
+
 		local step = self.Step
 		if step == 0 then
 			self:StepReady()
@@ -6034,26 +5833,22 @@ Cursor = {
 	end,
 
 	OnDraw = function(self)
-		-- OPTIMIZACIÓN: Early exit
 		if not MenuDrawCursor:Value() then
 			return
 		end
-		
+
 		Draw.Circle(mousePos, 150, 1, Color.Cursor)
-		
-		-- Draw smooth movement path if active
+
 		if MenuSmoothMouse:Value() and SmoothMouse:IsMoving() then
 			local targetPos = SmoothMouse.targetPos
 			if targetPos then
-				-- Draw current target position
 				local myY = myHero.pos.y
 				Draw.Circle(Vector(targetPos.x, myY, targetPos.y), 75, 2, Color.Yellow)
-				
-				-- OPTIMIZACIÓN: Draw bezier curve path con menos creaciones de Vector
+
 				local colorLine = Color.LightGreen
 				local steps = 10
 				local prevPos = SmoothMouse:BezierLerp(0)
-				
+
 				for i = 1, steps do
 					local t = i / steps
 					local currPos = SmoothMouse:BezierLerp(t)
@@ -6065,13 +5860,11 @@ Cursor = {
 					prevPos = currPos
 				end
 			end
-			-- No debug cursor info (removed, per user request)
 		end
 	end,
 }
 
 Attack = {
-
 	TestDamage = false,
 	TestCount = 0,
 	TestStartTime = 0,
@@ -6083,7 +5876,7 @@ Attack = {
 	BaseWindupTime = nil,
 	Reset = false,
 	ServerStart = 0,
-	CastEndTime = 1,
+	CastEndTime = 0,
 	LocalStart = 0,
 	AttackWindup = 0,
 	AttackAnimation = 0,
@@ -6101,25 +5894,14 @@ Attack = {
 			and spell.castEndTime > self.CastEndTime
 			and (spell.isAutoAttack or Data:IsAttack(spell.name))
 		then
-			-- spell.isAutoAttack then  and GameTimer() < self.LocalStart + 0.2
 			for i = 1, #Orbwalker.OnAttackCb do
-				Orbwalker.OnAttackCb[i]()
+				local ok, err = pcall(Orbwalker.OnAttackCb[i])
+				if not ok then print("[Orbwalker] OnAttack callback error: " .. tostring(err)) end
 			end
 			self.CastEndTime = spell.castEndTime
 			self.AttackWindup = spell.windup
 			self.ServerStart = self.CastEndTime - self.AttackWindup
 			self.AttackAnimation = spell.animation
-			if self.TestDamage then
-				if self.TestCount == 0 then
-					self.TestStartTime = GameTimer()
-				end
-				self.TestCount = self.TestCount + 1
-				if self.TestCount == 5 then
-					--print('5 attacks in time: ' .. tostring(GameTimer() - self.TestStartTime) .. '[sec]')
-					self.TestCount = 0
-					self.TestStartTime = 0
-				end
-			end
 		end
 	end,
 
@@ -6235,7 +6017,6 @@ Attack = {
 }
 
 Orbwalker = {
-
 	LastTarget = nil,
 	CanHoldPosition = true,
 	PostAttackTimer = 0,
@@ -6284,57 +6065,43 @@ Orbwalker = {
 	end,
 
 	OnTick = function(self)
-		-- Optimización FPS: Salir temprano si no debe procesar este tick
-		-- Integración ligera con DepressiveEvade: evaluar amenazas antes de orbwalk
 		if _G.DepressiveEvade and _G.DepressiveEvade.ShouldEvade then
-			pcall(function()
-				_G.DepressiveEvade:ShouldEvade()
-			end)
+			pcall(_G.DepressiveEvade.ShouldEvade, _G.DepressiveEvade)
 		end
 
 		if not FPSOptimizer:ShouldTick() then
 			return
 		end
-		
+
 		if not self.Menu.Enabled:Value() then
 			return
 		end
-		
-		-- Early exits para mejor rendimiento
+
 		if myHero.dead then
 			return
 		end
-		
-		-- Cache modes solo cuando es necesario
-		local isNone = self:HasMode(ORBWALKER_MODE_NONE)
-		self.IsNone = isNone
+
 		self.Modes = self:GetModes()
-		
-		if self:HasMode(ORBWALKER_MODE_COMBO) and not myHero.dead then
+		local modes = self.Modes
+
+		local isNone = not (modes[ORBWALKER_MODE_COMBO] or modes[ORBWALKER_MODE_HARASS]
+			or modes[ORBWALKER_MODE_LANECLEAR] or modes[ORBWALKER_MODE_JUNGLECLEAR]
+			or modes[ORBWALKER_MODE_LASTHIT] or modes[ORBWALKER_MODE_FLEE]
+			or modes[ORBWALKER_MODE_SPACING])
+		self.IsNone = isNone
+
+		if modes[ORBWALKER_MODE_COMBO] then
 			Control.KeyDown(HK_TCO)
 		else
 			Control.KeyUp(HK_TCO)
 		end
-		
-		-- Early skip reasons tracking for diagnostics
-		local skipReason = nil
-		if Cursor.Step > 0 then
-			skipReason = "Cursor.Step>0"
-		end
-		if Data:Stop() then
-			skipReason = (skipReason and skipReason .. ",DataStop" or "DataStop")
-		end
-		if isNone then
-			skipReason = (skipReason and skipReason .. ",ModeNone" or "ModeNone")
-		end
-		if skipReason then
+
+		if Cursor.Step > 0 or Data:Stop() or isNone then
 			self.LastSkippedState = true
 			return
-		else
-			self.LastSkippedState = false
 		end
-		
-		-- Solo ejecutar orbwalk si no estamos en modo de alta carga o es un tick crítico
+		self.LastSkippedState = false
+
 		if not FPSOptimizer.highLoadMode or (FPSOptimizer.tickCounter % 2 == 0) then
 			self:Orbwalk()
 		end
@@ -6344,11 +6111,10 @@ Orbwalker = {
 		if not self.Menu.Enabled:Value() then
 			return
 		end
-		
-		-- OPTIMIZACIÓN: Cachear posición y drawings menu
+
 		local myPos = myHero.pos
 		local drawings = self.MenuDrawings
-		
+
 		if drawings.Range:Value() then
 			Draw.Circle(myPos, Data:GetAutoAttackRange(myHero), 1, Color.Range)
 		end
@@ -6359,7 +6125,6 @@ Orbwalker = {
 			local enemies = Object:GetEnemyHeroes()
 			local enemyCount = #enemies
 			if enemyCount > 0 then
-				-- OPTIMIZACIÓN: Cachear colores fuera del loop
 				local colorRange = Color.Range
 				local colorEnemy = Color.EnemyRange
 				for i = 1, enemyCount do
@@ -6377,7 +6142,6 @@ Orbwalker = {
 			end
 		end
 
-		-- Debug / Safe Reset Info (OPTIMIZACIÓN: usar string.format)
 		if Menu.Main.Drawings.SmartCacheInfo:Value() then
 			local x, y = 20, 50
 			local modeInfo = FPSOptimizer:GetModeInfo()
@@ -6477,13 +6241,12 @@ Orbwalker = {
 	end,
 
 	IsAutoAttacking = function(self, unit)
-		-- Refined timing similar a Orbwalker.lua: usar fin de animación - anim + windup + extra
 		if unit == nil or unit.isMe then
 			local endTime = myHero.attackData.endTime
 			local anim = myHero.attackData.animationTime
 			local windup = myHero.attackData.windUpTime
 			local extra = (self.Menu.General.ExtraWindUpTime:Value() * 0.001)
-			-- Latency compensation (similar formula: latency*1.5 - 0.09 para movimiento, pero aquí más conservador)
+
 			local latencyAdjust = Data:GetLatency() * 1.5 - 0.05
 			local adjusted = endTime - anim + windup + extra
 			return GameTimer() - adjusted + latencyAdjust < 0
@@ -6546,7 +6309,6 @@ Orbwalker = {
 			and ChampionInfo:CustomIsTargetable(self.ForceTarget)
 			and (Object:IsHeroImmortal(self.ForceTarget, true)==false or (Object.IsKindred and (self:KindredETarget(self.ForceTarget))))
 		then
-
 			return self.ForceTarget
 		end
 		if self.Modes[ORBWALKER_MODE_COMBO] then
@@ -6628,31 +6390,28 @@ Orbwalker = {
 				end
 				self.PostAttackTimer = GameTimer()
 				self.PostAttackBool = false
-				-- Intento de cancelación: lanzar hechizo configurado inmediatamente tras windup
+
 				local target = self.LastTarget
 				if target and target.valid and target.visible and target.pos:To2D().onScreen then
 					local function CastSlot(slot, hk)
 						if GameCanUseSpell(slot) == 0 then
 							Control.CastSpell(hk, target)
-							-- Riven: Q resetea el básico inmediatamente, no esperamos windup
+
 							if myHero.charName == "Riven" and slot == _Q then
-								-- Forzar reset instantáneo del ataque para permitir nuevo AA enseguida
 								Attack.Reset = true
-								Attack.LocalStart = GameTimer() - 0.25 -- adelanta la ventana para IsReady/IsActive
-								-- También marcar PostAttackTimer para que no bloquee siguiente AA
+								Attack.LocalStart = GameTimer() - 0.25
+
 								self.PostAttackTimer = GameTimer() - 0.2
 							elseif myHero.charName == "Zeri" and slot == _Q then
-								-- Zeri Q debe sincronizar con ataque, no esperar windup
-								-- Lanzar Q durante el windup para combo óptimo
 								Attack.Reset = true
-								Attack.LocalStart = GameTimer() - 0.4 -- Adelantar más para sincronizar con windup de Zeri (0.658s)
+								Attack.LocalStart = GameTimer() - 0.4
 								self.PostAttackTimer = GameTimer() - 0.35
 							end
 							return true
 						end
 						return false
 					end
-					-- Prioridad Q > W > E > R según toggles
+
 					if self.Menu.General.CancelQ:Value() and CastSlot(_Q, HK_Q) then goto afterCancel end
 					if self.Menu.General.CancelW:Value() and CastSlot(_W, HK_W) then goto afterCancel end
 					if self.Menu.General.CancelE:Value() and CastSlot(_E, HK_E) then goto afterCancel end
@@ -6673,7 +6432,6 @@ Orbwalker = {
 				return
 			end
 			if GetTickCount() > Movement.MoveTimer then
-
 				local args = { Target = nil, Process = true }
 				for i = 1, #self.OnMoveCb do
 					self.OnMoveCb[i](args)
@@ -6701,17 +6459,15 @@ Orbwalker = {
 	end,
 
 	GetSpacingTarget = function(self)
-		-- Encuentra el enemigo más cercano para hacer spacing
 		local enemies = Object:GetEnemyHeroes(2000, false, true)
 		if #enemies == 0 then
 			return nil
 		end
-		
-		-- Ordenar por distancia y retornar el más cercano
+
 		table_sort(enemies, function(a, b)
 			return GetDistance(myHero.pos, a.pos) < GetDistance(myHero.pos, b.pos)
 		end)
-		
+
 		return enemies[1]
 	end,
 
@@ -6719,75 +6475,68 @@ Orbwalker = {
 		if not target or not Object:IsValid(target) then
 			return nil
 		end
-		
+
 		local myPos = myHero.pos
 		local targetPos = target.pos
 		local distance = GetDistance(myPos, targetPos)
-		
-		-- Obtener rangos de ataque
+
 		local myRange = Data:GetAutoAttackRange(myHero, target)
 		local enemyRange = Data:GetAutoAttackRange(target, myHero)
-		
-		-- Margen de seguridad (evitar estar justo en el borde)
+
 		local safetyMargin = 50
 		local optimalDistance = myRange - safetyMargin
-		
-		-- Calcular dirección desde el enemigo hacia nosotros
+
 		local direction = (myPos - targetPos):Normalized()
-		
-		-- Si el enemigo está dentro de nuestro rango pero nosotros estamos dentro de su rango
+
 		if distance <= myRange and distance <= enemyRange then
-			-- Retroceder: alejarse del enemigo
 			local retreatDistance = enemyRange - distance + safetyMargin + 50
 			local retreatPos = myPos + direction * retreatDistance
 			return retreatPos
-		-- Si el enemigo está fuera de nuestro rango pero dentro de su rango
 		elseif distance > myRange and distance <= enemyRange then
-			-- Retroceder más agresivamente
 			local retreatDistance = enemyRange - distance + safetyMargin + 100
 			local retreatPos = myPos + direction * retreatDistance
 			return retreatPos
-		-- Si el enemigo está dentro de nuestro rango pero fuera del suyo
 		elseif distance <= myRange and distance > enemyRange then
-			-- Acercarse ligeramente para mantener distancia óptima
 			if distance < optimalDistance then
-				-- Ya estamos en posición óptima, no moverse
 				return nil
 			else
-				-- Acercarse un poco para estar en rango óptimo
 				local approachDistance = distance - optimalDistance
 				local approachPos = myPos - direction * math_min(approachDistance, 50)
 				return approachPos
 			end
-		-- Si el enemigo está fuera de ambos rangos
 		elseif distance > myRange and distance > enemyRange then
-			-- Acercarse para entrar en nuestro rango
 			local approachDistance = distance - optimalDistance
 			local approachPos = myPos - direction * math_min(approachDistance, 100)
 			return approachPos
 		end
-		
+
 		return nil
 	end,
 
 	Orbwalk = function(self)
-		if GameIsChatOpen() or Data:Stop() then
+		if GameIsChatOpen() then
 			return
 		end
-		
-		-- Modo Auto Spacing: mantener distancia óptima
-		if self:HasMode(ORBWALKER_MODE_SPACING) then
+
+		if Menu.Orbwalker.General.UnderMouseCast:Value()
+		   and Menu.Orbwalker.General.UnderMouseKey:Value()
+		   and Game.GetUnderMouseObject then
+			local obj = Game.GetUnderMouseObject()
+			if obj and obj.valid and obj.alive and not obj.dead and obj.isEnemy
+			   and Data:IsInAutoAttackRange(myHero, obj) then
+				if self:Attack(obj) then return end
+			end
+		end
+
+		if self.Modes and self.Modes[ORBWALKER_MODE_SPACING] then
 			local spacingTarget = self:GetSpacingTarget()
 			if spacingTarget and Object:IsValid(spacingTarget) then
-				-- Intentar atacar si está a rango
 				if self:Attack(spacingTarget) then
 					return
 				end
-				
-				-- Calcular posición de spacing
+
 				local spacingPos = self:GetSpacingPosition(spacingTarget)
 				if spacingPos then
-					-- Forzar movimiento hacia la posición de spacing
 					self.ForceMovement = spacingPos
 					self:Move()
 					self.ForceMovement = nil
@@ -6795,13 +6544,131 @@ Orbwalker = {
 				end
 			end
 		end
-		
-		-- Lógica normal de orbwalk
+
 		if not self:Attack(self:GetTarget()) then
 			self:Move()
 		end
 	end,
 }
+
+PathPrediction = {
+	SamplePosition = function(self, unit, secondsAhead)
+		if not unit or not unit.pathing or not unit.pathing.hasMovePath then
+			return unit and unit.pos or nil
+		end
+		local path = unit.pathing
+		local pathCount = path.pathCount or 0
+		local idx = path.pathIndex or 1
+		if pathCount == 0 or idx > pathCount then return unit.pos end
+		local moveSpeed = unit.ms or unit.movementSpeed or 335
+		local travelDist = moveSpeed * secondsAhead
+		local curPos = unit.pos
+		for i = idx, pathCount do
+			local ok, segEnd = pcall(function() return unit:GetPath(i) end)
+			if not ok or not segEnd then break end
+			local dx = segEnd.x - curPos.x
+			local dz = (segEnd.z or segEnd.y) - (curPos.z or curPos.y)
+			local segLen = math_sqrt(dx*dx + dz*dz)
+			if segLen >= travelDist and segLen > 0 then
+				local frac = travelDist / segLen
+				return {
+					x = curPos.x + dx * frac,
+					y = curPos.y,
+					z = (curPos.z or curPos.y) + dz * frac
+				}
+			end
+			travelDist = travelDist - segLen
+			curPos = segEnd
+		end
+		return curPos
+	end,
+
+	WillBeOutOfRange = function(self, attacker, target, windup)
+		if not target.pathing or not target.pathing.hasMovePath then return false end
+		local travelT = windup or 0.25
+		local futurePos = self:SamplePosition(target, travelT)
+		if not futurePos then return false end
+		local ap = attacker.pos
+		local dx = ap.x - futurePos.x
+		local dz = (ap.z or ap.y) - (futurePos.z or futurePos.y)
+		local distSq = dx*dx + dz*dz
+		local range = (attacker.range or 500) + (attacker.boundingRadius or 0) + (target.boundingRadius or 0)
+		return distSq > range * range
+	end,
+
+	IsDashingToward = function(self, unit)
+		if not unit or not unit.pathing or not unit.pathing.isDashing then return false end
+		local ep = unit.pathing.endPos
+		if not ep then return false end
+		local mp = myHero.pos
+		local curDist = GetDistance(mp, unit.pos)
+		local endDist = GetDistance(mp, ep)
+		return endDist < curDist - 100
+	end,
+}
+_G.SDK = _G.SDK or {}
+_G.SDK.PathPrediction = PathPrediction
+
+TurretAggro = {
+	NextShot = 0,
+	CurrentTarget = nil,
+	LastEndTime = 0,
+	TurretAttackInterval = 0.83,
+
+	OnTick = function(self)
+		local turret = Health.AllyTurret
+		if not turret or not turret.valid then
+			self.NextShot = 0
+			self.CurrentTarget = nil
+			return
+		end
+		local ad = turret.attackData
+		if ad and ad.endTime and ad.endTime > self.LastEndTime then
+			self.LastEndTime = ad.endTime
+			self.CurrentTarget = ad.target
+
+			local turretAS = (turret.attackSpeed or 0.83)
+			self.TurretAttackInterval = 1.0 / math_max(0.5, turretAS)
+			self.NextShot = ad.endTime + self.TurretAttackInterval
+		end
+	end,
+
+	IsUnderEnemyTurretAggro = function(self)
+		local count = GameTurretCount and GameTurretCount() or 0
+		for i = 1, count do
+			local t = GameTurret(i)
+			if t and t.valid and t.team ~= TEAM_ALLY and not t.dead then
+				local dist = GetDistance(myHero.pos, t.pos)
+				if dist < 775 + (myHero.boundingRadius or 0) then
+					return true, t
+				end
+			end
+		end
+		return false, nil
+	end,
+
+	GetEnemyTurretNextShot = function(self, turret)
+		if not turret or not turret.attackData then return 0 end
+		local ad = turret.attackData
+		if not ad.endTime then return 0 end
+		local remaining = ad.endTime - GameTimer()
+		return math_max(0, remaining)
+	end,
+
+	SafeToAttackChamp = function(self)
+		local under, turret = self:IsUnderEnemyTurretAggro()
+		if not under then return true end
+
+		local ad = turret.attackData
+		if not ad or not ad.target then return false end
+
+		local nextShot = self:GetEnemyTurretNextShot(turret)
+		local windup = (myHero.attackData and myHero.attackData.windUpTime) or 0.25
+		return nextShot > windup + 0.1
+	end,
+}
+_G.SDK = _G.SDK or {}
+_G.SDK.TurretAggro = TurretAggro
 
 Orbwalker:RegisterMenuKey(ORBWALKER_MODE_COMBO, Menu.Orbwalker.Keys.Combo)
 Orbwalker:RegisterMenuKey(ORBWALKER_MODE_HARASS, Menu.Orbwalker.Keys.Harass)
@@ -6811,12 +6678,11 @@ Orbwalker:RegisterMenuKey(ORBWALKER_MODE_JUNGLECLEAR, Menu.Orbwalker.Keys.Jungle
 Orbwalker:RegisterMenuKey(ORBWALKER_MODE_FLEE, Menu.Orbwalker.Keys.Flee)
 Orbwalker:RegisterMenuKey(ORBWALKER_MODE_SPACING, Menu.Orbwalker.Keys.Spacing)
 
--- Merge into existing global SDK if present, otherwise create a new SDK table.
 _G.SDK = _G.SDK or {}
 _G.SDK.OnDraw = _G.SDK.OnDraw or {}
 _G.SDK.OnTick = _G.SDK.OnTick or {}
 _G.SDK.OnWndMsg = _G.SDK.OnWndMsg or {}
--- SIEMPRE usar nuestros módulos para asegurar compatibilidad con GGAIO y otros scripts
+
 _G.SDK.Menu = Menu
 _G.SDK.Color = Color
 _G.SDK.Action = Action
@@ -6831,8 +6697,7 @@ _G.SDK.TargetSelector = Target
 _G.SDK.HealthPrediction = Health
 _G.SDK.Cursor = Cursor
 _G.SDK.Attack = Attack
--- CRÍTICO: SIEMPRE sobrescribir Orbwalker para asegurar compatibilidad con GGAIO
--- GGAIO.lua espera que _G.SDK.Orbwalker sea nuestro DepressiveOrbwalker
+
 _G.SDK.Orbwalker = Orbwalker
 _G.SDK.Cached = Cached
 _G.SDK.Movement = Movement
@@ -6860,8 +6725,6 @@ if _G.SDK.IsRecalling == nil then
 	end
 end
 
---[[tickTest = 2
-drawTest = 2]]
 Callback.Add("Load", function()
 	ChampionInfo:OnLoad()
 
@@ -6873,68 +6736,35 @@ Callback.Add("Load", function()
 	if Game.Latency() < 250 then _G.LATENCY = Game.Latency() else _G.LATENCY = Menu.Main.Latency:Value() end
 
 	Callback.Add("Draw", function()
-		--[[local as = myHero.activeSpell
-		if as and as.valid then
-			print(as.name)
-			print(as.castEndTime - Game.Timer())
-		end
-		Buff:Print(myHero)]]
-		--[[local target = Target:GetTarget(2000)
-		if target then
-			if
-				Buff:GetBuffDuration(target, "caitlynwsight") > 0.75
-				or Buff:HasBuff(target, "eternals_caitlyneheadshottracker")
-			then
-				print("caitlynwsight  " .. os.clock())
-			end
-			--print(target.distance .. ' ' .. tostring(myHero.range + myHero.boundingRadius + target.boundingRadius))
-			Buff:Print(target)
-		end
-		Buff:Print(myHero)
 
-		if Buff:HasBuff(myHero, "caitlynpassivedriver") then
-			print("myHero caitlynpassivedriver")
-		end
-
-		if drawTest ~= 2 then
-			print("DRAW")
-		end
-		drawTest = 1]]
-	
-		-- Track chat open timer
 		if GameIsChatOpen() then
 			LastChatOpenTimer = GetTickCount()
 		end
 
-		-- OPTIMIZACIÓN: Reset y ticks esenciales
 		Cached:Reset()
 		Cursor:OnTick()
 		Action:OnTick()
 		Attack:OnTick()
 		Orbwalker:OnTick()
-		
-		-- OPTIMIZACIÓN: Ejecutar callbacks de tick sin pcall para mayor velocidad
+
 		local tickCount = #ticks
 		for i = 1, tickCount do
 			local fn = ticks[i]
 			if fn then fn() end
 		end
-		
-		-- Solo procesar draws si están habilitados
+
 		if Menu.Main.Drawings.Enabled:Value() then
 			Target:OnDraw()
 			Cursor:OnDraw()
 			Orbwalker:OnDraw()
 			Health:OnDraw()
-			
-			-- OPTIMIZACIÓN: Ejecutar callbacks de draw
+
 			local drawCount = #draws
 			for i = 1, drawCount do
 				local fn = draws[i]
 				if fn then fn() end
 			end
-			
-			-- Mostrar información de debug del sistema de caché inteligente
+
 			if Menu.Main.Drawings.SmartCacheInfo:Value() and FPSOptimizer.enabled and FPSOptimizer.smartCacheEnabled then
 				local modeInfo = FPSOptimizer:GetModeInfo()
 				local debugText = string_format(
@@ -6948,18 +6778,10 @@ Callback.Add("Load", function()
 				Draw.Text(debugText, 14, 10, 200)
 			end
 		end
-		--drawTest = 2
 	end)
 
 	Callback.Add("Tick", function()
-		--[[if tickTest ~= 2 then
-			print("TICK")
-		end
-		tickTest = 1
-		if Item:HasItem(myHero, 3031) then
-			print("ok " .. os.clock())
-		end]]
-		--print(myHero.critChance)
+
 		_G.LATENCY = Game.Latency() < 250 and Game.Latency() or Menu.Main.Latency:Value()
 		if GameIsChatOpen() then
 			LastChatOpenTimer = GetTickCount()
@@ -6971,7 +6793,7 @@ Callback.Add("Load", function()
 		Item:OnTick()
 		Target:OnTick()
 		Health:OnTick()
-		--tickTest = 2
+		if _G.SDK and _G.SDK.TurretAggro then _G.SDK.TurretAggro:OnTick() end
 	end)
 
 	Callback.Add("WndMsg", function(msg, wParam)
@@ -6979,7 +6801,7 @@ Callback.Add("Load", function()
 		Spell:WndMsg(msg, wParam)
 		Target:WndMsg(msg, wParam)
 		Cached:WndMsg(msg, wParam)
-		-- OPTIMIZACIÓN: Cachear longitud
+
 		local wndmsgCount = #wndmsgs
 		for i = 1, wndmsgCount do
 			local fn = wndmsgs[i]
@@ -6991,9 +6813,7 @@ Callback.Add("Load", function()
 		_G.Orbwalker.Enabled:Value(false)
 		_G.Orbwalker.Drawings.Enabled:Value(false)
 	end
-	
-	-- Asegurar que nuestro Orbwalker esté registrado después de que todos los scripts se carguen
-	-- Esto es crítico para compatibilidad con GGAIO y otros scripts que dependen de _G.SDK.Orbwalker
+
 	Callback.Add("Load", function()
 		_G.SDK = _G.SDK or {}
 		_G.SDK.Orbwalker = Orbwalker
