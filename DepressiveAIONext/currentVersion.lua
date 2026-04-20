@@ -15,6 +15,7 @@ Data = {
     Elise = { Version = 1.25, Changelog = "Elise" },
     Fiora = { Version = 2.2, Changelog = "Fiora" },
     Irelia = { Version = 1.1, Changelog = "Irelia" },
+    Jhin = { Version = 1.0, Changelog = "Jhin" },
     Jinx = { Version = 2.2, Changelog = "Jinx" },
     Katarina = { Version = 1.1, Changelog = "Katarina" },
     LeeSin = { Version = 5.3, Changelog = "LeeSin" },
