@@ -26,7 +26,7 @@ Data = {
     TwistedFate = { Version = 1.9, Changelog = "TwistedFate" },
     Varus = { Version = 1.0, Changelog = "Varus" },
     Vayne = { Version = 4.0, Changelog = "Vayne" },
-    Yasuo = { Version = 4.1, Changelog = "Yasuo" },
+    Yasuo = { Version = 4.2, Changelog = "Yasuo" },
     Yone = { Version = 3.1, Changelog = "Yone" },
     Zed = { Version = 1.0, Changelog = "Zed" },
     }
