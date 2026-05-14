@@ -2,13 +2,13 @@ if _G.__DEPRESSIVE_YASUO_LOADED then return end
 _G.__DEPRESSIVE_YASUO_LOADED = true
 local Heroes = {"Yasuo"}
 if not table.contains(Heroes, myHero.charName) then return end
-require("DepressivePrediction")
+require("GGPrediction")
 local PredictionLoaded = false
 
 DelayAction(function()
-    PredictionLoaded = _G.DepressivePrediction ~= nil
+    PredictionLoaded = _G.GGPrediction ~= nil and type(_G.GGPrediction.SpellPrediction) == "function"
 end, 1.0)
-local ScriptVersion = 4.1
+local ScriptVersion = 4.2
 local LoadingComplete = false
 Callback.Add("Draw", function()
     if not LoadingComplete then
@@ -378,10 +378,10 @@ local function GetHealthPrediction(unit, time)
     return unit.health
 end
 
-local function ConvertHitChance(menuVal, hitChance)
-    if menuVal == 1 then return hitChance >= 3 end
-    if menuVal == 2 then return hitChance >= 4 end
-    return hitChance >= 6
+local function MenuValToGGHitChance(menuVal)
+    if menuVal == 1 then return _G.GGPrediction.HITCHANCE_NORMAL end
+    if menuVal == 2 then return _G.GGPrediction.HITCHANCE_HIGH end
+    return _G.GGPrediction.HITCHANCE_IMMOBILE
 end
 
 class "WindSamurai"
@@ -445,11 +445,11 @@ function WindSamurai:LoadPrediction()
     if not PredictionLoaded then
 
         DelayAction(function()
-            PredictionLoaded = _G.DepressivePrediction ~= nil
+            PredictionLoaded = _G.GGPrediction ~= nil and type(_G.GGPrediction.SpellPrediction) == "function"
             if PredictionLoaded then
-                print("[DepressiveYasuo] DepressivePrediction linked.")
+                print("[DepressiveYasuo] GGPrediction linked.")
             else
-                print("[DepressiveYasuo] DepressivePrediction not ready yet.")
+                print("[DepressiveYasuo] GGPrediction not ready yet.")
             end
         end, 0.5)
     end
@@ -538,7 +538,7 @@ function WindSamurai:BuildMenu()
         end
     end, 0.02)
     self.menu:MenuElement({type = MENU, id = "pred", name = "[Prediction] Settings"})
-        self.menu.pred:MenuElement({name = " ", drop = {"Engine: DepressivePrediction"}})
+        self.menu.pred:MenuElement({name = " ", drop = {"Engine: GGPrediction"}})
         self.menu.pred:MenuElement({id = "hcQ", name = "Hitchance [Q]", value = 1, drop = {"Normal", "High", "Immobile"}})
         self.menu.pred:MenuElement({id = "hcQ3", name = "Hitchance [Q3]", value = 2, drop = {"Normal", "High", "Immobile"}})
     self.menu:MenuElement({type = MENU, id = "draw", name = "[Drawing] Settings"})
@@ -1257,17 +1257,18 @@ function WindSamurai:CastQ(target)
         or self.lastQ + 300 > GetTickCount() then
         return
     end
-    local qPred = _G.DepressivePrediction.GetPrediction(target, {
-        type = "linear",
-        source = myHero,
-        speed = self.QData.speed,
-        delay = self.QData.delay,
-        radius = self.QData.radius,
-        range = self.QData.range,
-        collision = false,
+    if not PredictionLoaded then return end
+    local qPred = _G.GGPrediction:SpellPrediction({
+        Type = _G.GGPrediction.SPELLTYPE_LINE,
+        Delay = self.QData.delay,
+        Radius = self.QData.radius,
+        Range = self.QData.range,
+        Speed = self.QData.speed,
+        Collision = false,
     })
-    if qPred and qPred.castPos and ConvertHitChance(self.menu.pred.hcQ:Value(), qPred.hitChance or 4) then
-        ControlCast(HK_Q, qPred.castPos)
+    qPred:GetPrediction(target, myHero)
+    if qPred.CastPosition and qPred:CanHit(MenuValToGGHitChance(self.menu.pred.hcQ:Value())) then
+        ControlCast(HK_Q, Vector(qPred.CastPosition.x, myHero.pos.y, qPred.CastPosition.z))
         self.lastQ = GetTickCount()
     end
 end
@@ -1280,17 +1281,18 @@ function WindSamurai:CastQ3(target)
         or self.lastQ + 300 > GetTickCount() then
         return
     end
-    local q3Pred = _G.DepressivePrediction.GetPrediction(target, {
-        type = "linear",
-        source = myHero,
-        speed = self.Q3Data.speed,
-        delay = self.Q3Data.delay,
-        radius = self.Q3Data.radius,
-        range = self.Q3Data.range,
-        collision = false,
+    if not PredictionLoaded then return end
+    local q3Pred = _G.GGPrediction:SpellPrediction({
+        Type = _G.GGPrediction.SPELLTYPE_LINE,
+        Delay = self.Q3Data.delay,
+        Radius = self.Q3Data.radius,
+        Range = self.Q3Data.range,
+        Speed = self.Q3Data.speed,
+        Collision = false,
     })
-    if q3Pred and q3Pred.castPos and ConvertHitChance(self.menu.pred.hcQ3:Value(), q3Pred.hitChance or 4) then
-        ControlCast(HK_Q, q3Pred.castPos)
+    q3Pred:GetPrediction(target, myHero)
+    if q3Pred.CastPosition and q3Pred:CanHit(MenuValToGGHitChance(self.menu.pred.hcQ3:Value())) then
+        ControlCast(HK_Q, Vector(q3Pred.CastPosition.x, myHero.pos.y, q3Pred.CastPosition.z))
         self.lastQ = GetTickCount()
     end
 end
